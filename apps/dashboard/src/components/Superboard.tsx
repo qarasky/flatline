@@ -11,6 +11,7 @@ import {
 import { navigate } from "@/lib/router";
 import { TokenGate } from "@/components/TokenGate";
 import { FleetCard, type FleetServer } from "@/components/FleetCard";
+import { RenameDialog, ServerMenu, type MenuAnchor } from "@/components/ServerMenu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fleetAttention, matchGroups } from "@/lib/fleet-presentation";
@@ -113,6 +114,14 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
     const openHistory = useCallback((id: number) => setHistoryId(id), []);
     const closeHistory = useCallback(() => setHistoryId(null), []);
     const historyMonitor = servers.find(server => server.monitor.id === historyId)?.monitor;
+    // Custom right-click menu and the rename dialog it opens. Either open
+    // pauses rotation like an open history dialog does.
+    const [menu, setMenu] = useState<MenuAnchor | null>(null);
+    const [renaming, setRenaming] = useState<{ monitor: MonitorSummary; name: string } | null>(null);
+    const openMenu = useCallback((e: React.MouseEvent, monitor: MonitorSummary) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY, monitor });
+    }, []);
     // Resolved scope names for the wall header; raw filter when unresolvable.
     const [scopeNames, setScopeNames] = useState<string[]>([]);
     const scopeTitle = scopeNames.length > 0 ? scopeNames.join(", ") : filter;
@@ -277,12 +286,12 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
     // -- rotation -----------------------------------------------------------
 
     useEffect(() => {
-        if (paused || !visible || pageCount <= 1 || historyId !== null) {
+        if (paused || !visible || pageCount <= 1 || historyId !== null || menu !== null || renaming !== null) {
             return;
         }
         const timer = window.setInterval(() => setPage((p) => (p + 1) % pageCount), rotateMs);
         return () => window.clearInterval(timer);
-    }, [ paused, visible, pageCount, rotateMs, historyId ]);
+    }, [ paused, visible, pageCount, rotateMs, historyId, menu, renaming ]);
 
     /** Any interaction pauses rotation for a while, so investigation is possible. */
     function noteInteraction() {
@@ -327,7 +336,7 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
             }}
         >
             {pageServers.map((server) => (
-                <FleetCard key={server.monitor.id} server={server} now={now} onOpenHistory={openHistory} />
+                <FleetCard key={server.monitor.id} server={server} now={now} onOpenHistory={openHistory} onMenu={openMenu} />
             ))}
         </div>
     );
@@ -397,6 +406,21 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
 
             <div className={`flex min-h-0 flex-1 flex-col p-4 ${kiosk ? "pt-0" : ""}`}>{content}</div>
             {historyMonitor ? <ServerHistory monitor={historyMonitor} onClose={closeHistory} /> : null}
+            {menu ? (
+                <ServerMenu
+                    anchor={menu}
+                    onRename={() => {
+                        const server = servers.find((s) => s.monitor.id === menu.monitor.id);
+                        const name = server ? server.monitor.name || server.metrics.host?.hostname || "Unnamed server" : menu.monitor.name;
+                        setRenaming({ monitor: menu.monitor, name });
+                        setMenu(null);
+                    }}
+                    onClose={() => setMenu(null)}
+                />
+            ) : null}
+            {renaming ? (
+                <RenameDialog monitor={renaming.monitor} currentName={renaming.name} onClose={() => setRenaming(null)} />
+            ) : null}
         </div>
     );
 

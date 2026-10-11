@@ -19,7 +19,7 @@ the differences between this design and the code.
 | Credential | Existing per-monitor `push_token`. No login, no user management on client boxes |
 | Alerts v1 | Host-down only, through the existing push-timeout path. No threshold alerts |
 | Containers v1 | List + healthy/up + exposed ports. No per-container CPU/mem |
-| Editing | In the admin panel (where monitors are managed). The board itself is read-only |
+| Editing | In the admin panel (where monitors are managed), plus display-name rename on the board itself |
 | Board access | Separate page, auth-only (bearer token, same as the dashboard) |
 | Board behaviour | Fullscreen, auto-paginating every ~5s (configurable) |
 | Agent platform | Go, single static binary, linux/amd64, systemd install |
@@ -259,11 +259,16 @@ distinct from the dense table: this is the NOC wall, not the operator desk.
 - A progress indicator shows position ("2 / 3") so the rotation is legible, not
   disorienting.
 
-### Editing (in the admin panel, not on the board)
+### Editing (mostly in the admin panel)
 
 - Pairing lives in the monitor edit flow: generate/rotate the push token, set
   the expected interval, link the monitor to its client group.
-- The Superboard itself is read-only. No controls except rotation pause.
+- The board's one control is rename: right-click a card for a custom menu,
+  Rename edits the monitor's display name (card titles prefer it over the
+  agent-reported hostname, which stays read-only). Rotation pauses while the
+  menu or dialog is open. Saving PATCHes the monitor; the server broadcasts
+  an invalidate and every board resnapshots. Needs a write-scoped token —
+  a read-only wall shows the server's refusal instead of failing silently.
 - What "editable" means concretely: which servers appear (any monitor with a
   recent metrics sample), card order (follow group weight, then name), and the
   rotate interval. All three are board settings, not per-card controls.

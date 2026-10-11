@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, type MouseEvent } from "react";
 import type { MonitorSummary, MetricsPayload, CPUPeak } from "@/lib/api";
 import { fleetAttention, percentage, sampleAgeMs, updatesStatus } from "@/lib/fleet-presentation";
 import { ContainerTiles } from "@/components/ContainerTiles";
@@ -40,7 +40,12 @@ function temperature(value: number | undefined): string | null {
 }
 
 /** Host reachability stays distinct from workload health and data freshness. */
-export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory }: { server: FleetServer; now: number; onOpenHistory: (id: number) => void }) {
+export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, onMenu }: {
+    server: FleetServer;
+    now: number;
+    onOpenHistory: (id: number) => void;
+    onMenu: (e: MouseEvent, monitor: MonitorSummary) => void;
+}) {
     const { monitor, metrics, time } = server;
     const { stale, containers, issues, hot } = fleetAttention(metrics, time, monitor.interval || 60, now);
     const down = monitor.status === 0;
@@ -60,7 +65,16 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory }:
     const updatesTone = updates?.tone === "ok" ? "text-ok" : updates?.tone === "warn" ? "text-warn" : updates?.tone === "bad" ? "text-bad" : "text-critical";
 
     return (
-        <article className="fleet-card" data-attention={attention} data-stale={stale || undefined} aria-label={`${displayName}: ${headline}`}>
+        <article
+            className="fleet-card"
+            data-attention={attention}
+            data-stale={stale || undefined}
+            aria-label={`${displayName}: ${headline}`}
+            onContextMenu={(e) => {
+                e.preventDefault();
+                onMenu(e, monitor);
+            }}
+        >
             <header className="fleet-heading">
                 <div className="min-w-0">
                     <h2 className="fleet-name truncate"><button type="button" className="fleet-history-link truncate max-w-full" onClick={() => onOpenHistory(monitor.id)}

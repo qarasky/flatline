@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boardRouteFrom, containerIssue, fleetAttention, groupSlug, matchGroups, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
+import { boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, fleetAttention, groupSlug, matchGroups, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -72,6 +72,14 @@ test("group slugs match names case-insensitively; servers can never match", () =
     assert.deepEqual(matchGroups(roster, "work, work").map(g => g.id), [1]);
     assert.deepEqual(matchGroups(roster, "nope"), []);
     assert.deepEqual(matchGroups(roster, ""), []);
+});
+test("rename input trims, caps, and rejects empties; menus stay on-screen", () => {
+    assert.equal(cleanMonitorName("  db-01  "), "db-01");
+    assert.equal(cleanMonitorName("   "), null);
+    assert.equal(cleanMonitorName("x".repeat(300))?.length, 255);
+    assert.deepEqual(clampMenuPosition(10, 10, 176, 40, 1920, 1080), { x: 10, y: 10 });
+    assert.deepEqual(clampMenuPosition(1900, 1060, 176, 40, 1920, 1080), { x: 1736, y: 1032 });
+    assert.deepEqual(clampMenuPosition(-50, -50, 176, 40, 1920, 1080), { x: 8, y: 8 });
 });
 test("high usage includes memory, disks and legacy GPU VRAM; unknown numbers stay unknown", () => {
     assert.equal(fleetAttention({gpu:{available:true, memTotal:100, memUsed:95}}, "2026-10-09T12:00:00Z", 180, now).hot, true);

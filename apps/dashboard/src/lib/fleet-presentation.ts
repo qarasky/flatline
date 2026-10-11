@@ -79,6 +79,29 @@ export function containerIssue(container: Container): boolean {
 }
 
 /**
+ * Clean a monitor name typed into the rename dialog: trimmed, capped the
+ * way the API caps it, empty when there is nothing to save.
+ */
+export function cleanMonitorName(input: string): string | null {
+    const next = input.trim().slice(0, 255);
+    return next.length > 0 ? next : null;
+}
+
+/**
+ * Clamp a cursor-anchored popup inside the viewport with a margin, so a
+ * right-click near the wall's edge never pushes the menu off-screen.
+ */
+export function clampMenuPosition(
+    x: number, y: number, menuWidth: number, menuHeight: number,
+    viewportWidth: number, viewportHeight: number, margin = 8,
+): { x: number; y: number } {
+    return {
+        x: Math.max(margin, Math.min(x, viewportWidth - menuWidth - margin)),
+        y: Math.max(margin, Math.min(y, viewportHeight - menuHeight - margin)),
+    };
+}
+
+/**
  * URL slug for a monitor group name: lowercase, runs of anything else
  * become one dash. "Aiel Qorgan" and "aiel-qorgan" address the same board.
  */
