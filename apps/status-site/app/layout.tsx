@@ -8,6 +8,7 @@ import "./globals.css";
  * is private, and forgetting it on one route would leak a client.
  */
 export const metadata: Metadata = {
+    icons: { icon: { url: "/favicon.svg?v=flatline-1", type: "image/svg+xml" } },
     title: {
         default: "Status",
         template: "%s",

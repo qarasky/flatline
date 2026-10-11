@@ -18,6 +18,7 @@ COPY apps/status-site/package-lock.json apps/status-site/package-lock.json
 COPY apps/status-site/next.config.mjs apps/status-site/next.config.mjs
 COPY apps/status-site/tsconfig.json apps/status-site/tsconfig.json
 COPY apps/status-site/app apps/status-site/app
+COPY apps/status-site/public apps/status-site/public
 
 WORKDIR /app/apps/status-site
 RUN npm ci --no-audit --no-fund
@@ -37,6 +38,7 @@ COPY packages/shared/package.json ../../packages/shared/package.json
 COPY packages/shared/src ../../packages/shared/src
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY --from=build /app/apps/status-site/.next ./.next
+COPY --from=build /app/apps/status-site/public ./public
 COPY --from=build /app/apps/status-site/next.config.mjs ./next.config.mjs
 
 # Server-side requests default to the compose service name; override per

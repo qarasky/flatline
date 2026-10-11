@@ -27,11 +27,14 @@ type Host struct {
 	Uptime   uint64 `json:"uptime"`
 }
 
-// CPU is a point sample over a 1s window, not an instantaneous reading.
-// PerCore holds one percentage per logical CPU in index order; power vs.
-// efficiency cores are deliberately not distinguished — the board only cares
-// which ones are hot. Temp is meaningful only when nonzero: 0 means "no
-// sensor", not "freezing", and the board hides it.
+// CPU is the average utilization across the 30 seconds before the push,
+// computed from cumulative CPU-time counters (/proc/stat deltas), not a
+// one-second window. PerCore holds one interval-average percentage per
+// logical CPU in index order; power vs. efficiency cores are deliberately not
+// distinguished — the board only cares which ones are hot. Temp is meaningful
+// only when nonzero: 0 means "no sensor", not "freezing", and the board
+// hides it. The one-shot `check` path uses a 1s counter window for speed and
+// says so in its log; it is a diagnostic, never a load average.
 type CPU struct {
 	Percent float64   `json:"percent"`
 	Cores   int       `json:"cores"`

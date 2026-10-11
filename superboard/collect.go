@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/mem"
@@ -43,33 +42,24 @@ func collectHost() (Host, error) {
 	}, nil
 }
 
-// collectCPU samples over a 1s window. An instantaneous reading would mostly
-// measure the sampler itself. One per-core call provides both the aggregate
-// (mean) and the per-core breakdown, so there is a single window, not two.
+// collectCPU reports true average utilization across a one-second window,
+// diffing cumulative CPU-time counters around a sleep. Linux reads /proc/stat
+// directly; other platforms use the same counter math via gopsutil.
+//
+// This is a one-shot diagnostic for `superboard check`: it must return
+// quickly, so the window is short. The daemon's live path does not use this —
+// it averages over 30 seconds (see live_collect.go) — so a one-second spike
+// here must never be presented as a 30-second load average.
 func collectCPU() (CPU, error) {
-	cores, err := cpu.Counts(true)
-	if err != nil {
-		return CPU{}, fmt.Errorf("cpu cores: %w", err)
-	}
-
-	percents, err := cpu.Percent(time.Second, true)
+	percent, perCore, cores, err := sampleCPUInterval(time.Second)
 	if err != nil {
 		return CPU{}, fmt.Errorf("cpu percent: %w", err)
-	}
-
-	percent := 0.0
-	if len(percents) > 0 {
-		sum := 0.0
-		for _, p := range percents {
-			sum += p
-		}
-		percent = sum / float64(len(percents))
 	}
 
 	return CPU{
 		Percent: percent,
 		Cores:   cores,
-		PerCore: percents,
+		PerCore: perCore,
 		Temp:    collectTemp(cpuSensorKeys),
 	}, nil
 }

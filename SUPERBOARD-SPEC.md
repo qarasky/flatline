@@ -121,7 +121,7 @@ Single static binary (`CGO_ENABLED=0`), linux/amd64. No runtime dependencies.
 
 | Source | What | Notes |
 |---|---|---|
-| `gopsutil/cpu` | percent, cores | 1s sample window per loop, not instantaneous |
+| `/proc/stat` cumulative counters | percent, cores | 30s interval averages via counter deltas, never a 1s window presented as load |
 | `gopsutil/mem` | total/used/percent | bytes, per the schema |
 | `gopsutil/disk` | per-mount total/used/percent | every local mount it can read |
 | `gopsutil/host` | hostname, os, uptime | |
@@ -130,12 +130,15 @@ Single static binary (`CGO_ENABLED=0`), linux/amd64. No runtime dependencies.
 
 ### Behaviour
 
-- Live mode defaults to **1-second CPU/RAM samples**. Existing configs with an
-  explicit 60-second interval retain it; change `interval_seconds` to 1 to opt in.
-- CPU uses elapsed-counter deltas; no blocking one-second sleep per collection.
-  Disk and temperatures refresh every 30s, GPU every 5s, Docker every 10s in
-  independent workers. Docker events, network counters and history charts remain
-  future work. Slow collector values are cached between refreshes.
+- Live mode defaults to **1-second pushes carrying 30-second-average CPU and
+  1-second-fresh RAM**. Existing configs with an explicit 60-second interval
+  retain it; change `interval_seconds` to 1 to opt in.
+- CPU averages cumulative `/proc/stat` counters between consecutive 30s
+  refreshes; pushes reuse the cached average with no blocking sleep in the
+  collection path. RAM stays per-push fresh. Disk and temperatures refresh
+  every 30s, GPU every 5s, Docker every 10s in independent workers. Docker
+  events, network counters and history charts remain future work. Slow
+  collector values are cached between refreshes.
 - A capacity-one pending-sample queue drops superseded samples during a slow
   push. One sender, bounded HTTP timeout, and capped retry backoff: never an
   ever-growing queue of old telemetry. No ±5-second jitter on a 1Hz cadence.

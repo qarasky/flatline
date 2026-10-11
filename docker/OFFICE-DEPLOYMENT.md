@@ -7,9 +7,13 @@ SSE buffering is disabled. Only the gateway is published.
 
 The standalone `compose.production.yaml` is deployed as
 `/home/office/flatline/compose.yaml` with `docker/production-gateway.conf` copied
-alongside it. Uses office's rootless Docker daemon (not the empty root daemon).
+alongside it. Uses the system (rootful) Docker daemon via `sudo docker`.
+Moved from the `office` user's rootless daemon on 2026-10-11; the old
+rootless daemon is no longer used for this stack.
 
-Build all images for `linux/amd64` and transfer/load them on office:
+Build all images for `linux/amd64` on the build machine, then transfer/load
+them into office's system daemon (`sudo docker load ...`). All `docker`
+commands on office run as root:
 
 ```sh
 docker build --platform linux/amd64 -f docker/dockerfile --target release -t artchsh/flatline:office-live .
@@ -30,15 +34,20 @@ notification activation only after stopping other active monitoring backends.
 Cutover requires stopping `uptime-kuma` to release port 3001, then setting
 `FLATLINE_PORT=3001` in `.env` and recreating only the gateway. The original
 container/image/data remain available for rollback. Agent configs must also
-be redirected to office. Rootless Docker is enabled at boot with user linger.
+be redirected to office. The system Docker daemon starts at boot via systemd;
+user linger for the `office` account is no longer required for this stack.
 
-Rollback (office, as user `office`):
+Rollback (office, as root):
 
 ```sh
 cd /home/office/flatline
-docker compose stop
-docker start uptime-kuma
+sudo docker compose stop
+sudo docker start uptime-kuma
 ```
+
+The stopped `uptime-kuma` container must exist in the system daemon for the
+last line to work — import it there first if it still lives only in the old
+rootless daemon.
 
 This restores the original public application without modifying either DB.
 Restore saved pre-cutover agent configs separately if returning to the Mac
@@ -46,7 +55,20 @@ Flatline backend. Stop one monitoring backend before enabling another to avoid
 duplicate alerts. Do not start the old Mac backend after production cutover
 unless its notification links have first been disabled.
 
-## Cutover record — 2026-10-09
+## Move to rootful Docker — 2026-10-11
+
+- Stack moved from the `office` user's rootless daemon to the system
+  (rootful) daemon. Compose path unchanged (`/home/office/flatline`);
+  manage it with `sudo docker compose ...` as root.
+- The host superboard agent (root systemd service) now reads containers
+  from the standard root socket (`/var/run/docker.sock`) directly instead
+  of falling through to a rootless socket.
+- User linger for the `office` account is no longer needed for this stack.
+- Data under `/home/office/flatline/data` is now written by rootful
+  containers: expect root-owned files there and manage/back up that
+  directory as root.
+
+## Cutover record — 2026-10-09 (rootless era, kept for history)
 
 - Office stack is deployed in `/home/office/flatline`, gateway on loopback 3001.
 - Original `uptime-kuma` is stopped, not removed. Original data is unchanged.

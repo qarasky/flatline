@@ -20,6 +20,7 @@ COPY apps/dashboard/index.html apps/dashboard/index.html
 COPY apps/dashboard/vite.config.ts apps/dashboard/vite.config.ts
 COPY apps/dashboard/tsconfig.json apps/dashboard/tsconfig.json
 COPY apps/dashboard/src apps/dashboard/src
+COPY apps/dashboard/public apps/dashboard/public
 
 WORKDIR /app/apps/dashboard
 RUN npm ci --no-audit --no-fund

@@ -3,6 +3,24 @@
 Personal fork of [Uptime Kuma](https://github.com/louislam/uptime-kuma) (MIT).
 Upstream stays untouched; no PRs are sent back.
 
+## Current implementation — October 2026
+
+The sections below retain early investigation and migration notes; old stack
+descriptions and unchecked rebrand lists are historical, not the current UI.
+The active stack is an API-only Node backend, React/Vite operator dashboard,
+Next.js status site, and Go host agent. See [README.md](README.md) for current
+setup instructions and fictional-data screenshots.
+
+Delivered since the initial frontend cutover: bearer-authenticated SSE,
+1Hz CPU/RAM telemetry, 30-second archival, clickable server history with
+p90/p95/p99, rolling 10-minute total-CPU peaks, compact looping container tiles,
+and the shared Flatline favicon. Single-origin production routing and rollback
+are documented in [docker/OFFICE-DEPLOYMENT.md](docker/OFFICE-DEPLOYMENT.md).
+
+Still planned: OS pending-update checks and private aggregate saved views.
+Dependency hardening is a separate outstanding pass; feature completion does
+not imply those inherited advisories have been resolved.
+
 Upstream's contributor-policy and CI files were removed — this fork is solo-developed and
 merges straight to `main`:
 

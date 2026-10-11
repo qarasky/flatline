@@ -1,21 +1,55 @@
 <div align="center" width="100%">
-    <img src="./public/icon.svg" width="128" alt="Flatline Logo" />
+    <img src="./apps/dashboard/public/favicon.svg" width="96" alt="Flatline mark" />
 </div>
 
 # Flatline
 
-Self-hosted uptime monitoring with Telegram alerts and an agent-friendly REST API.
+Self-hosted uptime monitoring, live server telemetry, and Telegram alerts—built for shared operators and AI agents.
 
 A fork of [Uptime Kuma](https://github.com/louislam/uptime-kuma) (MIT), trimmed down to what a
 small team actually uses and extended where it fell short. See [FORK-ROADMAP.md](./FORK-ROADMAP.md)
 for the full list of changes.
 
+![Superboard with eight fictional servers and compact container status tiles](docs/screenshots/superboard.png)
+
+**All screenshots use generated sample data**, not a production installation.
+
+## What you can do
+
+- Monitor websites and services from a dense, keyboard-friendly dashboard.
+- Watch CPU/RAM at 1Hz on **Superboard**, including per-core load, disk usage,
+  optional GPU/VRAM, temperatures, and explicit telemetry freshness.
+- Open a server's history with **10m / 1h / 6h / 24h / 7d** ranges and
+  **p90 / p95 / p99**, mean, and peak summaries.
+- Track containers in three-column status tiles with automatic vertical looping,
+  pinned problems, and no manual scrolling. Host reachability stays separate
+  from workload health.
+- Share monitor data across accounts without sharing passwords or API tokens.
+- Publish client status pages with password gates, branding, and group-driven
+  generation; manage the installation through scoped REST calls.
+
+### Operator dashboard
+
+Grouped monitors, bulk actions, search (`/`), and live status updates.
+
+![Operator dashboard with fictional applications and infrastructure](docs/screenshots/dashboard.png)
+
+### Server history
+
+Percentiles use archived readings (normally every 30 seconds), **not raw 1Hz
+samples**. Charts show bucket averages; missing readings are not zeroes.
+The card's **Peak 10m** tracks the highest total CPU load observed in the last
+ten minutes, not the currently busiest core.
+
+![Fictional CPU, RAM, GPU and VRAM history with p90, p95 and p99 summaries](docs/screenshots/history.png)
+
+[Screenshot fixtures and regeneration instructions](docs/screenshots/README.md).
+
 ## What is different from upstream
 
 - **Telegram only.** All 108 other notification providers were removed, along with the Webpush
   service worker and its VAPID infrastructure. Fewer moving parts, one way to be paged.
-- **Multiple real users.** Upstream supports several accounts but they cannot be created after
-  setup. Flatline adds admin-issued, single-use invite links: mint a link, send it over any channel
+- **Multiple real users.** Flatline adds operator-issued, single-use invite links: mint a link, send it over any channel
   you already trust, the recipient picks their own password. No email required, no signup form.
 - **REST API v1.** Everything the dashboard does is available over HTTP with bearer-token
   auth and per-token `read` / `write` / `publish` scopes, so scripts and LLM agents can drive it.
@@ -27,8 +61,8 @@ for the full list of changes.
 - **Flatline branding.** Hot-orange accent on warm near-black, following the palette of
   [1410666.xyz](https://1410666.xyz).
 
-Upstream keeps everything it has: HTTP(s)/TCP/DNS/Ping/Push/Steam/Docker/SFTP/NTP/Postgres/Redis
-and more monitor types, status pages, maintenance windows, proxy support, 2FA, and the ping charts.
+Retains upstream monitor types such as HTTP(s), TCP, DNS, Ping, Push, Docker,
+SFTP, NTP, Postgres, and Redis, plus maintenance windows, proxy support, and 2FA.
 
 ## ⭐ Features
 
@@ -39,7 +73,7 @@ and more monitor types, status pages, maintenance windows, proxy support, 2FA, a
 - REST API v1 with token scopes and a self-describing OpenAPI document
 - Multi-user with single-use invite links
 - Multiple status pages, maintenance windows, tags, proxy support, 2FA
-- 20-second intervals
+- Configurable check intervals; 1Hz host telemetry does not accelerate website checks
 
 ## Architecture
 
@@ -51,10 +85,11 @@ Three processes, one backend:
 | Public status site | `apps/status-site` | 3002 | Per-client status pages (Next.js). |
 | Operator dashboard | `apps/dashboard` | 3003 | Dense monitor table, Superboard, users (Vite + React). |
 
-The dashboard and status site talk to the backend over HTTP with bearer
-tokens. Sign in with a username and password; the dashboard mints a token for
-the browser. Agents use `POST /api/v1/api-keys` (or the dashboard's Agents
-panel) for theirs.
+The dashboard uses bearer-authenticated HTTP. Sign in with a username and
+password to obtain a browser token; integrations use per-user API keys from
+`POST /api/v1/api-keys` or the **Agents** panel. The status site reads the
+status-page API; password-gated pages use page-scoped unlock cookies rather
+than granting visitors operator access.
 
 ### Live updates
 
@@ -82,12 +117,16 @@ and restart/durability behavior.
 
 ## 🔧 How to Install
 
+Documentation: [dashboard](apps/dashboard/README.md) ·
+[agent installation](superboard/README.md) · [Superboard specification](SUPERBOARD-SPEC.md) ·
+[single-origin deployment and rollback](docker/OFFICE-DEPLOYMENT.md).
+
 ### Local dev
 
 Requires Node.js >= 26.2.0.
 
 ```bash
-git clone https://github.com/artchsh/flatline.git
+git clone https://github.com/qarasky/flatline.git
 cd flatline
 npm ci
 ./dev.sh
@@ -105,8 +144,8 @@ For the single-host office deployment behind Cloudflare Tunnel, use
 [office deployment/rollback guide](docker/OFFICE-DEPLOYMENT.md).
 
 ```bash
-mkdir flatline && cd flatline
-curl -O https://raw.githubusercontent.com/artchsh/flatline/master/compose.yaml
+git clone https://github.com/qarasky/flatline.git
+cd flatline
 docker compose up -d --build
 ```
 
@@ -144,14 +183,14 @@ docker run -d \
 Requires Node.js >= 26.2.0.
 
 ```bash
-git clone https://github.com/artchsh/flatline.git
+git clone https://github.com/qarasky/flatline.git
 cd flatline
 npm ci
 npm run start-server-dev
 ```
 
-Then run the frontend apps (each has its own README): `apps/status-site`
-and `apps/dashboard`, pointed at the backend URL.
+Then run the frontend apps: `apps/status-site` and
+[apps/dashboard](apps/dashboard/README.md), pointed at the backend URL.
 
 Data is stored in `./data` (SQLite by default).
 
@@ -179,11 +218,44 @@ curl -X POST http://localhost:3001/api/v1/monitors/1/heartbeat \
 
 Point an agent at `http://localhost:3001/api/v1/openapi.json` and it can figure out the rest.
 
+### Reading Superboard from an AI agent
+
+A **read-scoped token** can inspect current metrics and historical percentiles
+without operating a browser:
+
+```sh
+export FLATLINE_URL=https://flatline.example
+# Set FLATLINE_TOKEN privately; do not paste real tokens into docs or source.
+curl -H "Authorization: Bearer $FLATLINE_TOKEN" \
+  "$FLATLINE_URL/api/v1/monitors/metrics/latest?ids=1,2"
+curl -H "Authorization: Bearer $FLATLINE_TOKEN" \
+  "$FLATLINE_URL/api/v1/monitors/1/metrics/summary?hours=24"
+```
+
+History summaries read the selected window, not merely the newest 1,000 rows.
+They return at most 240 chart buckets and inspect at most 50,000 archived rows;
+`capped: true` explicitly flags truncated statistics. The read API exposes up
+to seven days, while retention is 30 days. Restarts may lose up to 30 seconds
+of unarchived telemetry; recovered pre-restart CPU peaks use archived samples.
+
 ## 🆙 How to Update
 
 ```bash
-docker compose pull && docker compose up -d
+git pull --ff-only
+docker compose up -d --build
 ```
+
+Back up the database before upgrades. For manually transferred production
+images, follow the [deployment guide](docker/OFFICE-DEPLOYMENT.md) instead.
+
+## Planned, not implemented
+
+- Read-only host update checks: Updated / Needs updating / Critical update
+  needed, with Unknown for failed or unsupported checks. Severity must come
+  from OS advisories; no automatic installation or reboot.
+- Private aggregate saved status-page views.
+
+See [SUPERBOARD-SPEC.md](SUPERBOARD-SPEC.md) for planned update-check semantics.
 
 ## 📜 Credits & licence
 
