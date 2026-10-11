@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 /**
  * Minimal path router.
  *
- * The dashboard has exactly three top-level routes (the table, the board and
- * the chrome-free kiosk board). A routing library would be more machinery than
+ * The dashboard has three top-level routes (the table, the board and
+ * the chrome-free kiosk board, each board optionally group-scoped like
+ * /superboard/kiosk/work). A routing library would be more machinery than
  * the problem needs, and this keeps the dependency list where it is.
  *
  * Vite's dev server and `vite preview` both fall back to index.html for

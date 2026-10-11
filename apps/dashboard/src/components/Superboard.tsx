@@ -13,7 +13,7 @@ import { TokenGate } from "@/components/TokenGate";
 import { FleetCard, type FleetServer } from "@/components/FleetCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { fleetAttention } from "@/lib/fleet-presentation";
+import { fleetAttention, matchGroups } from "@/lib/fleet-presentation";
 import { fleetPageSize } from "@/lib/fleet-layout";
 import { ServerHistory } from "@/components/ServerHistory";
 
@@ -94,8 +94,12 @@ function Clock() {
 
 /**
  * The board itself: fleet cards, auto-pagination, and the kiosk chrome.
+ *
+ * When `filter` is set (a comma-separated group scope from the URL), only
+ * servers whose parent group matches stay on the board, including live
+ * arrivals. Unknown scopes match nothing rather than everything.
  */
-function Superboard({ kiosk, onDisconnect }: { kiosk: boolean; onDisconnect: () => void }) {
+function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: string | null; onDisconnect: () => void }) {
     const [servers, setServers] = useState<FleetServer[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [loaded, setLoaded] = useState(false);
@@ -109,6 +113,9 @@ function Superboard({ kiosk, onDisconnect }: { kiosk: boolean; onDisconnect: () 
     const openHistory = useCallback((id: number) => setHistoryId(id), []);
     const closeHistory = useCallback(() => setHistoryId(null), []);
     const historyMonitor = servers.find(server => server.monitor.id === historyId)?.monitor;
+    // Resolved scope names for the wall header; raw filter when unresolvable.
+    const [scopeNames, setScopeNames] = useState<string[]>([]);
+    const scopeTitle = scopeNames.length > 0 ? scopeNames.join(", ") : filter;
 
     // Freshness must age even when the last/only host stops sending.
     useEffect(() => {
@@ -131,6 +138,9 @@ function Superboard({ kiosk, onDisconnect }: { kiosk: boolean; onDisconnect: () 
     useEffect(() => {
         let alive = true;
         let roster = new Map<number, MonitorSummary>();
+        // Group scope for this board, recomputed on every snapshot: a group
+        // rename takes effect on the next (re)connect, same as ordering.
+        let scopeIds: Set<number> | null = null;
         const order = (a: FleetServer, b: FleetServer) =>
             (roster.get(a.monitor.parent ?? -1)?.weight ?? 0) - (roster.get(b.monitor.parent ?? -1)?.weight ?? 0) ||
             (a.monitor.weight ?? 0) - (b.monitor.weight ?? 0) || a.monitor.name.localeCompare(b.monitor.name);
@@ -139,20 +149,25 @@ function Superboard({ kiosk, onDisconnect }: { kiosk: boolean; onDisconnect: () 
             try {
                 const monitors = await fetchAllMonitors();
                 roster = new Map(monitors.map(m => [m.id, m]));
+                const matched = filter ? matchGroups(monitors, filter) : [];
+                scopeIds = filter ? new Set(matched.map(g => g.id)) : null;
 
                 // Groups are containers, not servers; anything else that has
                 // recent metrics is one. Zero configuration, and a server that
                 // stops pushing ages out of the board on its own. One bulk
                 // request, not one per monitor, so the board sips the rate
-                // budget instead of drinking it.
-                const candidates = monitors.filter((m) => m.type !== "group" && m.active !== false);
+                // budget instead of drinking it. A group scope narrows the
+                // candidates to that group's children; ungrouped monitors
+                // never match a scope.
+                const candidates = monitors.filter((m) => m.type !== "group" && m.active !== false &&
+                    (!scopeIds || (m.parent != null && scopeIds.has(m.parent))));
                 const next = await toFleetServers(candidates);
 
                 if (!alive) {
                     return;
                 }
 
-
+                setScopeNames(matched.map(g => g.name));
                 // Operator-controlled order: parent group weight, then the
                 // monitor's own weight, then name. Ties fall back to name so
                 // the board never reshuffles between refreshes.
@@ -187,6 +202,10 @@ function Superboard({ kiosk, onDisconnect }: { kiosk: boolean; onDisconnect: () 
                 if (!alive) { return; }
                 const monitor = roster.get(event.monitorId);
                 if (event.type === "heartbeat" && monitor) { roster.set(event.monitorId, { ...monitor, ...event.patch }); }
+                if (event.type === "metrics") {
+                    const current = roster.get(event.monitorId);
+                    if (scopeIds && !(current && current.parent != null && scopeIds.has(current.parent))) { return; }
+                }
                 setServers(previous => {
                     if (event.type === "metrics" && !previous.some(s => s.monitor.id === event.monitorId) && monitor?.active && monitor.type !== "group") {
                         return [...previous, { monitor, time: event.time, metrics: event.metrics, cpuPeak10m: event.cpuPeak10m }].sort(order);
@@ -208,7 +227,7 @@ function Superboard({ kiosk, onDisconnect }: { kiosk: boolean; onDisconnect: () 
             alive = false;
             stop();
         };
-    }, [ onDisconnect ]);
+    }, [ onDisconnect, filter ]);
 
     // Pause work while the tab is hidden; resume when it comes back.
     useEffect(() => {
@@ -292,10 +311,11 @@ function Superboard({ kiosk, onDisconnect }: { kiosk: boolean; onDisconnect: () 
 
     const content = loaded && servers.length === 0 ? (
         <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-            <p className="text-lg font-semibold">No servers reporting yet.</p>
+            <p className="text-lg font-semibold">{filter ? `No servers in scope “${scopeTitle}”.` : "No servers reporting yet."}</p>
             <p className="max-w-md text-sm text-quiet">
-                Install the Superboard agent on a box, or POST metrics to a push monitor. Any monitor
-                that sends a metrics sample shows up here automatically.
+                {filter
+                    ? "Check the group name in the URL, or link these monitors to a group in the admin panel."
+                    : "Install the Superboard agent on a box, or POST metrics to a push monitor. Any monitor that sends a metrics sample shows up here automatically."}
             </p>
         </div>
     ) : (
@@ -324,6 +344,7 @@ function Superboard({ kiosk, onDisconnect }: { kiosk: boolean; onDisconnect: () 
                 <div className="flex items-center justify-between px-4 py-2">
                     <span className="text-sm font-semibold tracking-tight">
                         Flatline <span className="font-normal text-quiet">Superboard</span>
+                        {filter ? <span className="font-normal text-quiet"> · {scopeTitle}</span> : null}
                     </span>
                     <span className="flex items-center gap-4">
                         {down > 0 ? (
@@ -351,13 +372,14 @@ function Superboard({ kiosk, onDisconnect }: { kiosk: boolean; onDisconnect: () 
                         ← Flatline
                     </button>
                     <span className="text-sm text-quiet">Superboard</span>
+                    {filter ? <span className="text-xs text-quiet">· {scopeTitle}</span> : null}
                     <span className="text-xs text-quiet">
                         <span className="tnum">{servers.length}</span> {servers.length === 1 ? "server" : "servers"}
                         {down > 0 ? <span className="ml-1 font-semibold text-bad">· {down} down</span> : null}
                     </span>
                     <div className="ml-auto flex items-center gap-3">
                         {position}
-                        <Button size="sm" variant="outline" onClick={() => navigate("/superboard/kiosk")}>
+                        <Button size="sm" variant="outline" onClick={() => navigate(filter ? `/superboard/kiosk/${encodeScope(filter)}` : "/superboard/kiosk")}>
                             Kiosk
                         </Button>
                         <Button size="sm" variant="ghost" title="Forget token" onClick={onDisconnect}>
@@ -384,13 +406,22 @@ function Superboard({ kiosk, onDisconnect }: { kiosk: boolean; onDisconnect: () 
 }
 
 /**
+ * Encode a raw group scope back into a URL segment, keeping commas as the
+ * multi-group delimiter.
+ */
+function encodeScope(filter: string): string {
+    return filter.split(",").map((part) => encodeURIComponent(part.trim())).join(",");
+}
+
+/**
  * Superboard entry point: auth gate plus the board.
  *
  * Auth is the same bearer-token model as the dashboard, so the board inherits
  * every scope rule without a second login.
  * @param props.kiosk Render chrome-free for a wall display
+ * @param props.filter Group scope from the URL, or null for the whole fleet
  */
-export function SuperboardApp({ kiosk }: { kiosk: boolean }) {
+export function SuperboardApp({ kiosk, filter }: { kiosk: boolean; filter: string | null }) {
     const [authed, setAuthed] = useState(() => Boolean(getToken()));
 
     const disconnect = useCallback(() => {
@@ -402,5 +433,5 @@ export function SuperboardApp({ kiosk }: { kiosk: boolean }) {
         return <TokenGate inviteToken={null} onSaved={() => setAuthed(true)} />;
     }
 
-    return <Superboard kiosk={kiosk} onDisconnect={disconnect} />;
+    return <Superboard kiosk={kiosk} filter={filter} onDisconnect={disconnect} />;
 }

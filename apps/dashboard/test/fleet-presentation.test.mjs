@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { containerIssue, fleetAttention, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
+import { boardRouteFrom, containerIssue, fleetAttention, groupSlug, matchGroups, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -44,6 +44,34 @@ test("pending-update counts map to green/yellow/red/dark-red; unknown stays sile
     assert.deepEqual(updatesStatus({ total: 80, security: 8 })?.label, "Security Updates: 8");
     assert.deepEqual(updatesStatus({ total: 3, security: 1 })?.tone, "critical");
     assert.deepEqual(updatesStatus({ total: 5, security: 0 })?.tone, "warn");
+});
+test("board routes resolve kiosk and group scopes; nothing else is a board", () => {
+    assert.deepEqual(boardRouteFrom("/superboard"), { kiosk: false, filter: null });
+    assert.deepEqual(boardRouteFrom("/superboard/"), { kiosk: false, filter: null });
+    assert.deepEqual(boardRouteFrom("/superboard/kiosk"), { kiosk: true, filter: null });
+    assert.deepEqual(boardRouteFrom("/superboard/kiosk/"), { kiosk: true, filter: null });
+    assert.deepEqual(boardRouteFrom("/superboard/work"), { kiosk: false, filter: "work" });
+    assert.deepEqual(boardRouteFrom("/superboard/kiosk/work"), { kiosk: true, filter: "work" });
+    assert.deepEqual(boardRouteFrom("/superboard/kiosk/work,personal"), { kiosk: true, filter: "work,personal" });
+    assert.deepEqual(boardRouteFrom("/"), null);
+    assert.deepEqual(boardRouteFrom("/invite/abc"), null);
+    assert.deepEqual(boardRouteFrom("/monitors"), null);
+});
+test("group slugs match names case-insensitively; servers can never match", () => {
+    assert.equal(groupSlug("Aiel Qorgan"), "aiel-qorgan");
+    assert.equal(groupSlug("work"), "work");
+    const roster = [
+        { id: 1, name: "work", type: "group" },
+        { id: 2, name: "Personal", type: "group" },
+        { id: 3, name: "work", type: "push" },
+        { id: 4, name: "db", type: "push", parent: 1 },
+    ];
+    assert.deepEqual(matchGroups(roster, "work").map(g => g.id), [1]);
+    assert.deepEqual(matchGroups(roster, "PERSONAL").map(g => g.id), [2]);
+    assert.deepEqual(matchGroups(roster, "work,personal").map(g => g.id), [1, 2]);
+    assert.deepEqual(matchGroups(roster, "work, work").map(g => g.id), [1]);
+    assert.deepEqual(matchGroups(roster, "nope"), []);
+    assert.deepEqual(matchGroups(roster, ""), []);
 });
 test("high usage includes memory, disks and legacy GPU VRAM; unknown numbers stay unknown", () => {
     assert.equal(fleetAttention({gpu:{available:true, memTotal:100, memUsed:95}}, "2026-10-09T12:00:00Z", 180, now).hot, true);

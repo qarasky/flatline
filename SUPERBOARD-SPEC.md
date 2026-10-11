@@ -273,6 +273,17 @@ distinct from the dense table: this is the NOC wall, not the operator desk.
 - Routes live in the dashboard app: `/superboard` (with chrome) and
   `/superboard/kiosk` (no chrome, fixed viewport, no scrollbar). A ~40-line
   path router in `src/lib/router.ts`; no routing dependency.
+- Board scopes: appending a monitor-group segment narrows the board to that
+  group's children — `/superboard/kiosk/work` for the work wall,
+  `/superboard/personal` for the desk, comma-separated for several
+  (`/superboard/kiosk/work,personal`). Matching is by group slug
+  (lowercased, `Aiel Qorgan` → `aiel-qorgan`) or case-insensitive exact
+  name; only `type: "group"` monitors match, and unknown scopes match
+  nothing rather than everything. The unfiltered URLs show the whole fleet.
+  Live arrivals respect the scope; the wall header names it.
+  Prerequisite is ordinary grouping: link each monitor to its group in the
+  admin panel. Do not name a group `kiosk` (the desk URL would lose to the
+  kiosk route).
 - Discovery is the 404: the board lists monitors, skips `type: "group"`, and
   calls `metrics/latest` for the rest. A 404 means "not a server" and is
   dropped. Zero configuration, and a server that stops pushing ages out on its

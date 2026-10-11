@@ -18,6 +18,7 @@ import { UsersPanel } from "@/components/UsersPanel";
 import { TokenGate } from "@/components/TokenGate";
 import { SuperboardApp } from "@/components/Superboard";
 import { inviteTokenFrom, navigate, usePath } from "@/lib/router";
+import { boardRouteFrom } from "@/lib/fleet-presentation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -762,17 +763,20 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
 /**
  * Application root.
  *
- * Four routes: the monitor table at "/", the wall board at "/superboard",
- * the chrome-free board at "/superboard/kiosk", and invite redemption at
- * "/invite/:token". The route is resolved before either view mounts, so the
- * dashboard's polling never runs while the board is open.
+ * Routes: the monitor table at "/", the wall board at "/superboard"
+ * (optionally scoped to monitor groups, e.g. "/superboard/work"), the
+ * chrome-free board at "/superboard/kiosk" (same scopes, e.g.
+ * "/superboard/kiosk/work"), and invite redemption at "/invite/:token".
+ * The route is resolved before either view mounts, so the dashboard's
+ * polling never runs while the board is open.
  */
 export default function App() {
     const path = usePath();
     const inviteToken = inviteTokenFrom(path);
+    const board = boardRouteFrom(path);
 
-    if (path === "/superboard" || path === "/superboard/kiosk") {
-        return <SuperboardApp kiosk={path === "/superboard/kiosk"} />;
+    if (board) {
+        return <SuperboardApp kiosk={board.kiosk} filter={board.filter} />;
     }
 
     return <Dashboard inviteToken={inviteToken} />;
