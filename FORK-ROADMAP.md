@@ -12,13 +12,23 @@ Next.js status site, and Go host agent. See [README.md](README.md) for current
 setup instructions and fictional-data screenshots.
 
 Delivered since the initial frontend cutover: bearer-authenticated SSE,
-1Hz CPU/RAM telemetry, 30-second archival, clickable server history with
-p90/p95/p99, rolling 10-minute total-CPU peaks, compact looping container tiles,
-and the shared Flatline favicon. Single-origin production routing and rollback
-are documented in [docker/OFFICE-DEPLOYMENT.md](docker/OFFICE-DEPLOYMENT.md).
+1Hz telemetry, 30-second archival, clickable server history with p90/p95/p99,
+rolling 10-minute total-CPU peaks, compact looping container tiles, the shared
+Flatline favicon, and single-origin production routing
+([docker/OFFICE-DEPLOYMENT.md](docker/OFFICE-DEPLOYMENT.md)).
 
-Still planned: OS pending-update checks and private aggregate saved views.
-Dependency hardening is a separate outstanding pass; feature completion does
+Later work (agent 1.3 era): CPU utilization is derived **server-side** from raw
+cumulative counters the agent pushes (long-window means in history, short-window
+live readings, agent-side percent retained only as a compat fallback); agents
+report read-only pending-update counts rendered as green/yellow/red/dark-red on
+cards; boards are group-scoped by URL (`/superboard/kiosk/work`); servers can be
+renamed on the board via a right-click menu.
+
+Still planned: private aggregate saved views, and the ranked backlog in
+[IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md) (agent self-telemetry,
+disk-backed send buffer, threshold alerts, multi-tier retention, network
+counters, per-container stats, SMART health). Dependency hardening is a
+separate outstanding pass; feature completion does
 not imply those inherited advisories have been resolved.
 
 Upstream's contributor-policy and CI files were removed — this fork is solo-developed and

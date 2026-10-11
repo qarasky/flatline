@@ -24,6 +24,12 @@ for the full list of changes.
 - Track containers in three-column status tiles with automatic vertical looping,
   pinned problems, and no manual scrolling. Host reachability stays separate
   from workload health.
+- See pending OS update counts per host (`No updates` / `Updates: N` /
+  `Security Updates: N`), read-only, from agent 1.3.
+- Wall-mount a group of servers on its own kiosk page —
+  `/superboard/kiosk/work` — while home shows every fleet on one board,
+  or combine scopes with `/superboard/kiosk/work,personal`.
+- Rename servers on the board directly (right-click → Rename).
 - Share monitor data across accounts without sharing passwords or API tokens.
 - Publish client status pages with password gates, branding, and group-driven
   generation; manage the installation through scoped REST calls.
@@ -121,7 +127,8 @@ and restart/durability behavior.
 
 Documentation: [dashboard](apps/dashboard/README.md) ·
 [agent installation](superboard/README.md) · [Superboard specification](SUPERBOARD-SPEC.md) ·
-[single-origin deployment and rollback](docker/OFFICE-DEPLOYMENT.md).
+[single-origin deployment and rollback](docker/OFFICE-DEPLOYMENT.md) ·
+[improvement backlog](IMPROVEMENT-ROADMAP.md).
 
 ### Local dev
 
@@ -252,12 +259,16 @@ images, follow the [deployment guide](docker/OFFICE-DEPLOYMENT.md) instead.
 
 ## Planned, not implemented
 
-- Read-only host update checks: Updated / Needs updating / Critical update
-  needed, with Unknown for failed or unsupported checks. Severity must come
-  from OS advisories; no automatic installation or reboot.
-- Private aggregate saved status-page views.
+The ranked improvement list — with the comparable systems (Prometheus,
+Netdata, Telegraf, Grafana Alloy, Beszel) each item is measured against —
+lives in [IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md). Headline items:
+agent self-telemetry and a disk-backed send buffer, threshold alerts,
+multi-tier retention, network/disk-I/O metrics, per-container stats, and
+SMART disk health.
 
-See [SUPERBOARD-SPEC.md](SUPERBOARD-SPEC.md) for planned update-check semantics.
+Also outstanding: private aggregate saved status-page views; inherited
+dependency advisories (separate hardening pass, see
+[docker/OFFICE-DEPLOYMENT.md](docker/OFFICE-DEPLOYMENT.md)).
 
 ## 📜 Credits & licence
 

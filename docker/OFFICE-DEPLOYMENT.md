@@ -68,6 +68,23 @@ unless its notification links have first been disabled.
   containers: expect root-owned files there and manage/back up that
   directory as root.
 
+## Pending rollout — 2026-10-12
+
+Committed but **not yet deployed** anywhere:
+
+- Backend: raw CPU counters with server-side utilization derivation (live
+  short-window, ~30s means in history) and agent pending-update counts ingest.
+- Dashboard: pending-update line on cards, group-scoped boards
+  (`/superboard/kiosk/<group>`), right-click rename.
+- Agent **1.3.0**: sends raw counters plus update counts; rebuild
+  (`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o superboard .`) and
+  restart on office and all client hosts.
+- Order: backend → dashboard → agents. Both directions are compatible; the
+  new numbers (steady CPU history, update counts) appear only after the
+  matching side ships.
+- Deploy with the usual flow: build `linux/amd64` images, `sudo docker load`,
+  `sudo docker compose up -d` in `/home/office/flatline`. Back up the DB first.
+
 ## Cutover record — 2026-10-09 (rootless era, kept for history)
 
 - Office stack is deployed in `/home/office/flatline`, gateway on loopback 3001.

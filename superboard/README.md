@@ -35,13 +35,16 @@ records ordinary healthy heartbeats at most every min(30s, timeout/3).
 
 `superboard check --verbose` performs a complete one-shot collection and push.
 
-The dashboard now provides CPU/RAM/GPU/VRAM history charts and p90/p95/p99
+The dashboard provides CPU/RAM/GPU/VRAM history charts and p90/p95/p99
 summaries from archived readings. Card `Peak 10m` tracks rolling total CPU load;
 neither feature requires a newer agent. Container tiles show names and state
 colors, looping automatically when more than nine containers are present.
+Host cards show pending-update counts (`No updates` green, `Updates: N` yellow
+below 50 / red at 50+, `Security Updates: N` dark red); unknown stays blank.
 
-Network counters, Docker event subscriptions and host pending-update checks
-are not implemented. Update checks are documented as a future read-only
-feature; the agent does not install packages or reboot hosts. See
-[`../SUPERBOARD-SPEC.md`](../SUPERBOARD-SPEC.md) for storage/stream semantics,
-limits and planned update-check behavior.
+Not implemented: network counters, Docker event subscriptions, per-container
+CPU/memory stats, and log shipping. Update checks are read-only and never
+install packages or reboot hosts. See
+[`../SUPERBOARD-SPEC.md`](../SUPERBOARD-SPEC.md) for storage/stream semantics
+and limits, and [`../IMPROVEMENT-ROADMAP.md`](../IMPROVEMENT-ROADMAP.md) for
+the ranked backlog.

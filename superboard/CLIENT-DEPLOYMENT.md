@@ -1,4 +1,4 @@
-# Client agents — 2026-10-09
+# Client agents
 
 Provisioned using the existing credential-store SSH launchers in `client-cli/`,
 following `client-cli/how-to-use.md`. No SSH passwords were requested, passed
@@ -11,6 +11,18 @@ via arguments/environment, or captured. The folder and ignore rules are unchange
 | modernization-meks | 48 | MEKS |
 | national-business | 49 | nationalbusiness.kz |
 | zhasalash | 50 | jasalash |
+
+## Pending rollout — 2026-10-12
+
+- Agent **1.3.0** (raw CPU counters, server-side utilization derivation,
+  pending-update counts) is committed but **not yet deployed to these hosts**.
+  Order: backend + dashboard images first, then rebuild the agent binary and
+  restart `superboard` on each box. The backend is backward compatible either
+  way, but update counts only appear after the agent upgrade.
+- Configured `interval_seconds` remains 1 on all five hosts; 30-second archival
+  and per-host group linking are unchanged.
+
+## Provisioning record — 2026-10-09
 
 All five hosts are Linux x86_64. Agent 1.2.0 is installed persistently at
 `/usr/local/bin/superboard`, enabled via root systemd service `superboard`.

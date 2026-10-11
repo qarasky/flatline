@@ -22,6 +22,11 @@ replace the backend URL placeholder at startup via `FLATLINE_URL`.
 - `/`: searchable grouped monitors, bulk operations, detail panels, Agents and Users.
 - `/superboard`: live host metrics and compact container tiles.
 - `/superboard/kiosk`: wall-display chrome, clock and automatic fleet pagination.
+- `/superboard/kiosk/<group>`: the same board scoped to a monitor group —
+  `/superboard/kiosk/work` shows only that group's children, comma-separated
+  scopes combine groups, and unfiltered URLs show the whole fleet. Matching is
+  by slug (`Aiel Qorgan` → `aiel-qorgan`) or case-insensitive exact name;
+  unknown scopes show an empty board rather than everything.
 
 Sign in with username/password (and TOTP when configured); first-run setup
 creates the initial account. REST snapshots and bearer-authenticated SSE keep
@@ -31,6 +36,16 @@ viewports scroll the board rather than rotating single rows.
 Select a server name (↗) for history. Ranges span 10m to 7d, with p90/p95/p99
 computed from archived readings. History refreshes every 30 seconds and pauses
 fleet pagination while open; Escape closes the dialog.
+
+Right-click a server card for the custom menu; **Rename** edits the monitor's
+display name (card titles prefer it over the agent hostname). Needs a
+write-scoped token; a read-only token gets an explicit refusal. The name
+change propagates to every connected board through the server's invalidate
+broadcast. Rotation pauses while the menu or dialog is open.
+
+Cards show pending-update counts when the agent reports them: `No updates`
+green, `Updates: N` yellow below 50 / red at 50+, `Security Updates: N` dark
+red. A missing field means unknown and renders nothing.
 
 Container tiles use three columns and roughly nine visible slots. More than
 nine containers loop vertically; up to six problems are pinned. Hover/focus

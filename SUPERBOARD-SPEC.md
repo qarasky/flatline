@@ -199,7 +199,10 @@ Single static binary (`CGO_ENABLED=0`), linux/amd64. No runtime dependencies.
 ### Explicitly out of v1
 
 Per-container CPU/mem (stats streaming), threshold evaluation client-side,
-log shipping, anything that is not "collect these six things and POST them."
+log shipping, anything that is not "collect these things and POST them."
+Agent 1.3 added pending-update counts to the list (read-only, counts only);
+see the ranked backlog in [IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md)
+for what is deliberately deferred and why.
 
 ---
 

@@ -11,7 +11,8 @@ Please include:
 
 - what the issue is and what an attacker gains
 - steps to reproduce, or a proof of concept
-- the Flatline version (`docker logs flatline | head -1`, or the About page)
+- the Flatline version (`docker logs flatline | head -1`, or the API index at
+  `GET /` on the backend)
 
 ## Scope
 
