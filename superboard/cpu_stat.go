@@ -188,6 +188,22 @@ func readCPUCounters() (cpuCounter, []cpuCounter, error) {
 	return gopsutilCounters()
 }
 
+// snapshotCPUCounters reads the current cumulative counters in payload
+// form: the raw snapshot the server diffs against the previous push. A
+// read failure yields an error and the caller omits the field, so the
+// server falls back to the compat percent instead of a wrong number.
+func snapshotCPUCounters() (*CPUCounters, error) {
+	total, perCore, err := readCPUCounters()
+	if err != nil {
+		return nil, err
+	}
+	out := &CPUCounters{Total: total.total, Idle: total.idle}
+	for _, c := range perCore {
+		out.PerCore = append(out.PerCore, CPUCounter{Total: c.total, Idle: c.idle})
+	}
+	return out, nil
+}
+
 // cpuPercent converts a pair of cumulative readings into 0-100% utilization:
 // busy delta over total delta, where busy excludes idle+iowait. A zero or
 // backwards total (counter reset, VM restore, no time elapsed) yields 0

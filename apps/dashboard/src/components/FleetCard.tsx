@@ -1,6 +1,6 @@
 import { memo } from "react";
 import type { MonitorSummary, MetricsPayload, CPUPeak } from "@/lib/api";
-import { fleetAttention, percentage, sampleAgeMs } from "@/lib/fleet-presentation";
+import { fleetAttention, percentage, sampleAgeMs, updatesStatus } from "@/lib/fleet-presentation";
 import { ContainerTiles } from "@/components/ContainerTiles";
 import { CoreSquares } from "@/components/CoreSquares";
 import { MetricBar, usageTone } from "@/components/MetricBar";
@@ -56,6 +56,8 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory }:
     const running = containers.filter(c => c.state === "running").length;
     const hostname = metrics.host?.hostname;
     const displayName = monitor.name || hostname || "Unnamed server";
+    const updates = updatesStatus(metrics.updates);
+    const updatesTone = updates?.tone === "ok" ? "text-ok" : updates?.tone === "warn" ? "text-warn" : updates?.tone === "bad" ? "text-bad" : "text-critical";
 
     return (
         <article className="fleet-card" data-attention={attention} data-stale={stale || undefined} aria-label={`${displayName}: ${headline}`}>
@@ -76,6 +78,12 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory }:
                     </span>
                 </div>
             </header>
+
+            {updates ? (
+                <p className={`fleet-secondary tnum ${updatesTone}`} title={updates.title} aria-label={`System updates: ${updates.label}`}>
+                    {updates.label}
+                </p>
+            ) : null}
 
             <div className="fleet-primary">
                 <section className="fleet-primary-metric" aria-label="CPU utilization">

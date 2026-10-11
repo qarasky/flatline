@@ -56,12 +56,25 @@ func collectCPU() (CPU, error) {
 		return CPU{}, fmt.Errorf("cpu percent: %w", err)
 	}
 
-	return CPU{
+	out := CPU{
 		Percent: percent,
 		Cores:   cores,
 		PerCore: perCore,
 		Temp:    collectTemp(cpuSensorKeys),
-	}, nil
+	}
+	// Raw snapshot for the server to derive its own windows from. A read
+	// failure here must not sink the check: the compat percent above still
+	// stands on its own.
+	if counters, err := snapshotCPUCounters(); err == nil {
+		out.Counters = counters
+		if n := len(counters.PerCore); n > 0 {
+			out.Cores = n
+		}
+	} else {
+		log.Printf("warning: cpu counters unavailable: %v", err)
+	}
+
+	return out, nil
 }
 
 // cpuSensorKeys matches Linux hwmon labels that describe processor heat.
@@ -282,6 +295,14 @@ func collect() (*Payload, error) {
 	}
 	if err != nil {
 		payload.DockerError = err.Error()
+	}
+
+	// Pending-update counts are best-effort: an unsupported distro or a
+	// failed check reads as unknown (absent), never as "fully updated".
+	if updates, err := collectUpdates(); err != nil {
+		log.Printf("warning: updates check unavailable: %v", err)
+	} else {
+		payload.Updates = updates
 	}
 
 	return payload, nil

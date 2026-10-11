@@ -6,6 +6,7 @@ const latest = new Map();
 const MAX_LATEST = 512;
 const HISTORY_INTERVAL_MS = 30_000;
 const { recordCPU, currentPeak, forgetCPU, resetCPU } = require("./cpu-peak");
+const { asCounters, transformCounters } = require("./cpu-counters");
 
 function metricTime(value) {
     const iso = String(value).replace(" ", "T");
@@ -31,8 +32,10 @@ function resetMetricsCache() {
  * Fleet metrics storage for Superboard.
  *
  * Latest state is cached per monitor; opted-in live pushes archive at 30s
- * resolution, while legacy pushes archive every payload. Payloads remain
- * verbatim — threshold evaluation, if it ever
+ * resolution, while legacy pushes archive every payload. Payloads are stored
+ * with server-derived CPU percentages when the agent sends raw counters
+ * (see cpu-counters.js); legacy percent-only payloads pass through
+ * untouched. Threshold evaluation, if it ever
  * comes, belongs in a separate layer, not in the ingest path.
  */
 
@@ -75,6 +78,37 @@ function validateMetrics(payload) {
 }
 
 /**
+ * Round a derived percentage for storage. Board precision is a tenth of a
+ * percent; two decimals keep payloads small and stable without losing
+ * anything the peak tracker or charts can resolve.
+ * @param {number} value Derived 0-100 percentage
+ * @returns {number} Rounded value
+ */
+function roundPercent(value) {
+    return Math.round(value * 100) / 100;
+}
+
+/**
+ * Apply a counter-derived transform to one decoded payload's cpu block.
+ * Keeps the agent's per-core breakdown when the core shapes differ, and
+ * records the core count from the snapshot that was actually measured.
+ * @param {object} metrics Decoded metrics object (mutated)
+ * @param {{ percent: number, perCore: number[] | null, cores: number }} derived Transform result
+ */
+function applyDerivedCPU(metrics, derived) {
+    metrics.cpu = metrics.cpu && typeof metrics.cpu === "object" ? metrics.cpu : {};
+    metrics.cpu.percent = roundPercent(derived.percent);
+    if (derived.perCore) {
+        metrics.cpu.perCore = derived.perCore.map(roundPercent);
+        metrics.cpu.cores = derived.perCore.length;
+    } else if (Number.isFinite(metrics.cpu.cores)) {
+        metrics.cpu.cores = metrics.cpu.cores;
+    } else if (derived.cores) {
+        metrics.cpu.cores = derived.cores;
+    }
+}
+
+/**
  * Store one metrics sample.
  * @param {number} monitorID Owning monitor
  * @param {string} time Timestamp, same clock as the heartbeat it rode in on
@@ -93,24 +127,75 @@ async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
     const previous = latest.get(monitorID);
     const now = Date.now();
     let persistedAt = previous?.persistedAt ?? 0;
+
+    // Server-side CPU derivation: when the agent sends raw cumulative
+    // counters, percentages come from counter deltas, not the agent's
+    // compat fields. Live/latest uses the short window since the previous
+    // push (responsive); the archived row uses the long window since the
+    // previous persist (~30s, representative). Anything incomputable —
+    // first sight, resets, out-of-order arrivals — keeps the agent values.
+    // The whole transform is best-effort: it must never fail a push.
+    let rowEncoded = encoded;
+    let sampleMetrics = JSON.parse(encoded);
+    let pushCounters = previous?.pushCounters;
+    let persistedCounters = previous?.persistedCounters;
+    try {
+        const incomingTime = metricTime(time);
+        const cur = asCounters(JSON.parse(encoded).cpu);
+        if (cur && Number.isFinite(incomingTime) &&
+            (!previous?.pushCounters || incomingTime >= previous.pushCounters.time)) {
+            if (previous?.pushCounters) {
+                const liveDerived = transformCounters(previous.pushCounters.counters, cur);
+                if (liveDerived) {
+                    const forLatest = JSON.parse(encoded);
+                    applyDerivedCPU(forLatest, liveDerived);
+                    sampleMetrics = forLatest;
+                }
+            }
+            pushCounters = { counters: cur, time: incomingTime };
+            if (!live || now - persistedAt >= HISTORY_INTERVAL_MS) {
+                if (previous?.persistedCounters) {
+                    const archiveDerived = transformCounters(previous.persistedCounters.counters, cur);
+                    if (archiveDerived) {
+                        const forRow = JSON.parse(encoded);
+                        applyDerivedCPU(forRow, archiveDerived);
+                        rowEncoded = validateMetrics(forRow);
+                    }
+                }
+                persistedCounters = { counters: cur, time: incomingTime };
+            }
+        } else if (cur && !previous && Number.isFinite(incomingTime)) {
+            pushCounters = { counters: cur, time: incomingTime };
+            if (!live || now - persistedAt >= HISTORY_INTERVAL_MS) {
+                persistedCounters = { counters: cur, time: incomingTime };
+            }
+        }
+    } catch (e) {
+        log.debug("metrics", `CPU counter transform failed for monitor ${monitorID}, keeping agent values: ${e.message}`);
+        rowEncoded = encoded;
+        sampleMetrics = JSON.parse(encoded);
+        pushCounters = previous?.pushCounters;
+        persistedCounters = previous?.persistedCounters;
+    }
+
     if (!live || now - persistedAt >= HISTORY_INTERVAL_MS) {
         const bean = R.dispense("monitor_metric");
         bean.monitor_id = monitorID;
         bean.time = time;
-        bean.payload = encoded;
+        bean.payload = rowEncoded;
         await R.store(bean);
         persistedAt = now;
     }
     const current = latest.get(monitorID);
     if (!current || metricTime(time) >= metricTime(current.sample.time)) {
-        const sample = { time, metrics: JSON.parse(encoded) };
+        const sample = { time, metrics: sampleMetrics };
         const cpuPeak10m = await recordCPU(monitorID, time, sample.metrics.cpu?.percent);
         // Warming a new peak window is asynchronous; another push may have
         // committed a newer latest sample in the meantime.
         const newer = latest.get(monitorID);
         if (newer && metricTime(time) < metricTime(newer.sample.time)) { return true; }
         latest.delete(monitorID);
-        latest.set(monitorID, { sample, persistedAt });
+        latest.set(monitorID, { sample, persistedAt, pushCounters, persistedCounters });
         if (latest.size > MAX_LATEST) {
             latest.delete(latest.keys().next().value);
         }

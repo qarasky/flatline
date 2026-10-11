@@ -370,7 +370,10 @@ export interface MetricsPayload {
     v?: number;
     sampleInterval?: number;
     host?: { hostname?: string; os?: string; uptime?: number };
-    cpu?: { percent?: number; cores?: number; perCore?: number[]; temp?: number };
+    cpu?: {
+        percent?: number; cores?: number; perCore?: number[]; temp?: number;
+        counters?: { total?: number; idle?: number; perCore?: { total?: number; idle?: number }[] };
+    };
     mem?: { total?: number; used?: number; percent?: number; temp?: number };
     disk?: { mount?: string; total?: number; used?: number; percent?: number }[];
     gpu?: {
@@ -384,6 +387,7 @@ export interface MetricsPayload {
     };
     docker?: { name?: string; image?: string; state?: string; health?: string; ports?: string[]; uptime?: number }[];
     dockerError?: string;
+    updates?: { total?: number; security?: number };
 }
 
 export interface LatestMetrics {

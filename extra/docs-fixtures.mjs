@@ -4,6 +4,8 @@ const { historySummary } = createRequire(import.meta.url)("../server/metrics-his
 export const NOW = Date.parse("2026-10-01T12:00:00Z");
 const names = ["edge-north", "edge-south", "app-primary", "app-secondary", "database-01", "worker-pool", "gpu-render", "backup-vault"];
 const loads = [18, 12, 42, 31, 28, 94, 68, 4];
+// One of each updates state across the fleet: green, yellow, red, dark red.
+const updates = [{ total: 0 }, undefined, { total: 20 }, undefined, { total: 49 }, { total: 70 }, { total: 80, security: 8 }, undefined];
 const at = offset => new Date(NOW + offset).toISOString();
 const base = { active: true, interval: 60, lastCheck: at(-2000), lastMessage: "OK", uptime24h: 1, uptime7d: .9998, uptime30d: .9995, tags: [] };
 export const monitors = [
@@ -26,6 +28,7 @@ export const samples = Object.fromEntries(names.map((name, i) => [i + 1, {
         mem: { total: 32 * 2 ** 30, used: (24 + i * 7) / 100 * 32 * 2 ** 30, percent: 24 + i * 7 },
         disk: [{ mount: "/", total: 1024 * 2 ** 30, used: (22 + i * 6) / 100 * 1024 * 2 ** 30, percent: 22 + i * 6 }],
         ...(i === 6 ? { gpu: { available: true, gpus: [{ name: "Example GPU · 16 GB", util: 78, memUsed: 11 * 2 ** 30, memTotal: 16 * 2 ** 30, temp: 64 }] } } : {}),
+        ...(updates[i] ? { updates: updates[i] } : {}),
         docker: Array.from({ length: i === 2 ? 20 : 9 }, (_, c) => ({
             name: ["web", "api", "proxy", "cache", "queue", "jobs", "metrics", "logs", "archive"][c % 9] + (c >= 9 ? `-${Math.floor(c / 9) + 1}` : ""),
             image: "example/service:1", state: i === 2 && c === 0 ? "restarting" : c === 8 ? "exited" : c === 7 ? "created" : "running",

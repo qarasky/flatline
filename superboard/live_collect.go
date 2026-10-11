@@ -30,6 +30,10 @@ type liveCollector struct {
 	cpuPrevPerCore []cpuCounter
 	cpuPrevTime    time.Time
 	cpuReady       bool
+	// updates caches pending OS update counts, refreshed every few hours.
+	// Nil means unknown (unsupported distro or failed check): the board
+	// shows nothing rather than a wrong "fully updated".
+	updates *Updates
 }
 
 func refreshLoop(ctx context.Context, interval time.Duration, collect func()) {
@@ -123,6 +127,16 @@ func newLiveCollector(ctx context.Context) (*liveCollector, error) {
 		c.docker, c.dockerError = containers, errorText
 		c.mu.Unlock()
 	})
+	go refreshLoop(ctx, updatesInterval, func() {
+		updates, err := collectUpdates()
+		if err != nil {
+			logUpdatesWarning(err)
+			return
+		}
+		c.mu.Lock()
+		c.updates = updates
+		c.mu.Unlock()
+	})
 	return c, nil
 }
 
@@ -190,6 +204,15 @@ func (c *liveCollector) sample() (*Payload, error) {
 		c.mu.RUnlock()
 		cpuVal = CPU{Percent: percent, Cores: cores, PerCore: perCore, Temp: temp}
 	}
+	// Raw cumulative counters ride every push: the server derives its own
+	// windowed percentages from consecutive snapshots. Omitted when the
+	// read fails, and the server falls back to the compat percent above.
+	if counters, err := snapshotCPUCounters(); err == nil {
+		cpuVal.Counters = counters
+		if n := len(counters.PerCore); n > 0 {
+			cpuVal.Cores = n
+		}
+	}
 	vm, err := mem.VirtualMemory()
 	if err != nil {
 		return nil, fmt.Errorf("memory: %w", err)
@@ -204,5 +227,6 @@ func (c *liveCollector) sample() (*Payload, error) {
 	return &Payload{V: payloadVersion, Host: h,
 		CPU:  cpuVal,
 		Mem:  Mem{Total: vm.Total, Used: vm.Used, Percent: vm.UsedPercent, Temp: c.memTemp},
-		Disk: c.disk, GPU: c.gpu, Docker: c.docker, DockerError: c.dockerError}, nil
+		Disk: c.disk, GPU: c.gpu, Docker: c.docker, DockerError: c.dockerError,
+		Updates: c.updates}, nil
 }

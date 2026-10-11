@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { containerIssue, fleetAttention, percentage, sampleAgeMs } from "../src/lib/fleet-presentation.ts";
+import { containerIssue, fleetAttention, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -28,6 +28,22 @@ test("issues sort first without mutating the payload; collection failures are vi
     assert.equal(state.issues, 2);
     assert.equal(state.containers[0].name, "b");
     assert.equal(docker[0].name, "a");
+});
+test("pending-update counts map to green/yellow/red/dark-red; unknown stays silent", () => {
+    assert.equal(updatesStatus(undefined), null);
+    assert.equal(updatesStatus({}), null);
+    assert.equal(updatesStatus({ total: -1 }), null);
+    assert.deepEqual(updatesStatus({ total: 0 })?.label, "No updates");
+    assert.deepEqual(updatesStatus({ total: 0 })?.tone, "ok");
+    assert.deepEqual(updatesStatus({ total: 20 })?.tone, "warn");
+    assert.deepEqual(updatesStatus({ total: 49 })?.tone, "warn");
+    assert.deepEqual(updatesStatus({ total: 50 })?.tone, "bad");
+    assert.deepEqual(updatesStatus({ total: 70 })?.label, "Updates: 70");
+    // Any reported security updates dominate, whatever the total.
+    assert.deepEqual(updatesStatus({ total: 80, security: 8 })?.tone, "critical");
+    assert.deepEqual(updatesStatus({ total: 80, security: 8 })?.label, "Security Updates: 8");
+    assert.deepEqual(updatesStatus({ total: 3, security: 1 })?.tone, "critical");
+    assert.deepEqual(updatesStatus({ total: 5, security: 0 })?.tone, "warn");
 });
 test("high usage includes memory, disks and legacy GPU VRAM; unknown numbers stay unknown", () => {
     assert.equal(fleetAttention({gpu:{available:true, memTotal:100, memUsed:95}}, "2026-10-09T12:00:00Z", 180, now).hot, true);

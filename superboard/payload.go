@@ -27,6 +27,28 @@ type Host struct {
 	Uptime   uint64 `json:"uptime"`
 }
 
+// CPUCounter is one cumulative CPU-time snapshot in USER_HZ ticks, the raw
+// material percentages are derived from. Total excludes guest/guestNice
+// (already counted inside user/nice); Idle includes iowait. These are never
+// percentages: the server owns the averaging window and diffs consecutive
+// snapshots itself.
+type CPUCounter struct {
+	Total uint64 `json:"total"`
+	Idle  uint64 `json:"idle"`
+}
+
+// CPUCounters is the raw cumulative snapshot behind a CPU reading: the box
+// total plus one entry per logical CPU in index order. The agent sends this
+// with every push; the server derives the authoritative percent/perCore from
+// consecutive snapshots and only falls back to Percent/PerCore (kept as a
+// rolling-upgrade compat field for old backends) when no previous snapshot
+// exists yet, counters reset, or samples arrive out of order.
+type CPUCounters struct {
+	Total   uint64       `json:"total"`
+	Idle    uint64       `json:"idle"`
+	PerCore []CPUCounter `json:"perCore,omitempty"`
+}
+
 // CPU is the average utilization across the 30 seconds before the push,
 // computed from cumulative CPU-time counters (/proc/stat deltas), not a
 // one-second window. PerCore holds one interval-average percentage per
@@ -35,11 +57,27 @@ type Host struct {
 // only when nonzero: 0 means "no sensor", not "freezing", and the board
 // hides it. The one-shot `check` path uses a 1s counter window for speed and
 // says so in its log; it is a diagnostic, never a load average.
+//
+// Counters is the raw snapshot Percent/PerCore were derived from. New
+// servers ignore the derived fields when Counters is present and compute
+// their own windowed percentages instead.
 type CPU struct {
-	Percent float64   `json:"percent"`
-	Cores   int       `json:"cores"`
-	PerCore []float64 `json:"perCore,omitempty"`
-	Temp    float64   `json:"temp,omitempty"`
+	Percent  float64      `json:"percent"`
+	Cores    int          `json:"cores"`
+	PerCore  []float64    `json:"perCore,omitempty"`
+	Temp     float64      `json:"temp,omitempty"`
+	Counters *CPUCounters `json:"counters,omitempty"`
+}
+
+// Updates counts pending OS package updates: totals only, never a package
+// inventory. Absent means unknown (unsupported distro, failed check) and the
+// board shows nothing; present with Total 0 means fully updated (green).
+// Security is present only when the platform exposes severity (Ubuntu
+// update-notifier, dnf security metadata) — 0 there means none detected,
+// while a total-only platform reports no security field at all.
+type Updates struct {
+	Total    int `json:"total"`
+	Security int `json:"security,omitempty"`
 }
 
 // Mem holds bytes for totals and percent 0–100. Temp is the same deal as
@@ -110,4 +148,5 @@ type Payload struct {
 	GPU            GPU         `json:"gpu"`
 	Docker         []Container `json:"docker"`
 	DockerError    string      `json:"dockerError,omitempty"`
+	Updates        *Updates    `json:"updates,omitempty"`
 }

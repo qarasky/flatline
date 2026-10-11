@@ -98,8 +98,10 @@ The operator dashboard and Superboard use bearer-authenticated SSE
 connect/reconnect; heartbeat changes arrive as soon as checks finish.
 External monitor check frequencies do not change.
 
-[Superboard agent 1.2](superboard/README.md) supports 1Hz CPU/RAM telemetry with
-independent slower collectors. Latest samples are cached; live history is
+[Superboard agent 1.3](superboard/README.md) pushes raw CPU counters at 1Hz
+(the server derives utilization: responsive live, ~30s means in history),
+1-second-fresh RAM, independent slower collectors, and read-only pending-update
+counts every 4h. Latest samples are cached; live history is
 sampled every 30s and retained for 30 days. Existing explicit agent intervals
 are preserved until changed. Upgrade the backend before enabling 1Hz agents.
 

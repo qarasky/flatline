@@ -15,6 +15,41 @@ export function percentage(value: number | undefined): string {
 type Container = NonNullable<MetricsPayload["docker"]>[number];
 export type FleetContainer = Container;
 
+/** Pending-update counts at or above this read as bad (red); below, warn. */
+export const UPDATES_RED_AT = 50;
+
+export interface UpdatesStatus {
+    label: string;
+    tone: "ok" | "warn" | "bad" | "critical";
+    title: string;
+}
+
+/**
+ * One-line pending-update status for a server card. Counts only, never a
+ * package list. Absent or malformed data is unknown (null — the card shows
+ * nothing) so a blind agent never reads as fully updated. Security takes
+ * precedence whenever any are reported.
+ */
+export function updatesStatus(updates: { total?: number; security?: number } | undefined): UpdatesStatus | null {
+    if (!updates) { return null; }
+    const { total, security } = updates;
+    if (!Number.isFinite(total) || (total as number) < 0) { return null; }
+    if (Number.isFinite(security) && (security as number) > 0) {
+        return {
+            label: `Security Updates: ${security}`,
+            tone: "critical",
+            title: `${security} security update${security === 1 ? "" : "s"} pending — patch promptly`,
+        };
+    }
+    if (total === 0) {
+        return { label: "No updates", tone: "ok", title: "System is fully updated" };
+    }
+    if ((total as number) >= UPDATES_RED_AT) {
+        return { label: `Updates: ${total}`, tone: "bad", title: `${total} pending updates (${UPDATES_RED_AT} or more)` };
+    }
+    return { label: `Updates: ${total}`, tone: "warn", title: `${total} pending updates` };
+}
+
 export function containerTone(container: Container): "up" | "stopped" | "bad" | "pending" {
     if (containerIssue(container)) { return "bad"; }
     if (container.state === "exited" || container.state === "removed") { return "stopped"; }

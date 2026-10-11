@@ -59,26 +59,39 @@ Migration: `db/knex_migrations/2026-10-0X-0000-monitor-metric.js`
 {
     "v": 1,
     "host": { "hostname": "client-a-db-01", "os": "linux", "uptime": 864001 },
-    "cpu": { "percent": 23.5, "cores": 8, "perCore": [12.1, 88.4, ...] },
+    "cpu": { "percent": 23.5, "cores": 8, "perCore": [12.1, 88.4, ...],
+             "counters": { "total": 103000, "idle": 92905, "perCore": [ { "total": 51500, "idle": 46452 }, ... ] } },
     "mem": { "total": 33554432, "used": 12582912, "percent": 37.5 },
     "disk": [ { "mount": "/", "total": 100, "used": 42, "percent": 42.0 } ],
     "gpu": { "available": false },
     "docker": [
         { "name": "api", "image": "api:1.4.2", "state": "running", "health": "healthy", "ports": [ "8080:80" ], "uptime": 86400 }
     ],
-    "dockerError": "no docker access (...)" // only when collection failed
+    "dockerError": "no docker access (...)", // only when collection failed
+    "updates": { "total": 70, "security": 8 } // absent when unknown, never zero-filled
 }
 ```
 
 Notes:
 - Units are documented once, here: bytes for memory/disk totals, percent 0–100,
-  uptime seconds. The agent and the board must never disagree about units.
+  uptime seconds, USER_HZ ticks for CPU counters. The agent and the board must
+  never disagree about units.
 - `gpu.available: false` is explicit, never absent: "no GPU" and "collector
   broken" must be distinguishable or you will chase ghosts.
 - `dockerError` is present only when collection failed, so the board can say
   "unavailable" instead of silently showing "none" for a blind agent.
 - `cpu.perCore` is one percentage per logical CPU; `temp` fields are omitted
   when zero because zero means "no sensor", not a temperature.
+- `cpu.counters` is the raw cumulative snapshot the server derives percentages
+  from: `total` excludes guest (already inside user/nice), `idle` includes
+  iowait. `percent`/`perCore` travel alongside as a compat fallback for old
+  backends; new servers overwrite them with windowed derivations and ignore
+  the agent's numbers whenever counters are present.
+- `updates` counts pending OS updates: totals only, never a package inventory.
+  Absent means unknown (unsupported distro, failed check) and the board shows
+  nothing; present with `total: 0` means fully updated. `security` appears
+  only when the platform exposes severity — total-only platforms report no
+  security field rather than a fabricated zero.
 - `container.uptime` is seconds since start, 0 when unknown.
 - Disk is an array (root plus any data mounts); the agent sends every local
   mount it can read, the board shows the fullest first.
@@ -96,8 +109,12 @@ Accept an optional JSON body alongside the existing query params:
 
 - Fully backwards compatible: query-param pushes behave exactly as today, and a
   body without `metrics` is today's request.
-- `metrics` is validated for shape (object, under 64KB) and stored as-is. The
-  server does not interpret it in v1 — no thresholds, no derived statuses.
+- `metrics` is validated for shape (object, under 64KB). When the agent sends
+  raw CPU counters, the server derives `cpu.percent`/`perCore` from consecutive
+  snapshots — short-window for live/latest, long-window for archived rows —
+  and stores the derived numbers alongside the raw snapshots. Percent-only
+  payloads from old agents pass through untouched. No thresholds; a failed
+  derivation keeps the agent's values, never drops the sample.
 - A push carrying metrics still counts as a heartbeat for the down-timeout, so
   one request keeps both "host up" and "here are the numbers" alive.
 - Oversized or malformed `metrics` → 400, but the heartbeat itself is still
@@ -121,24 +138,27 @@ Single static binary (`CGO_ENABLED=0`), linux/amd64. No runtime dependencies.
 
 | Source | What | Notes |
 |---|---|---|
-| `/proc/stat` cumulative counters | percent, cores | 30s interval averages via counter deltas, never a 1s window presented as load |
+| `/proc/stat` cumulative counters | raw snapshots + compat percent/cores | server derives windowed utilization; agent percent is old-backend fallback only |
 | `gopsutil/mem` | total/used/percent | bytes, per the schema |
 | `gopsutil/disk` | per-mount total/used/percent | every local mount it can read |
 | `gopsutil/host` | hostname, os, uptime | |
+| OS package managers | pending update counts (total, security) | read-only queries every 4h; apt-check exact, dnf security best-effort, rest total-only; failure → field absent, never fatal |
 | Docker socket | containers: name, image, state, health, ports | list + inspect; **no stats streaming in v1** |
 | `nvidia-smi` | util, mem, temp if present | exec + parse, best-effort; failure → `available: false`, never fatal |
 
 ### Behaviour
 
-- Live mode defaults to **1-second pushes carrying 30-second-average CPU and
+- Live mode defaults to **1-second pushes carrying raw CPU counters and
   1-second-fresh RAM**. Existing configs with an explicit 60-second interval
   retain it; change `interval_seconds` to 1 to opt in.
-- CPU averages cumulative `/proc/stat` counters between consecutive 30s
-  refreshes; pushes reuse the cached average with no blocking sleep in the
-  collection path. RAM stays per-push fresh. Disk and temperatures refresh
-  every 30s, GPU every 5s, Docker every 10s in independent workers. Docker
-  events, network counters and history charts remain future work. Slow
-  collector values are cached between refreshes.
+- Every push carries a fresh cumulative `/proc/stat` snapshot; the server
+  derives utilization from consecutive snapshots (short-window for live,
+  ~30s-window for archived rows), with no blocking sleep in the collection
+  path. The agent's own percent fields remain as old-backend fallback only.
+  RAM stays per-push fresh. Disk and temperatures refresh every 30s, GPU
+  every 5s, Docker every 10s, pending-update counts every 4h in independent
+  workers. Docker events, network counters and history charts remain
+  future work. Slow collector values are cached between refreshes.
 - A capacity-one pending-sample queue drops superseded samples during a slow
   push. One sender, bounded HTTP timeout, and capped retry backoff: never an
   ever-growing queue of old telemetry. No ±5-second jitter on a 1Hz cadence.
@@ -219,7 +239,9 @@ distinct from the dense table: this is the NOC wall, not the operator desk.
 ### Layout
 
 - One card per server (one card per monitor with metrics; group monitors excluded).
-- Each compact card: hostname, host/workload status, CPU total + intensity-based
+- Each compact card: hostname, host/workload status, pending-update line
+  (`No updates` green, `Updates: N` yellow/red at 50+, `Security Updates: N`
+  dark red; nothing when unknown), CPU total + intensity-based
   per-core squares, RAM / disk / GPU / VRAM bars, and a container name/state/
   uptime list. Healthy readings stay neutral; real issues stand out. Exited
   containers are not failures without an expected-running policy.
@@ -291,20 +313,26 @@ distinct from the dense table: this is the NOC wall, not the operator desk.
 - Current agent payloads do not establish manual stop intent or exit codes.
   Do not infer a crash from `exited`, or label a stop as definitely manual.
 
-### Planned: pending host updates (not implemented)
+### Host updates (agent 1.3+)
 
-- Future agent feature: read-only OS package-manager checks every few hours,
-  reporting only `Updated`, `Needs updating`, `Critical update needed`, or
-  `Unknown / check failed`. No package inventory in the board and no automatic
-  installation, service restart, or reboot.
-- Use OS advisory metadata for critical severity. Security updates without
-  severity metadata should be labeled security updates, not invented critical
-  advisories. Unsupported OSes, stale check results, permissions failures,
-  missing metadata, or failed refreshes must not appear as `Updated`.
-- Consider a separate pending-reboot indicator: long uptime alone does not
-  prove that a server is unpatched. Define Linux distribution/package-manager
-  support, repository-refresh permissions, freshness limits and advisory
-  classification before implementing or deploying this feature.
+- Read-only OS package-manager checks every 4 hours, reporting counts only:
+  `updates: { total, security? }`. No package inventory on the wire or the
+  board, and no automatic installation, service restart, or reboot. Checks
+  read existing package lists (`apt-get -s`, `check-update` query mode) and
+  never fetch or modify anything.
+- Card line, counts only: `No updates` green when total is 0; `Updates: N`
+  yellow below 50, red at 50 or more; `Security Updates: N` dark red whenever
+  any are reported, taking precedence over the total. Absent field means
+  unknown (unsupported distro, failed check) and renders nothing — a blind
+  agent never reads as fully updated.
+- Severity comes from OS advisory metadata only: Ubuntu update-notifier
+  reports exact security counts, dnf filters `--security` best-effort, and
+  total-only platforms (pacman, apk, plain apt simulation) report no
+  security field rather than a fabricated zero. Unsupported OSes, stale
+  results, permissions failures, or failed refreshes stay unknown, never
+  `No updates`.
+- A pending-reboot indicator is still future work: long uptime alone does
+  not prove that a server is unpatched.
 
 ### Server load history
 

@@ -17,6 +17,10 @@
     --color-ok: #3fb950;
     --color-warn: #f0c54b;
     --color-bad: #e5484d;
+    /* Dark red, reserved for security updates: visibly graver than bad,
+       still legible on the dark card. The label always names the severity,
+       so meaning never rides on colour alone. */
+    --color-critical: #c0262c;
     --color-maint: #4c8dff;
 }
 
@@ -184,6 +188,8 @@ body {
 .history-no-data { min-height: 100px; display: flex; align-items: center; justify-content: center; color: #b0aba6; font-size: 0.875rem; }
 @media (max-width: 680px) { .history-charts { grid-template-columns: 1fr; } .history-panel { padding: 16px; } .history-heading h2 { font-size: 1.3rem; } }
 .fleet-card .text-warn { color: var(--color-warn); }
+.fleet-card .text-ok { color: var(--color-ok); }
+.fleet-card .text-critical { color: var(--color-critical); }
 @media (max-width: 600px) {
     .fleet-card { padding: 1rem; }
     .fleet-heading { flex-wrap: wrap; }

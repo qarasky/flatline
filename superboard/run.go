@@ -83,7 +83,11 @@ func runLoop(cfg *Config) error {
 			}
 			backoff = interval
 			if time.Since(lastLog) >= time.Minute {
-				log.Printf("superboard: live cpu=%.1f%% mem=%.1f%% containers=%d", payload.CPU.Percent, payload.Mem.Percent, len(payload.Docker))
+				if payload.Updates != nil {
+					log.Printf("superboard: live cpu=%.1f%% mem=%.1f%% containers=%d updates=%d(security %d)", payload.CPU.Percent, payload.Mem.Percent, len(payload.Docker), payload.Updates.Total, payload.Updates.Security)
+				} else {
+					log.Printf("superboard: live cpu=%.1f%% mem=%.1f%% containers=%d", payload.CPU.Percent, payload.Mem.Percent, len(payload.Docker))
+				}
 				lastLog = time.Now()
 			}
 		}
