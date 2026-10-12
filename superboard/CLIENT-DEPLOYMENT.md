@@ -12,6 +12,29 @@ via arguments/environment, or captured. The folder and ignore rules are unchange
 | national-business | 49 | nationalbusiness.kz |
 | zhasalash | 50 | jasalash |
 
+## Incident — 2026-10-12: provider blip paged as host-down
+
+Four client hosts (aiel-qorgan 46, cmn 47, modernization-meks 48,
+national-business 49) all sit on the same provider (AS48716 PS Internet
+Company, `2a00:5da0::/32`). Their network path to Cloudflare broke twice —
+~3 minutes around 10:31 UTC and ~8 minutes around 20:00 UTC. Agent logs show
+every push failing with `context deadline exceeded (Client.Timeout exceeded
+while awaiting headers)`; the servers themselves were healthy. zhasalash (50,
+AS203087) and the office host were unaffected, so the backend and tunnel were
+fine throughout.
+
+Because push monitors had `maxretries=0`, the first missed window (180s + 1s
+buffer) declared DOWN instantly, and the parent groups amplified it ("Child
+monitors down") — about ten Telegram messages per blip.
+
+**Fix applied on the production DB (2026-10-12):** all push monitors now use
+`maxretries=2, retry_interval=180`, so a missed heartbeat goes PENDING
+(silent, yellow on the board) for two retry windows and only pages after
+~9 minutes of silence. Both blips would have been silent; real outages still
+alert. Rollback values: `maxretries=0` and `retry_interval` 60 (monitor 43)
+or 180 (44–50). The deployed agent has no send buffer yet, so these blips
+leave telemetry gaps; agent 1.5's disk buffer closes that once deployed.
+
 ## Pending rollout — 2026-10-12
 
 - Agent **1.5.0** (raw CPU counters, server-side utilization derivation,
