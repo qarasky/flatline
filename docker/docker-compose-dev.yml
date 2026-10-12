@@ -3,7 +3,7 @@ version: "3.8"
 services:
   uptime-kuma:
     container_name: uptime-kuma-dev
-    image: artchsh/flatline:1
+    image: artchsh/flatline:2
     volumes:
       #- ./data:/app/data
       - ../server:/app/server

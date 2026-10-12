@@ -206,7 +206,7 @@ docker run -d \
   -p 3001:3001 \
   -v flatline:/app/data \
   --name flatline \
-  artchsh/flatline:1
+  artchsh/flatline:2
 ```
 
 ### 💪🏻 Non-Docker

@@ -18,7 +18,7 @@ services:
       context: .
       dockerfile: docker/dockerfile
       target: release
-    image: artchsh/flatline:1
+    image: artchsh/flatline:2
     restart: unless-stopped
     volumes:
       - ./data:/app/data
@@ -30,7 +30,7 @@ services:
     build:
       context: .
       dockerfile: docker/dashboard.dockerfile
-    image: artchsh/flatline-dashboard:1
+    image: artchsh/flatline-dashboard:2
     restart: unless-stopped
     ports:
       - "3003:80"
@@ -46,7 +46,7 @@ services:
       dockerfile: docker/status-site.dockerfile
       args:
         NEXT_PUBLIC_FLATLINE_URL: ${BACKEND_URL:-http://127.0.0.1:3001}
-    image: artchsh/flatline-status:1
+    image: artchsh/flatline-status:2
     restart: unless-stopped
     ports:
       - "3002:3002"

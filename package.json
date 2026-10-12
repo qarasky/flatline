@@ -1,6 +1,6 @@
 {
     "name": "flatline",
-    "version": "3.0.0-beta.0",
+    "version": "2.0.0",
     "license": "MIT",
     "repository": {
         "type": "git",
@@ -27,7 +27,7 @@
         "build-docker-base": "docker buildx build -f docker/debian-base.dockerfile --platform linux/amd64,linux/arm64 -t artchsh/flatline:base . --target base3 . --push",
         "build-docker-base-slim": "docker buildx build -f docker/debian-base.dockerfile --platform linux/amd64,linux/arm64 -t artchsh/flatline:base-slim . --target base3-slim . --push",
         "build-docker-builder-go": "docker buildx build -f docker/builder-go.dockerfile --platform linux/amd64,linux/arm64 -t artchsh/flatline:builder . --push",
-        "build-docker-nightly-local": "docker build -f docker/dockerfile -t artchsh/flatline:1 --target nightly .",
+        "build-docker-nightly-local": "docker build -f docker/dockerfile -t artchsh/flatline:2 --target nightly .",
         "build-docker-pr-test": "docker buildx build -f docker/dockerfile --platform linux/amd64,linux/arm64 -t artchsh/flatline:pr-test . --target pr-test3 . --push",
         "upload-artifacts": "node extra/release/upload-artifacts.mjs",
         "upload-artifacts-beta": "node extra/release/upload-artifacts-beta.mjs",
@@ -46,7 +46,7 @@
         "git-remove-tag": "git tag -d",
         "start-pr-test": "node extra/checkout-pr.mjs && npm install && node --run dev",
         "deploy-demo-server": "node extra/deploy-demo-server.js",
-        "quick-run-nightly": "docker run --rm --env NODE_ENV=development -p 3001:3001 artchsh/flatline:1",
+        "quick-run-nightly": "docker run --rm --env NODE_ENV=development -p 3001:3001 artchsh/flatline:2",
         "start-dev-container": "cd docker && docker-compose -f docker-compose-dev.yml up --force-recreate",
         "reset-migrate-aggregate-table-state": "node extra/reset-migrate-aggregate-table-state.js",
         "generate-changelog": "node ./extra/release/generate-changelog.mjs",
