@@ -42,11 +42,14 @@ pub async fn harness() -> Harness {
         pool.clone(),
         std::sync::Arc::clone(&events),
     );
+    let metrics =
+        flatline_backend::metrics::Metrics::new(pool.clone(), std::sync::Arc::clone(&events));
     let state = AppState {
         pool: pool.clone(),
         config: std::sync::Arc::new(config),
         events,
         engine,
+        metrics,
     };
 
     Harness {

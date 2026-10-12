@@ -106,6 +106,37 @@ pub async fn linked(
     .await
 }
 
+/// Deliver one message to every active notification linked to a monitor.
+/// Failures are logged per provider, never thrown: a broken notification
+/// must never fail a heartbeat or an ingest.
+pub async fn dispatch_message(
+    pool: &SqlitePool,
+    client: &reqwest::Client,
+    monitor_id: i64,
+    message: String,
+) {
+    let rows = match linked(pool, monitor_id).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::error!("notify: load links for monitor {monitor_id}: {error}");
+            return;
+        }
+    };
+
+    for (name, kind, config) in rows {
+        if kind != "telegram" {
+            continue;
+        }
+        let Some(telegram) = parse_telegram(&config) else {
+            tracing::warn!("notify: {name} has no usable telegram config");
+            continue;
+        };
+        if let Err(error) = send_telegram(client, &telegram, &message).await {
+            tracing::error!("notify: telegram send for {name} failed: {error}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

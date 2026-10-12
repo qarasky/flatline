@@ -2,7 +2,7 @@
 
 Status: **started.** Scope locked with the operator on 2026-10-12. The
 existing Node backend and the Go agent stay untouched until cutover; this
-document is the contract the Rust rewrite is built against. M0–M2 are
+document is the contract the Rust rewrite is built against. M0–M3 are
 shipped in `backend-rs/`.
 
 ## Locked scope (from the operator's answers)
@@ -132,9 +132,15 @@ backend-rs/
   (newest first + total), a minimal notifications API (list redacted,
   create/patch/delete), and SSE `heartbeat` patches with uptime. Metrics
   storage and the 400 "metrics dropped" response arrive with M3. 33 tests.
-- **M3 — metrics pipeline:** ingest + transforms, archive + sampledAt,
-  live cache + SSE metrics, bulk latest, summary two-tier, rollups +
-  prune, threshold alerts, `cpuPeak10m`.
+- **M3 — metrics pipeline (shipped):** ingest with validation and the 64KB
+  cap, server-side CPU derivation from raw counters, net/disk I/O rates,
+  30s archive gating with `sampledAt` backfill, the live latest cache with
+  `cpuPeak10m`, SSE `metrics` deltas, bulk latest, the two-tier summary
+  (raw up to 7 days, hourly rollups beyond) and raw history, threshold
+  alerts (60s debounce, 5-point hysteresis, 30-minute cooldown), hourly
+  rollup + raw prune jobs, and the 400 "metrics dropped" contract on the
+  push route. One deliberate fix over the Node original: the hourly tier
+  keeps GPU/VRAM averages (Node silently dropped them). 66 tests.
 - **M4 — completeness:** badges, OpenAPI, API keys, status-page read API
   (if not vetoed), SPA serving.
 - **M5 — importer + cutover tooling:** old-DB importer, Docker image,

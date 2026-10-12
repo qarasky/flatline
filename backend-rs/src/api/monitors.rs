@@ -206,7 +206,7 @@ pub async fn list(
 }
 
 /// Load one monitor or answer 404.
-async fn load(pool: &SqlitePool, id: i64) -> Result<Monitor, ApiError> {
+pub(crate) async fn load(pool: &SqlitePool, id: i64) -> Result<Monitor, ApiError> {
     sqlx::query_as::<_, Monitor>("SELECT * FROM monitors WHERE id = ?")
         .bind(id)
         .fetch_optional(pool)
@@ -485,6 +485,7 @@ pub async fn delete(
 
     for monitor_id in &deleted {
         state.engine.stop(*monitor_id);
+        state.metrics.forget(*monitor_id);
     }
     state.events.invalidate();
 

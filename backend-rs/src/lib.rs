@@ -10,6 +10,7 @@ pub mod config;
 pub mod db;
 pub mod events;
 pub mod heartbeats;
+pub mod metrics;
 pub mod monitors;
 pub mod notify;
 
@@ -25,6 +26,7 @@ pub struct AppState {
     pub config: Arc<config::Config>,
     pub events: Arc<events::Events>,
     pub engine: Arc<monitors::engine::Engine>,
+    pub metrics: Arc<metrics::Metrics>,
 }
 
 /// Open the database, run migrations, and make sure an admin token exists.
@@ -41,12 +43,14 @@ pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
 
     let events = events::Events::new();
     let engine = monitors::engine::Engine::new(pool.clone(), Arc::clone(&events));
+    let metrics = metrics::Metrics::new(pool.clone(), Arc::clone(&events));
 
     Ok(AppState {
         pool,
         config: Arc::new(config),
         events,
         engine,
+        metrics,
     })
 }
 
@@ -62,6 +66,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     let state = build_state(config).await?;
     state.engine.start_all().await;
+    state.metrics.start_jobs();
 
     let listener = tokio::net::TcpListener::bind(&address).await?;
     tracing::info!("flatline-rs listening on {address}");

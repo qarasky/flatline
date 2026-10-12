@@ -1,6 +1,7 @@
 //! HTTP API: router assembly, the error envelope, and the handlers.
 
 pub mod auth;
+pub mod metrics;
 pub mod monitors;
 pub mod notifications;
 pub mod push;
@@ -104,6 +105,16 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/monitors/{id}/heartbeats",
             get(monitors::heartbeats),
         )
+        .route("/api/v1/monitors/metrics/latest", get(metrics::latest_bulk))
+        .route(
+            "/api/v1/monitors/{id}/metrics/latest",
+            get(metrics::latest_one),
+        )
+        .route(
+            "/api/v1/monitors/{id}/metrics/summary",
+            get(metrics::summary),
+        )
+        .route("/api/v1/monitors/{id}/metrics", get(metrics::raw))
         .route(
             "/api/v1/notifications",
             get(notifications::list).post(notifications::create),

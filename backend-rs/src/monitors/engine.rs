@@ -314,27 +314,8 @@ impl Engine {
             .unwrap_or_else(|| "N/A".to_string());
 
         tokio::spawn(async move {
-            let rows = match notify::linked(&pool, monitor_id).await {
-                Ok(rows) => rows,
-                Err(error) => {
-                    tracing::error!("notify: load links for monitor {monitor_id}: {error}");
-                    return;
-                }
-            };
-
-            for (name, kind, config) in rows {
-                if kind != "telegram" {
-                    continue;
-                }
-                let Some(telegram) = notify::parse_telegram(&config) else {
-                    tracing::warn!("notify: {name} has no usable telegram config");
-                    continue;
-                };
-                let text = notify::heartbeat_message(&monitor_name, status, &msg);
-                if let Err(error) = notify::send_telegram(&client, &telegram, &text).await {
-                    tracing::error!("notify: telegram send for {name} failed: {error}");
-                }
-            }
+            let message = notify::heartbeat_message(&monitor_name, status, &msg);
+            notify::dispatch_message(&pool, &client, monitor_id, message).await;
         });
     }
 
