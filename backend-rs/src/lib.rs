@@ -1,0 +1,87 @@
+//! Flatline backend, Rust rewrite (v2 consolidation aftermath).
+//!
+//! Scope is locked in RUST-REWRITE-PLAN.md: push + http monitors, the
+//! telemetry pipeline, Superboard read APIs, badges, single-token auth.
+//! The Go agent and the SPA are reused unchanged.
+
+pub mod api;
+pub mod auth;
+pub mod config;
+pub mod db;
+
+use std::sync::Arc;
+
+use axum::Router;
+use sqlx::SqlitePool;
+
+/// Shared application state handed to every handler.
+#[derive(Clone)]
+pub struct AppState {
+    pub pool: SqlitePool,
+    pub config: Arc<config::Config>,
+}
+
+/// Open the database, run migrations, and make sure an admin token exists.
+pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
+    let pool = db::connect(&config.data_dir).await?;
+
+    if let Some(token) = auth::ensure_initial_token(&pool, &config.data_dir).await? {
+        tracing::info!(
+            "first boot: admin token written to {}/initial-token.txt",
+            config.data_dir.display()
+        );
+        tracing::info!("admin token: {token}");
+    }
+
+    Ok(AppState {
+        pool,
+        config: Arc::new(config),
+    })
+}
+
+/// Build the HTTP router for a state (public for integration tests).
+pub fn router(state: AppState) -> Router {
+    api::router(state)
+}
+
+/// Boot the server: config, database, HTTP listener, graceful shutdown.
+pub async fn run() -> anyhow::Result<()> {
+    let config = config::Config::from_env();
+    let address = format!("{}:{}", config.host, config.port);
+
+    let state = build_state(config).await?;
+    let listener = tokio::net::TcpListener::bind(&address).await?;
+    tracing::info!("flatline-rs listening on {address}");
+
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    Ok(())
+}
+
+/// Ctrl-C or SIGTERM; systemd and `docker stop` send the latter.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install Ctrl-C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    tracing::info!("shutting down");
+}

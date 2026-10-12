@@ -38,3 +38,4 @@ packages/*/node_modules
 # Local dev servers (./dev.sh): databases and logs.
 .dev-data
 .dev-logs
+backend-rs/target/
