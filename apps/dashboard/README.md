@@ -33,8 +33,10 @@ creates the initial account. REST snapshots and bearer-authenticated SSE keep
 views current. Up to ten hosts remain on one default fleet page; smaller
 viewports scroll the board rather than rotating single rows.
 
-Select a server name (↗) for history. Ranges span 10m to 7d, with p90/p95/p99
-computed from archived readings. History refreshes every 30 seconds and pauses
+Select a server name (↗) for history. Ranges span 10m to 1y, with p90/p95/p99
+computed from archived readings: raw 30s snapshots up to 7 days, hourly
+rollups (min/max/avg, two-year retention) beyond, where peak stays the true
+maximum. History refreshes every 30 seconds and pauses
 fleet pagination while open; Escape closes the dialog.
 
 Right-click a server card for the custom menu; **Rename** edits the monitor's

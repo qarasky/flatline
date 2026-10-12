@@ -317,10 +317,10 @@
         "/api/v1/monitors/{id}/metrics/summary": {
             "get": {
                 "summary": "Load history charts and percentile statistics",
-                "description": "Requires read scope. Extracts only CPU/RAM/first-GPU/first-VRAM scalars. Percentiles use nearest-rank across archived samples (normally 30s), not chart bucket averages or raw 1Hz telemetry. Returns at most 240 chart buckets, stats with count/min/max/mean/p90/p95/p99, coverage timestamps, and capped=true if the newest 50,000-row safety limit truncates the window. GPU/VRAM are null when unavailable. No data is represented as missing, not zero.",
+                "description": "Requires read scope. Extracts only CPU/RAM/first-GPU/first-VRAM scalars. Windows up to 7 days read raw archived snapshots (normally 30s) with nearest-rank percentiles; longer windows up to 17520 hours (2 years) read hourly rollups (min/max/average per metric), where percentiles describe hourly averages while peak stays the true maximum of the underlying readings. Returns at most 240 chart buckets, stats with count/min/max/mean/p90/p95/p99, coverage timestamps, and capped=true if the newest 50,000-row safety limit truncates the window. GPU/VRAM are null when unavailable. No data is represented as missing, not zero.",
                 "parameters": [
                     { "$ref": "#/components/parameters/monitorId" },
-                    { "name": "hours", "in": "query", "schema": { "type": "number", "exclusiveMinimum": 0, "maximum": 168, "default": 1 } }
+                    { "name": "hours", "in": "query", "schema": { "type": "number", "exclusiveMinimum": 0, "maximum": 17520, "default": 1 } }
                 ],
                 "responses": {
                     "200": { "description": "Window, coverage, percentile statistics, and bucket-average chart series" },

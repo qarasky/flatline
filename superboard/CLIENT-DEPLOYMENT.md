@@ -28,6 +28,9 @@ via arguments/environment, or captured. The folder and ignore rules are unchange
 - Metric threshold alerts are **server-side**: they activate with the backend
   deploy alone, no agent upgrade needed. Per-host thresholds are configured in
   the monitor edit form (Advanced → Metric alert thresholds).
+- Hourly history rollups (two-year retention) are also server-side: the
+  backend folds raw samples every hour and the dialog gains 30d/1y ranges.
+  No agent change.
 
 ## Provisioning record — 2026-10-09
 

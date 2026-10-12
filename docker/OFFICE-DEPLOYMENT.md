@@ -74,11 +74,14 @@ Committed but **not yet deployed** anywhere:
 
 - Backend: raw CPU counters with server-side utilization derivation (live
   short-window, ~30s means in history), agent pending-update counts ingest,
-  and Phase 5 metric threshold alerts (CPU/RAM/disk, per monitor, 60s
-  debounce / 30min cooldown / hysteresis / recovery).
+  Phase 5 metric threshold alerts (CPU/RAM/disk, per monitor, 60s
+  debounce / 30min cooldown / hysteresis / recovery), and two-tier history
+  (hourly min/max/avg rollups for two years; summary switches tiers by
+  window).
 - Dashboard: pending-update line on cards, group-scoped boards
   (`/superboard/kiosk/<group>`), right-click rename, agent version + warning
-  lines, and threshold fields in the monitor edit form (Advanced).
+  lines, threshold fields in the monitor edit form (Advanced), and 30d/1y
+  history ranges.
 - Agent **1.4.0**: sends raw counters, update counts, and a self-report block
   (version, uptime, dropped samples, failed pushes, collector errors), plus a
   disk-backed send buffer (default `/var/lib/superboard/buffer`, 32 MiB cap)

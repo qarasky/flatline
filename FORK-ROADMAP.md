@@ -31,7 +31,10 @@ with `sampledAt` so backfilled history keeps its real timestamps — backend
 outages and agent restarts become late history instead of missing history.
 Metric threshold alerts (Phase 5) evaluate server-side at ingest with
 60s debounce, 5-point hysteresis, 30-minute cooldown and explicit recovery
-messages, configured per monitor in the edit form.
+messages, configured per monitor in the edit form. History is two-tier:
+raw 30s snapshots for 30 days, hourly min/max/avg rollups for two years,
+with the summary API switching tiers by window and the dialog exposing
+30d/1y ranges.
 
 Still planned: private aggregate saved views, and the ranked backlog in
 [IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md) (agent self-telemetry,

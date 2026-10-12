@@ -905,13 +905,26 @@ router.get("/api/v1/monitors/:id/metrics/summary", tokenAuth("read"), async (req
             return;
         }
         const hours = Number(req.query.hours ?? 1);
-        if (!Number.isFinite(hours) || hours <= 0 || hours > 168) {
-            return fail(res, 400, "bad_request", "`hours` must be positive and at most 168.");
+        if (!Number.isFinite(hours) || hours <= 0 || hours > 17520) {
+            return fail(res, 400, "bad_request", "`hours` must be positive and at most 17520 (two years).");
         }
-        const { scalarRows, historySummary, MAX_HISTORY_ROWS } = require("../metrics-history");
+        const { scalarRows, hourlyRows, historySummary, hourlySummary, MAX_HISTORY_ROWS } = require("../metrics-history");
         const to = new Date().toISOString();
         const from = new Date(Date.now() - hours * 3600_000).toISOString();
         const sqlTime = value => value.replace("T", " ").replace("Z", "");
+
+        // Two tiers, one response shape. Raw 30s samples answer windows up
+        // to a week; beyond that the hourly rollups do, because raw would
+        // blow the row cap and the long tier is what actually exists.
+        const longRange = hours > 168;
+        if (longRange) {
+            const rows = await hourlyRows(monitor.id, sqlTime(from), sqlTime(to));
+            const capped = rows.length > MAX_HISTORY_ROWS;
+            return res.json({ ok: true, monitorId: monitor.id, hours, from, to, capped,
+                percentileMethod: "nearest-rank", basis: "hourly rollups (min/max/average per metric); percentiles describe hourly averages, while peak is the true maximum of the underlying readings",
+                ...hourlySummary(rows.slice(0, MAX_HISTORY_ROWS), from, to) });
+        }
+
         const rows = await scalarRows(monitor.id, sqlTime(from), sqlTime(to));
         const capped = rows.length > MAX_HISTORY_ROWS;
         res.json({ ok: true, monitorId: monitor.id, hours, from, to, capped,

@@ -19,8 +19,9 @@ for the full list of changes.
 - Monitor websites and services from a dense, keyboard-friendly dashboard.
 - Watch CPU/RAM at 1Hz on **Superboard**, including per-core load, disk usage,
   optional GPU/VRAM, temperatures, and explicit telemetry freshness.
-- Open a server's history with **10m / 1h / 6h / 24h / 7d** ranges and
-  **p90 / p95 / p99**, mean, and peak summaries.
+- Open a server's history with **10m / 1h / 6h / 24h / 7d / 30d / 1y** ranges
+  and **p90 / p95 / p99**, mean, and peak summaries. Windows beyond a week
+  read hourly rollups (two-year retention); peak stays the true maximum.
 - Track containers in three-column status tiles with automatic vertical looping,
   pinned problems, and no manual scrolling. Host reachability stays separate
   from workload health.

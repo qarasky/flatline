@@ -5,7 +5,7 @@ import { historyPath } from "@/lib/history-chart";
 import { percentage } from "@/lib/fleet-presentation";
 import { Button } from "@/components/ui/button";
 
-const RANGES = [{ label: "10m", hours: 1 / 6 }, { label: "1h", hours: 1 }, { label: "6h", hours: 6 }, { label: "24h", hours: 24 }, { label: "7d", hours: 168 }];
+const RANGES = [{ label: "10m", hours: 1 / 6 }, { label: "1h", hours: 1 }, { label: "6h", hours: 6 }, { label: "24h", hours: 24 }, { label: "7d", hours: 168 }, { label: "30d", hours: 720 }, { label: "1y", hours: 8760 }];
 const CHARTS: { key: HistoryMetric; label: string; color: string }[] = [
     { key: "cpu", label: "Total CPU", color: "#e0d9c9" },
     { key: "ram", label: "RAM", color: "#9eb8cd" },
@@ -88,7 +88,7 @@ export const ServerHistory = memo(function ServerHistory({ monitor, onClose }: {
                     {RANGES.map(range => <Button key={range.label} aria-pressed={hours === range.hours} onClick={() => setHours(range.hours)}>{range.label}</Button>)}
                     <span className="text-xs text-quiet">Refreshes every 30s</span>
                 </div>
-                <p className="history-note">Percentiles use archived snapshots (normally every 30s), not raw 1Hz telemetry. p95 means 95% of readings were at or below that load. Charts show bucket averages; gaps are not zeroes.</p>
+                <p className="history-note">{data ? `${data.basis}. ` : "Percentiles use archived snapshots (normally every 30s). "}p95 means 95% of readings were at or below that load. Charts show bucket averages; gaps are not zeroes.</p>
                 {error ? <p className="text-warn text-sm" role="alert">{error}</p> : null}
                 {loading ? <p className="history-no-data" role="status">Loading history…</p> : data?.samples === 0 ? <p className="history-no-data">No archived readings yet in this range. New agents archive their first sample immediately.</p> : data ? <>
                     {data.capped ? <p className="text-warn text-sm">Window exceeds the safety limit. These statistics cover only the newest 50,000 samples.</p> : null}

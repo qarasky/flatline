@@ -11,7 +11,7 @@ shipped (and listed in the deploy record once rolled out).
 - [x] 1.1 Agent self-telemetry — shipped in agent 1.4.0
 - [x] 1.2 Disk-backed send buffer — shipped in agent 1.4.0 (with server-side `sampledAt`)
 - [x] 2.1 Threshold alerts — shipped server-side (Phase 5)
-- [ ] 2.2 Multi-tier retention
+- [x] 2.2 Multi-tier retention — shipped (hourly min/max/avg, two years)
 - [ ] 3.1 Network throughput, disk I/O, load average
 - [ ] 3.2 Per-container CPU / memory
 - [ ] 3.3 SMART disk health
@@ -116,6 +116,17 @@ Validated by the review — keep these decisions, they are not gaps:
 
 ### 2.2 Multi-tier retention
 
+- **Status:** shipped (2026-10-12). As built: `monitor_metric_hourly` keeps
+  one row per monitor per hour (min/max/avg per metric plus the number of raw
+  readings) for two years; the hourly rollup job folds only complete hours,
+  upserts on `(monitor_id, time)`, backfills the full raw window in chunks on
+  first run, and re-rolls the last two complete hours so late/backfilled
+  samples land. Summary windows ≤ 7d read raw; > 7d read hourly, where peak
+  comes from the stored extremes (averages must not hide spikes) and
+  percentiles describe hourly averages — the response's `basis` says which.
+  API max extended to 17520 hours; the history dialog gained 30d and 1y
+  ranges. Not done: per-minute tiers (Netdata-style); hourly is the tier the
+  fleet needs first.
 - **Why:** Netdata keeps per-second/per-minute/per-hour tiers; we store 30s
   samples for 30 days uniformly, so the board forgets everything past a month
   and the history API caps at 7 days. Fleet ops questions ("was this box

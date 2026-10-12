@@ -535,7 +535,7 @@ test("monitor metrics read API", async (t) => {
         assert.strictEqual(body.stats.gpu.count,1); assert.strictEqual(body.stats.gpu.p99,0);
         assert.strictEqual(body.stats.vram.p99,10); assert.ok(body.series.length<=240);
         assert.strictEqual((await get(`/api/v1/monitors/${monitor.id}/metrics/summary?hours=0`)).status,400);
-        assert.strictEqual((await get(`/api/v1/monitors/${monitor.id}/metrics/summary?hours=169`)).status,400);
+        assert.strictEqual((await get(`/api/v1/monitors/${monitor.id}/metrics/summary?hours=17521`)).status,400);
         assert.strictEqual((await get(`/api/v1/monitors/${monitor.id}/metrics/summary`,null)).status,401);
     });
 

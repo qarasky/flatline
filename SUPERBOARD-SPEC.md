@@ -141,7 +141,15 @@ Accept an optional JSON body alongside the existing query params:
 
 - Legacy pushes retain every sample for **30 days**. Opt-in live telemetry
   retains one snapshot per monitor per **30 seconds**, not every 1Hz sample.
-- Prune runs with the existing background-job pattern (hourly, unref'd timer).
+- Hourly rollups (**min/max/average per metric**, plus the number of raw
+  readings folded in) are kept for **two years** in `monitor_metric_hourly`.
+  The rollup job runs hourly, folds only complete hours, and upserts on
+  `(monitor_id, time)` so re-runs and crash recovery are idempotent; the last
+  two complete hours are re-rolled each run so late/backfilled samples land.
+  A first run backfills everything still in raw retention, chunked.
+- Prune runs with the existing background-job pattern; the rollup job runs
+  hourly at :12, before the daily raw prune at 04:27, so no hour is ever
+  deleted before it has been folded.
 - Ten live agents generate ~864k history rows/month at 30-second resolution,
   versus ~25.9 million full payloads if every 1Hz sample were persisted.
 
@@ -386,12 +394,17 @@ distinct from the dense table: this is the NOC wall, not the operator desk.
 - Select a server name (↗) to open the keyboard-accessible history dialog.
   Escape closes it; kiosk rotation pauses while it is open. Containers remain
   overflow-hidden with no scrollbars.
-- Ranges: 10m, 1h, 6h, 24h, 7d. Only the open dialog refreshes history every
-  30s; live board updates continue independently. Range changes abort old reads.
+- Ranges: 10m, 1h, 6h, 24h, 7d, 30d, 1y. Only the open dialog refreshes
+  history every 30s; live board updates continue independently. Range changes
+  abort old reads.
 - `/api/v1/monitors/:id/metrics/summary?hours=1` extracts compact CPU/RAM/GPU/
-  VRAM scalars, at most 240 chart buckets and 50,000 source rows. This covers
-  the full 7-day window at normal 30-second archival cadence. If capped, the
-  UI explicitly warns that statistics describe a truncated window.
+  VRAM scalars, at most 240 chart buckets and 50,000 source rows. Windows up to
+  7 days read raw snapshots; longer windows up to 17520 hours (2 years) read
+  the hourly rollups, where percentiles describe hourly averages while **peak
+  stays the true maximum** from the stored extremes and `samples` reports the
+  raw readings rolled up. The response's `basis` field says which tier
+  answered. If capped, the UI explicitly warns that statistics describe a
+  truncated window.
 - p90/p95/p99 use nearest-rank over **archived readings**, not downsampled chart
   averages or raw 1Hz live samples. Missing GPU or invalid values are excluded,
   not interpreted as zero. GPU/VRAM charts describe the first device. Charts
