@@ -7,6 +7,7 @@ const MAX_LATEST = 512;
 const HISTORY_INTERVAL_MS = 30_000;
 const { recordCPU, currentPeak, forgetCPU, resetCPU } = require("./cpu-peak");
 const { asCounters, transformCounters } = require("./cpu-counters");
+const { netSnapshot, diskSnapshot, netRates, diskRates } = require("./io-rates");
 
 /**
  * Parse a stored timestamp (SQL or ISO) into epoch millis.
@@ -245,6 +246,41 @@ async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
         persistedCounters = previous?.persistedCounters;
     }
 
+    // Network and disk I/O rates: same contract as CPU (raw counters in, the
+    // server owns the window) but live-only — archived rows keep the raw
+    // counters, which are lossless. A gap longer than the rate window
+    // (restart, outage) produces no rate rather than a fake average.
+    let pushNet = previous?.pushNet;
+    let pushDiskIo = previous?.pushDiskIo;
+    try {
+        if (Number.isFinite(incomingTime)) {
+            const netCur = netSnapshot(sampleMetrics);
+            if (netCur && (!previous?.pushNet || incomingTime >= previous.pushNet.time)) {
+                if (previous?.pushNet) {
+                    const rate = netRates(previous.pushNet.snapshot, netCur, incomingTime - previous.pushNet.time);
+                    if (rate) {
+                        sampleMetrics.netRate = rate;
+                    }
+                }
+                pushNet = { snapshot: netCur, time: incomingTime };
+            }
+            const ioCur = diskSnapshot(sampleMetrics);
+            if (ioCur && (!previous?.pushDiskIo || incomingTime >= previous.pushDiskIo.time)) {
+                if (previous?.pushDiskIo) {
+                    const rate = diskRates(previous.pushDiskIo.snapshot, ioCur, incomingTime - previous.pushDiskIo.time);
+                    if (rate) {
+                        sampleMetrics.diskIoRate = rate;
+                    }
+                }
+                pushDiskIo = { snapshot: ioCur, time: incomingTime };
+            }
+        }
+    } catch (e) {
+        log.debug("metrics", `I/O rate derivation failed for monitor ${monitorID}, omitting rates: ${e.message}`);
+        pushNet = previous?.pushNet;
+        pushDiskIo = previous?.pushDiskIo;
+    }
+
     if (persistDue) {
         const bean = R.dispense("monitor_metric");
         bean.monitor_id = monitorID;
@@ -267,7 +303,7 @@ async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
             return true;
         }
         latest.delete(monitorID);
-        latest.set(monitorID, { sample, persistedAt, persistedSampleTime, pushCounters, persistedCounters });
+        latest.set(monitorID, { sample, persistedAt, persistedSampleTime, pushCounters, persistedCounters, pushNet, pushDiskIo });
         if (latest.size > MAX_LATEST) {
             latest.delete(latest.keys().next().value);
         }

@@ -13,11 +13,14 @@ The token is saved in `/etc/superboard/config.json` with mode 0600. systemd runs
 the agent as root; non-systemd hosts get a warned, unsupervised cron `@reboot`
 fallback. Do not install the service from `/tmp`.
 
-Agent 1.4 defaults to 1Hz live pushes carrying raw cumulative CPU counters
-(`/proc/stat` snapshots) with 1-second-fresh RAM; the server derives
+Agent 1.5 defaults to 1Hz live pushes carrying raw cumulative CPU counters
+(`/proc/stat` snapshots), network and disk I/O counters, and the load
+average, with 1-second-fresh RAM; the server derives
 utilization from consecutive snapshots (responsive live, ~30s means in
 history), so a one-second 95% spike archives as ~3%, not 95%. The agent's
-own percent fields remain as fallback for old backends. GPU refreshes every
+own percent fields remain as fallback for old backends. Network and disk
+I/O ride as raw counters and the server derives per-second rates for the
+live card only (gaps produce no rate). GPU refreshes every
 5s, Docker every 10s, disk/temperatures every 30s, pending-update counts
 every 4h (read-only, counts only, absent when unknown). Slow collectors
 cannot block fast sampling.
@@ -58,7 +61,7 @@ colors, looping automatically when more than nine containers are present.
 Host cards show pending-update counts (`No updates` green, `Updates: N` yellow
 below 50 / red at 50+, `Security Updates: N` dark red); unknown stays blank.
 
-Not implemented: network counters, Docker event subscriptions, per-container
+Not implemented: Docker event subscriptions, per-container
 CPU/memory stats, and log shipping. Update checks are read-only and never
 install packages or reboot hosts. See
 [`../SUPERBOARD-SPEC.md`](../SUPERBOARD-SPEC.md) for storage/stream semantics

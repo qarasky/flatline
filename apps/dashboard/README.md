@@ -64,6 +64,11 @@ monitor's linked notifications. Clearing a field disables that alert. No
 agent upgrade is needed — thresholds read the metrics the server already
 has.
 
+Cards show load average next to `Peak 10m` (tooltip: 1/5/15) and a
+`Net ↓ ↑ · I/O R W` line in the resources section when the agent reports
+counters; rates are derived server-side over the window between pushes, and
+gaps simply hide the line.
+
 Container tiles use three columns and roughly nine visible slots. More than
 nine containers loop vertically; up to six problems are pinned. Hover/focus
 pauses motion and reduced-motion preferences disable animation. Red means a

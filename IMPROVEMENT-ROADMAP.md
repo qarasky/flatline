@@ -12,7 +12,7 @@ shipped (and listed in the deploy record once rolled out).
 - [x] 1.2 Disk-backed send buffer — shipped in agent 1.4.0 (with server-side `sampledAt`)
 - [x] 2.1 Threshold alerts — shipped server-side (Phase 5)
 - [x] 2.2 Multi-tier retention — shipped (hourly min/max/avg, two years)
-- [ ] 3.1 Network throughput, disk I/O, load average
+- [x] 3.1 Network throughput, disk I/O, load average — shipped (live rates; no dedicated history charts yet)
 - [ ] 3.2 Per-container CPU / memory
 - [ ] 3.3 SMART disk health
 
@@ -143,6 +143,15 @@ Validated by the review — keep these decisions, they are not gaps:
 
 ### 3.1 Network throughput, disk I/O, load average
 
+- **Status:** shipped in agent 1.5.0 (2026-10-12). As built: raw cumulative
+  counters for network (per interface, loopback excluded) and disk I/O
+  (whole disks only, partitions filtered), load average as a gauge. The
+  server derives per-second rates between consecutive pushes and attaches
+  them to the live sample (`netRate`/`diskIoRate`); history keeps the raw
+  counters, and dedicated charts for these metrics remain future work. Gaps
+  longer than 5 minutes yield no rate rather than a fake average; virtual
+  interfaces are excluded when summing so container traffic is not double
+  counted.
 - **Why:** Beszel ships all three; load average is a headline number in every
   lightweight monitor. We have CPU/RAM/disk-space and nothing else.
 - **Shape:** raw cumulative counters from `/proc/net/dev` and `/proc/diskstats`

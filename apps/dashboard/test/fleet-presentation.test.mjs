@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, fleetAttention, formatDuration, groupSlug, matchGroups, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
+import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, fleetAttention, formatBytes, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -103,6 +103,17 @@ test("durations format compactly for cards and tooltips", () => {
     assert.equal(formatDuration(600), "10m");
     assert.equal(formatDuration(7200), "2h");
     assert.equal(formatDuration(3 * 86400), "3d");
+});
+test("bytes and rates format compactly; a real zero rate stays visible", () => {
+    assert.equal(formatBytes(undefined), "—");
+    assert.equal(formatBytes(0), "0 B");
+    assert.equal(formatBytes(1536), "1.5 KB");
+    assert.equal(formatBytes(15 * 1024 * 1024), "15.0 MB");
+    assert.equal(formatRate(undefined), null);
+    assert.equal(formatRate(NaN), null);
+    assert.equal(formatRate(-1), null);
+    assert.equal(formatRate(0), "0 B/s", "an idle interface is data, not missing");
+    assert.equal(formatRate(2_500_000), "2.4 MB/s");
 });
 test("high usage includes memory, disks and legacy GPU VRAM; unknown numbers stay unknown", () => {
     assert.equal(fleetAttention({gpu:{available:true, memTotal:100, memUsed:95}}, "2026-10-09T12:00:00Z", 180, now).hot, true);

@@ -34,6 +34,9 @@ for the full list of changes.
 - Spot agent trouble at a glance: version, dropped samples, failed pushes and
   per-collector error counts travel in every payload and render on the card
   when something is off.
+- Read load average and live network / disk I/O throughput on each server
+  card (rates derived server-side from raw counters, virtual interfaces
+  excluded so container traffic is not double counted).
 - Wall-mount a group of servers on its own kiosk page —
   `/superboard/kiosk/work` — while home shows every fleet on one board,
   or combine scopes with `/superboard/kiosk/work,personal`.
@@ -114,15 +117,17 @@ The operator dashboard and Superboard use bearer-authenticated SSE
 connect/reconnect; heartbeat changes arrive as soon as checks finish.
 External monitor check frequencies do not change.
 
-[Superboard agent 1.4](superboard/README.md) pushes raw CPU counters at 1Hz
+[Superboard agent 1.5](superboard/README.md) pushes raw CPU counters at 1Hz
 (the server derives utilization: responsive live, ~30s means in history),
-1-second-fresh RAM, independent slower collectors, read-only pending-update
+1-second-fresh RAM, load average, network and disk I/O counters (server
+derives live rates), independent slower collectors, read-only pending-update
 counts every 4h, and a Telegraf-style self-report (version, uptime, dropped
 samples, collector errors) that cards surface as version + warning lines.
 Delivery is disk-backed: backend outages and agent restarts become late
 history instead of missing history, and backfilled samples carry their real
 times (`sampledAt`). Latest samples are cached; live history is
-sampled every 30s and retained for 30 days. Existing explicit agent intervals
+sampled every 30s and retained for 30 days, with hourly rollups kept for two
+years. Existing explicit agent intervals
 are preserved until changed. Upgrade the backend before enabling 1Hz agents.
 
 Use a single backend process. If reverse-proxying `/api/v1/events`, disable

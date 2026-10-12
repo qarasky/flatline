@@ -1,6 +1,6 @@
 import { memo, type MouseEvent } from "react";
 import type { MonitorSummary, MetricsPayload, CPUPeak } from "@/lib/api";
-import { agentWarnings, fleetAttention, formatDuration, percentage, sampleAgeMs, updatesStatus } from "@/lib/fleet-presentation";
+import { agentWarnings, fleetAttention, formatBytes, formatDuration, formatRate, percentage, sampleAgeMs, updatesStatus } from "@/lib/fleet-presentation";
 import { ContainerTiles } from "@/components/ContainerTiles";
 import { CoreSquares } from "@/components/CoreSquares";
 import { MetricBar, usageTone } from "@/components/MetricBar";
@@ -10,15 +10,6 @@ export interface FleetServer {
     time: string;
     metrics: MetricsPayload;
     cpuPeak10m?: CPUPeak | null;
-}
-
-export function formatBytes(bytes: number | undefined): string {
-    if (bytes === undefined || !Number.isFinite(bytes)) { return "—"; }
-    const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-    let value = bytes;
-    let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
-    return `${value.toFixed(value >= 100 || unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
 export function ageOf(value: string | null | undefined): string {
@@ -59,6 +50,21 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
     const warning = agentWarnings(agent);
     const agentTip = agent
         ? `Agent ${agent.version ?? "unknown"}${Number.isFinite(agent.uptime) ? ` · running ${formatDuration(agent.uptime) ?? "0s"}` : ""}`
+        : undefined;
+    const load = metrics.load;
+    const loadTip = load && Number.isFinite(load.avg1)
+        ? `Load average 1/5/15: ${(load.avg1 as number).toFixed(2)} / ${Number.isFinite(load.avg5) ? (load.avg5 as number).toFixed(2) : "—"} / ${Number.isFinite(load.avg15) ? (load.avg15 as number).toFixed(2) : "—"}`
+        : null;
+    const netRate = metrics.netRate;
+    const ioRate = metrics.diskIoRate;
+    const netText = netRate
+        ? `Net ↓ ${formatRate(netRate.rxBytesPerSec) ?? "—"} ↑ ${formatRate(netRate.txBytesPerSec) ?? "—"}`
+        : null;
+    const ioText = ioRate
+        ? `I/O R ${formatRate(ioRate.readBytesPerSec) ?? "—"} W ${formatRate(ioRate.writeBytesPerSec) ?? "—"}`
+        : null;
+    const rateTip = netRate || ioRate
+        ? `Rates over the last ${Math.round((netRate?.windowSeconds ?? ioRate?.windowSeconds ?? 0) * 10) / 10}s of agent pushes; gaps produce no rate`
         : undefined;
 
     return (
@@ -107,9 +113,10 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
                 <section className="fleet-primary-metric" aria-label="CPU utilization">
                     <div className="fleet-label">CPU</div>
                     <div className={`fleet-number tnum ${usageTone(cpu?.percent) === "bad" ? "text-bad" : usageTone(cpu?.percent) === "warn" ? "text-warn" : ""}`}>{percentage(cpu?.percent)}</div>
-                    <p className="fleet-secondary" title="Highest observed total CPU load over the last 10 minutes; restart recovery uses archived snapshots">
+                    <p className="fleet-secondary" title={`Highest observed total CPU load over the last 10 minutes${loadTip ? ` · ${loadTip}` : ""}; restart recovery uses archived snapshots`}>
                         {`Peak 10m ${percentage(peak)}`}
                         {temperature(cpu?.temp) ? ` · ${temperature(cpu?.temp)}` : ""}
+                        {loadTip ? ` · load ${(load?.avg1 as number).toFixed(2)}` : ""}
                     </p>
                     <div className="mt-3"><CoreSquares values={cpu?.perCore} label="Core" /></div>
                 </section>
@@ -124,6 +131,11 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
             <div className="fleet-resources">
                 <MetricBar label={disk ? `Disk ${disk.mount ?? ""}` : "Disk"} percent={disk?.percent}
                     detail={disk ? `${formatBytes(disk.used)} / ${formatBytes(disk.total)}` : "No mounts reported"} />
+                {netText || ioText ? (
+                    <p className="fleet-secondary tnum" title={rateTip}>
+                        {netText}{netText && ioText ? " · " : ""}{ioText}
+                    </p>
+                ) : null}
                 {gpus.map((g, i) => (
                     <section key={`${g.name}-${i}`} className="fleet-gpu">
                         <MetricBar label={g.name ?? `GPU ${i + 1}`} percent={g.util} detail={temperature(g.temp) ?? undefined} />

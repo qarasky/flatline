@@ -34,7 +34,8 @@ Metric threshold alerts (Phase 5) evaluate server-side at ingest with
 messages, configured per monitor in the edit form. History is two-tier:
 raw 30s snapshots for 30 days, hourly min/max/avg rollups for two years,
 with the summary API switching tiers by window and the dialog exposing
-30d/1y ranges.
+30d/1y ranges. Agent 1.5 adds load average and live network/disk I/O
+rates (server-derived from raw counters) to the cards.
 
 Still planned: private aggregate saved views, and the ranked backlog in
 [IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md) (agent self-telemetry,

@@ -82,9 +82,10 @@ Committed but **not yet deployed** anywhere:
   (`/superboard/kiosk/<group>`), right-click rename, agent version + warning
   lines, threshold fields in the monitor edit form (Advanced), and 30d/1y
   history ranges.
-- Agent **1.4.0**: sends raw counters, update counts, and a self-report block
-  (version, uptime, dropped samples, failed pushes, collector errors), plus a
-  disk-backed send buffer (default `/var/lib/superboard/buffer`, 32 MiB cap)
+- Agent **1.5.0**: sends raw counters, update counts, a self-report block
+  (version, uptime, dropped samples, failed pushes, collector errors), load
+  average, network and disk I/O counters, plus a disk-backed send buffer
+  (default `/var/lib/superboard/buffer`, 32 MiB cap)
   with `sampledAt` backfill; rebuild
   (`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o superboard .`) and
   restart on office and all client hosts.

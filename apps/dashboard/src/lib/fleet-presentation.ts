@@ -79,6 +79,29 @@ export function containerIssue(container: Container): boolean {
 }
 
 /**
+ * Format a byte count compactly. Missing or non-finite reads as "—".
+ */
+export function formatBytes(bytes: number | undefined): string {
+    if (bytes === undefined || !Number.isFinite(bytes)) { return "—"; }
+    const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    return `${value.toFixed(value >= 100 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+/**
+ * Format a throughput in bytes per second, or null when absent so the card
+ * can hide it. A real zero reads as "0 B/s": an idle interface is data.
+ */
+export function formatRate(bytesPerSecond: number | undefined): string | null {
+    if (bytesPerSecond === undefined || !Number.isFinite(bytesPerSecond) || bytesPerSecond < 0) {
+        return null;
+    }
+    return `${formatBytes(bytesPerSecond)}/s`;
+}
+
+/**
  * Format a duration in seconds as a compact human string, or null when the
  * value is absent or not finite.
  */

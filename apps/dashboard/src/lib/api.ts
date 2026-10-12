@@ -392,6 +392,11 @@ export interface MetricsPayload {
     docker?: { name?: string; image?: string; state?: string; health?: string; ports?: string[]; uptime?: number }[];
     dockerError?: string;
     updates?: { total?: number; security?: number };
+    load?: { avg1?: number; avg5?: number; avg15?: number };
+    net?: { iface?: string; rxBytes?: number; txBytes?: number }[];
+    diskIo?: { device?: string; readBytes?: number; writeBytes?: number }[];
+    netRate?: { rxBytesPerSec?: number; txBytesPerSec?: number; windowSeconds?: number };
+    diskIoRate?: { readBytesPerSec?: number; writeBytesPerSec?: number; windowSeconds?: number };
     agent?: {
         version?: string;
         uptime?: number;

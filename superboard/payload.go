@@ -82,6 +82,49 @@ type Updates struct {
 	Security int `json:"security,omitempty"`
 }
 
+// Load is the 1/5/15-minute load average, a gauge. It is sent as-is; there
+// is no counter delta to own server-side.
+type Load struct {
+	Avg1  float64 `json:"avg1"`
+	Avg5  float64 `json:"avg5"`
+	Avg15 float64 `json:"avg15"`
+}
+
+// NetInterface is one interface's cumulative byte counters, loopback
+// excluded. Raw counters, not rates: the server diffs consecutive
+// snapshots, same contract as CPU. Virtual interfaces (veth, docker,
+// bridges) are included in the payload; the server excludes them when
+// summing the card's throughput so container traffic is not double counted.
+type NetInterface struct {
+	Iface   string `json:"iface"`
+	RxBytes uint64 `json:"rxBytes"`
+	TxBytes uint64 `json:"txBytes"`
+}
+
+// DiskIO is one whole disk's cumulative byte counters. Partitions are
+// filtered out (their counters are already in their disk's). Raw counters;
+// the server derives rates.
+type DiskIO struct {
+	Device     string `json:"device"`
+	ReadBytes  uint64 `json:"readBytes"`
+	WriteBytes uint64 `json:"writeBytes"`
+}
+
+// NetRate and DiskIoRate are server-derived throughput over the window
+// since the previous push (see server/io-rates.js). They exist only on live
+// samples: history keeps the raw counters, which are lossless.
+type NetRate struct {
+	RxBytesPerSec float64 `json:"rxBytesPerSec"`
+	TxBytesPerSec float64 `json:"txBytesPerSec"`
+	WindowSeconds float64 `json:"windowSeconds"`
+}
+
+type DiskIoRate struct {
+	ReadBytesPerSec  float64 `json:"readBytesPerSec"`
+	WriteBytesPerSec float64 `json:"writeBytesPerSec"`
+	WindowSeconds    float64 `json:"windowSeconds"`
+}
+
 // AgentInfo is the agent's self-report, modelled on Telegraf's internal
 // metrics input: the monitoring software reports its own failures, because
 // otherwise a broken collector writes to journald and nobody reads it.
@@ -177,16 +220,22 @@ type Payload struct {
 	// time; the server validates it and falls back to receive time. The
 	// server stays the clock authority — this is an optimisation, never a
 	// requirement.
-	SampledAt   string      `json:"sampledAt,omitempty"`
-	Host        Host        `json:"host"`
-	CPU         CPU         `json:"cpu"`
-	Mem         Mem         `json:"mem"`
-	Disk        []Disk      `json:"disk"`
-	GPU         GPU         `json:"gpu"`
-	Docker      []Container `json:"docker"`
-	DockerError string      `json:"dockerError,omitempty"`
-	Updates     *Updates    `json:"updates,omitempty"`
-	Agent       *AgentInfo  `json:"agent,omitempty"`
+	SampledAt   string         `json:"sampledAt,omitempty"`
+	Host        Host           `json:"host"`
+	CPU         CPU            `json:"cpu"`
+	Mem         Mem            `json:"mem"`
+	Disk        []Disk         `json:"disk"`
+	GPU         GPU            `json:"gpu"`
+	Docker      []Container    `json:"docker"`
+	DockerError string         `json:"dockerError,omitempty"`
+	Updates     *Updates       `json:"updates,omitempty"`
+	Agent       *AgentInfo     `json:"agent,omitempty"`
+	Load        *Load          `json:"load,omitempty"`
+	Net         []NetInterface `json:"net,omitempty"`
+	DiskIO      []DiskIO       `json:"diskIo,omitempty"`
+	// Server-derived rates (live samples only; absent from agent payloads).
+	NetRate    *NetRate    `json:"netRate,omitempty"`
+	DiskIoRate *DiskIoRate `json:"diskIoRate,omitempty"`
 }
 
 // sampleTimeFormat is RFC3339 with milliseconds in UTC, matching the server's

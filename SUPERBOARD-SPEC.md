@@ -70,8 +70,11 @@ Migration: `db/knex_migrations/2026-10-0X-0000-monitor-metric.js`
     ],
     "dockerError": "no docker access (...)", // only when collection failed
     "updates": { "total": 70, "security": 8 }, // absent when unknown, never zero-filled
-    "agent": { "version": "1.4.0", "uptime": 86400, "samplesDropped": 2,
-               "failedPushes": 0, "collectorErrors": { "gpu": 1 } }
+    "agent": { "version": "1.5.0", "uptime": 86400, "samplesDropped": 2,
+               "failedPushes": 0, "collectorErrors": { "gpu": 1 } },
+    "load": { "avg1": 0.42, "avg5": 0.51, "avg15": 0.60 },
+    "net": [ { "iface": "eth0", "rxBytes": 123456789, "txBytes": 9876543 } ],
+    "diskIo": [ { "device": "sda", "readBytes": 1234567890, "writeBytes": 987654321 } ]
 }
 ```
 
@@ -109,6 +112,16 @@ Notes:
   "has had trouble since start", not necessarily "failing now". Old agents
   omit the block, old servers ignore it. `docker` collector errors also
   travel as `dockerError`; the board renders those in one place only.
+- `load` is the 1/5/15-minute load average, a gauge sent as-is.
+- `net` and `diskIo` are raw cumulative byte counters, loopback and
+  partitions excluded: the server derives per-second rates between
+  consecutive pushes, same contract as CPU. Rates are attached to the live
+  sample only as `netRate`/`diskIoRate` (with `windowSeconds`); archived rows
+  keep the raw counters. A window longer than 5 minutes (restart, outage)
+  yields no rate, never an average over a gap. When summing network
+  throughput the server excludes virtual interfaces (`veth`, `docker`,
+  `br-`, `virbr`, `vnet`, `tap`, `tun`, `wg`) so container traffic is not
+  double counted; if a host has only virtual interfaces, all are summed.
 - `container.uptime` is seconds since start, 0 when unknown.
 - Disk is an array (root plus any data mounts); the agent sends every local
   mount it can read, the board shows the fullest first.
@@ -166,6 +179,9 @@ Single static binary (`CGO_ENABLED=0`), linux/amd64. No runtime dependencies.
 | `/proc/stat` cumulative counters | raw snapshots + compat percent/cores | server derives windowed utilization; agent percent is old-backend fallback only |
 | `gopsutil/mem` | total/used/percent | bytes, per the schema |
 | `gopsutil/disk` | per-mount total/used/percent | every local mount it can read |
+| `gopsutil/disk` I/O | whole-disk cumulative byte counters | partitions filtered out; raw counters, server derives rates |
+| `gopsutil/net` | per-interface cumulative byte counters | loopback excluded; server derives rates and excludes virtual interfaces when summing |
+| `gopsutil/load` | load average 1/5/15 | gauge, sent as-is |
 | `gopsutil/host` | hostname, os, uptime | |
 | OS package managers | pending update counts (total, security) | read-only queries every 4h; apt-check exact, dnf security best-effort, rest total-only; failure → field absent, never fatal |
 | Docker socket | containers: name, image, state, health, ports | list + inspect; **no stats streaming in v1** |
@@ -182,8 +198,10 @@ Single static binary (`CGO_ENABLED=0`), linux/amd64. No runtime dependencies.
   path. The agent's own percent fields remain as old-backend fallback only.
   RAM stays per-push fresh. Disk and temperatures refresh every 30s, GPU
   every 5s, Docker every 10s, pending-update counts every 4h in independent
-  workers. Docker events, network counters and history charts remain
-  future work. Slow collector values are cached between refreshes.
+  workers. Network and disk I/O counters and the load average ride every
+  push (server derives rates for the live sample only). Docker event
+  subscriptions and dedicated network/I/O history charts remain future
+  work. Slow collector values are cached between refreshes.
 - Delivery is disk-backed (agent 1.4+): samples wait in a bounded queue
   (`/var/lib/superboard/buffer`, cap `buffer_max_bytes`, default 32 MiB) until
   the server accepts them, oldest-first, so backend outages and agent

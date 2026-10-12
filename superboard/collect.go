@@ -296,6 +296,9 @@ func collect() (*Payload, error) {
 		Disk:   disks,
 		GPU:    collectGPU(),
 		Docker: containers,
+		Load:   collectLoad(),
+		Net:    collectNet(),
+		DiskIO: collectDiskIO(),
 	}
 	if err != nil {
 		payload.DockerError = err.Error()

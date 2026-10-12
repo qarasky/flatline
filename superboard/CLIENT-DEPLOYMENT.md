@@ -14,9 +14,10 @@ via arguments/environment, or captured. The folder and ignore rules are unchange
 
 ## Pending rollout — 2026-10-12
 
-- Agent **1.4.0** (raw CPU counters, server-side utilization derivation,
+- Agent **1.5.0** (raw CPU counters, server-side utilization derivation,
   pending-update counts, self-telemetry, disk-backed send buffer with
-  `sampledAt` backfill) is committed but **not yet deployed to these hosts**.
+  `sampledAt` backfill, load average, network/disk I/O counters) is committed
+  but **not yet deployed to these hosts**.
   Order: backend + dashboard images first, then rebuild the agent binary and
   restart `superboard` on each box. The backend is backward compatible either
   way, but update counts and buffered backfill only appear after the agent
