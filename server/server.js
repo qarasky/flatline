@@ -200,22 +200,27 @@ app.use(function (req, res, next) {
     // Normal Router here
     // ***************************
 
-    // Entry Page
-    // The backend is API-only and never serves HTML. Custom domains and
-    // status pages are served by the Next.js status-site app, which resolves
-    // hosts through /api/status-page/resolve-host; the operator dashboard is
-    // a separate Vite app. This index exists so a browser pointed at the API
-    // gets a pointer, not a redirect into an app that lives elsewhere.
-    app.get("/", async (request, response) => {
-        response.json({
-            ok: true,
-            name: "Flatline API",
-            version: "v1",
-            documentation: "/api/v1/openapi.json",
-            dashboard: "Run the dashboard app (apps/dashboard) against this origin.",
-            statusSite: "Run the status-site app (apps/status-site) against this origin.",
+    // Entry page.
+    //
+    // With a web build present (release image) the static mount below serves
+    // the SPA at "/" and this API index is only a fallback for browsers
+    // pointed straight at the API in dev. When no build exists the index is
+    // the only thing at "/", so it stays registered.
+    const { mountStaticApp, webDistDir } = require("./static-app");
+    const webDist = webDistDir();
+    const hasWebBuild = require("fs").existsSync(require("path").join(webDist, "index.html"));
+
+    if (!hasWebBuild) {
+        app.get("/", async (request, response) => {
+            response.json({
+                ok: true,
+                name: "Flatline API",
+                version: "v1",
+                documentation: "/api/v1/openapi.json",
+                dashboard: "Build the web app (apps/dashboard) to serve it from this origin, or run its dev server.",
+            });
         });
-    });
+    }
 
     app.get("/setup-database-info", (request, response) => {
         allowDevAllOrigin(response);
@@ -318,8 +323,6 @@ app.use(function (req, res, next) {
     // The built web app — operator dashboard and public status pages — is
     // served from this process when a build exists (v2 consolidation). On a
     // dev machine without a build, the backend stays API-only.
-    const { mountStaticApp, webDistDir } = require("./static-app");
-    const webDist = webDistDir();
     if (mountStaticApp(app, webDist)) {
         log.info("server", `Serving the web app from ${webDist}`);
     } else {
