@@ -101,20 +101,20 @@ SFTP, NTP, Postgres, and Redis, plus maintenance windows, proxy support, and 2FA
 
 ## Architecture
 
-Two processes, one backend (v2 consolidation: status pages live in the
-dashboard app — the standalone Next.js status site is gone):
+One process (v2 consolidation): the backend serves the API and the web app —
+operator dashboard and public status pages — on one origin.
 
 | App | Dir | Port | What |
 |---|---|---|---|
-| Backend (API only) | `server/` | 3001 | Monitors, checks, notifications, REST v1. Serves JSON, no HTML. |
-| Operator dashboard + public status pages | `apps/dashboard` | 3003 | Dense monitor table, Superboard, users; `/status/:slug` and host-routed client domains (Vite + React). |
+| Backend + web app | `server/`, `apps/dashboard/` | 3001 | Monitors, checks, notifications, REST v1, and the built SPA (dashboard, `/status/:slug`, host-routed client domains). |
 
 The dashboard uses bearer-authenticated HTTP. Sign in with a username and
 password to obtain a browser token; integrations use per-user API keys from
-`POST /api/v1/api-keys` or the **Agents** panel. Public status pages are the
-same app on public routes; they read the status-page API, and password-gated
+`POST /api/v1/api-keys` or the **Agents** panel. Public status pages are
+routes in the same app; they read the status-page API, and password-gated
 pages use page-scoped unlock cookies rather than granting visitors operator
-access.
+access. In development the Vite dev server runs separately on 3003; the
+release image serves the build from the backend.
 
 ### Live updates
 
@@ -183,25 +183,18 @@ cd flatline
 docker compose up -d --build
 ```
 
-This starts the API on **3001** and the dashboard/status app on **3003**.
-Data lives in `./data`. On first run, open the
-dashboard and create the operator account — no token pasting, no seed scripts.
+This starts one service on **3001** that serves the API, the dashboard and
+the public status pages. Data lives in `./data`. On first run, open
+`http://127.0.0.1:3001` and create the operator account — no token pasting,
+no seed scripts.
 
-Browsers reach the backend at `BACKEND_URL` (default `http://127.0.0.1:3001`;
-`localhost` fails in some browsers over IPv6). Set it to the LAN host or
-public origin when the browser is elsewhere:
-
-```bash
-BACKEND_URL=http://192.168.1.10:3001 docker compose up -d --build
-```
-
-Behind a reverse proxy, serve both from one origin instead: the status
-page unlock posts cross-origin otherwise, and the browser will not keep the
-unlock cookie.
+Everything is same-origin by design, so there is no backend URL to
+configure: whatever host serves the app also serves the API. Open it on the
+LAN host or public origin when the browser is elsewhere.
 
 ### 🐳 Docker Command
 
-Backend only (the frontends have their own images — see `docker/`):
+The image serves everything — API, dashboard, status pages:
 
 ```bash
 docker run -d \

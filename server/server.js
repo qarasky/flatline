@@ -315,9 +315,20 @@ app.use(function (req, res, next) {
     const betterAuthRouter = await createBetterAuthRouter();
     app.use(betterAuthRouter);
 
-    // Catch-all, must be at the end of all express routes. The backend
-    // serves no HTML, so anything that is not an API route is a JSON 404 —
-    // never the old SPA shell.
+    // The built web app — operator dashboard and public status pages — is
+    // served from this process when a build exists (v2 consolidation). On a
+    // dev machine without a build, the backend stays API-only.
+    const { mountStaticApp, webDistDir } = require("./static-app");
+    const webDist = webDistDir();
+    if (mountStaticApp(app, webDist)) {
+        log.info("server", `Serving the web app from ${webDist}`);
+    } else {
+        log.debug("server", `No web build at ${webDist}; API only`);
+    }
+
+    // Catch-all, must be at the end of all express routes. Anything the API
+    // and the web app did not answer is a JSON 404 — never an HTML error
+    // page, so scripts and agents always get parseable output.
     app.use(async (request, response) => {
         if (request.originalUrl.startsWith("/upload/")) {
             response.status(404).json({ ok: false, error: "not_found", message: "File not found." });

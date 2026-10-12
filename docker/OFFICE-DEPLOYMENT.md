@@ -1,25 +1,22 @@
 # Office deployment
 
 Public origin: `https://uptime.mediaboost.kz`, existing Cloudflare Tunnel to
-`http://localhost:3001`. Gateway routes `/api/` and `/upload/` to the backend
-and every other path to the dashboard app, which serves both the operator
-dashboard and the public status pages (v2 consolidation; the separate status
-site was removed).
-SSE buffering is disabled. Only the gateway is published.
+`http://localhost:3001`. One container (v2 consolidation): the backend serves
+the API and the web app — operator dashboard and public status pages — on one
+origin. No gateway, no separate dashboard or status container.
 
 The standalone `compose.production.yaml` is deployed as
-`/home/office/flatline/compose.yaml` with `docker/production-gateway.conf` copied
-alongside it. Uses the system (rootful) Docker daemon via `sudo docker`.
+`/home/office/flatline/compose.yaml`. Uses the system (rootful) Docker daemon
+via `sudo docker`.
 Moved from the `office` user's rootless daemon on 2026-10-11; the old
 rootless daemon is no longer used for this stack.
 
-Build the images for `linux/amd64` on the build machine, then transfer/load
-them into office's system daemon (`sudo docker load ...`). All `docker`
+Build the image for `linux/amd64` on the build machine, then transfer/load
+it into office's system daemon (`sudo docker load ...`). All `docker`
 commands on office run as root:
 
 ```sh
 docker build --platform linux/amd64 -f docker/dockerfile --target release -t artchsh/flatline:office-live .
-docker build --platform linux/amd64 -f docker/dashboard.dockerfile -t artchsh/flatline-dashboard:office-live .
 ```
 
 Stage on loopback port 3101. Do not replace the original Kuma data directory.
@@ -33,7 +30,7 @@ alone does not mute upstream monitor delivery). Restore links and original
 notification activation only after stopping other active monitoring backends.
 
 Cutover requires stopping `uptime-kuma` to release port 3001, then setting
-`FLATLINE_PORT=3001` in `.env` and recreating only the gateway. The original
+`FLATLINE_PORT=3001` in `.env` and recreating the stack. The original
 container/image/data remain available for rollback. Agent configs must also
 be redirected to office. The system Docker daemon starts at boot via systemd;
 user linger for the `office` account is no longer required for this stack.
@@ -73,11 +70,12 @@ unless its notification links have first been disabled.
 
 Committed but **not yet deployed** anywhere:
 
-- v2 consolidation: the dashboard image now serves the public status pages;
-  the standalone status-site image/container is retired. On deploy, remove
-  the old `status-site` service (`sudo docker compose rm -sf status-site`)
-  and recreate the gateway with the updated config — `/status/` and
-  `/_next/` routes are gone; the catch-all handles them.
+- v2 consolidation: the single image serves the API and the web app. On
+  deploy, load the new image, update `compose.yaml` (one service, no
+  gateway), then `sudo docker compose up -d --remove-orphans` — the old
+  `dashboard`, `status-site` and `gateway` containers are retired. The
+  Cloudflare Tunnel already points at `localhost:3001`, which the single
+  service now publishes.
 
 - Backend: raw CPU counters with server-side utilization derivation (live
   short-window, ~30s means in history), agent pending-update counts ingest,

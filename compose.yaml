@@ -1,16 +1,11 @@
-# Production stack: API backend plus one app that serves the operator
-# dashboard and the public status pages (v2 consolidation).
-#
-# Backend origin from a browser's point of view defaults to
-# http://127.0.0.1:3001 (set BACKEND_URL to the LAN host or public origin
-# when browsers are elsewhere).
+# Production stack (v2 consolidation): one process serves the API and the
+# web app — operator dashboard and public status pages.
 #
 # First run: the dashboard shows first-run setup — create the operator
 # account there. No token pasting, no seed scripts.
 #
-# Behind a reverse proxy, point all three at one origin instead: the
-# password unlock posts cross-origin otherwise, and the browser will not
-# keep the unlock cookie.
+# One origin by design: the password unlock posts same-origin, so the
+# browser keeps the unlock cookie with no CORS or proxy configuration.
 
 services:
   flatline:
@@ -25,18 +20,3 @@ services:
     ports:
       - "3001:3001"
     # Healthcheck comes from the image (curl against the API index).
-
-  dashboard:
-    build:
-      context: .
-      dockerfile: docker/dashboard.dockerfile
-    image: artchsh/flatline-dashboard:2
-    restart: unless-stopped
-    ports:
-      - "3003:80"
-    environment:
-      FLATLINE_URL: ${BACKEND_URL:-http://127.0.0.1:3001}
-    depends_on:
-      flatline:
-        condition: service_healthy
-

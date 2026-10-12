@@ -39,7 +39,10 @@ with the summary API switching tiers by window and the dialog exposing
 30d/1y ranges. Agent 1.5 adds load average, live network/disk I/O
 rates (server-derived from raw counters), per-container CPU/memory stats,
 and SMART disk health warnings (smartctl every 6h; failing health or ≥80%
-NVMe wear speaks, healthy disks stay silent).
+NVMe wear speaks, healthy disks stay silent). The v2 consolidation then
+collapsed the web stack: status pages moved into the dashboard SPA and the
+backend serves the built app itself — one container, one origin, no
+gateway.
 
 Still planned: private aggregate saved views, and the ranked backlog in
 [IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md) (agent self-telemetry,

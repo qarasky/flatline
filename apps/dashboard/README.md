@@ -14,8 +14,8 @@ VITE_FLATLINE_URL=http://127.0.0.1:3001 npm --prefix apps/dashboard run dev
 
 Run commands from the repository root. Node.js >=26.2 is required. The Vite
 development server defaults to port 3003; the backend must already be running.
-Set the backend address to one reachable by the browser. Production containers
-replace the backend URL placeholder at startup via `FLATLINE_URL`.
+Set the backend address to one reachable by the browser. In production the
+build is served by the backend itself (same origin), so no URL is stamped in.
 
 ## Main views
 

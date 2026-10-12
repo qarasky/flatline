@@ -8,8 +8,10 @@ the old Vue frontend is deleted and the backend serves JSON only.
 
 **Revision (v2 consolidation, 2026-10-12):** the separate Next.js status app
 is gone. Status pages are public routes in the dashboard SPA
-(`/status/:slug`, and the site root on host-mapped client domains). The
-original "separate app" decision bought process isolation and server
+(`/status/:slug`, and the site root on host-mapped client domains), and the
+built SPA is served by the backend process itself — one container, one
+origin.
+The original "separate app" decision bought process isolation and server
 rendering; in practice the app was 511 lines carrying a full Next.js
 runtime, every page is `noindex`, and the only no-JS consumer (curl) has the
 JSON API. The data path is unchanged: password-gated API reads, page-scoped

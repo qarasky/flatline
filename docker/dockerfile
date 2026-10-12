@@ -54,6 +54,31 @@ COPY . .
 RUN mkdir ./data
 
 ############################################
+# Web app build (dashboard + status pages, one Vite app).
+#
+# Same-origin by design since the v2 consolidation, so no backend URL is
+# stamped in: the app talks to the origin that served it.
+############################################
+FROM node:26-trixie-slim AS web
+WORKDIR /app
+
+# The dashboard depends on the shared package via `file:`, so both must be
+# present before install.
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/shared/src packages/shared/src
+COPY apps/dashboard/package.json apps/dashboard/package.json
+COPY apps/dashboard/package-lock.json apps/dashboard/package-lock.json
+COPY apps/dashboard/index.html apps/dashboard/index.html
+COPY apps/dashboard/vite.config.ts apps/dashboard/vite.config.ts
+COPY apps/dashboard/tsconfig.json apps/dashboard/tsconfig.json
+COPY apps/dashboard/src apps/dashboard/src
+COPY apps/dashboard/public apps/dashboard/public
+
+WORKDIR /app/apps/dashboard
+RUN npm ci --no-audit --no-fund
+RUN npm run build
+
+############################################
 # ⭐ Main Image
 ############################################
 FROM $BASE_IMAGE AS release
@@ -62,9 +87,13 @@ WORKDIR /app
 LABEL org.opencontainers.image.source="https://github.com/artchsh/flatline"
 
 ENV UPTIME_KUMA_IS_CONTAINER=1
+# Where the backend looks for the built web app (server/static-app.js).
+ENV FLATLINE_WEB_DIST=/app/dashboard
 
 # Copy app files from build layer
 COPY --chown=node:node --from=build /app /app
+# And the web build. One image serves the API and the app.
+COPY --chown=node:node --from=web /app/apps/dashboard/dist /app/dashboard
 
 EXPOSE 3001
 # The Go healthcheck binary needs a separately published builder image, so
