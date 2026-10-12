@@ -5,11 +5,14 @@
 //! in `ignoredFields`, exactly like the Node backend, so the reused SPA can
 //! keep sending its whole form.
 
+pub mod engine;
+
 use serde_json::{Map, Value, json};
 use sqlx::SqlitePool;
 
 use crate::api::ApiError;
 use crate::auth::mint_token;
+use crate::heartbeats::{Beat, UptimeWindows};
 
 /// Monitor types this backend understands.
 pub const TYPES: &[&str] = &["http", "https", "push", "group"];
@@ -96,22 +99,14 @@ impl Monitor {
     }
 }
 
-/// The latest heartbeat of a monitor, for status resolution.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct Beat {
-    pub status: i64,
-    pub ping: Option<f64>,
-    pub msg: Option<String>,
-    pub time: String,
-}
-
 /// Serialise a monitor the way the SPA expects.
 ///
 /// Beyond the Node shape this includes the editable fields (method,
 /// retries, thresholds, …), which fixes the edit form's prefill wart: the
 /// SPA tolerates extra keys, and the form can now show what a monitor
-/// actually uses.
-pub fn monitor_json(m: &Monitor, beat: Option<&Beat>) -> Value {
+/// actually uses. Uptime ratios are 0..1 or null when there is no up/down
+/// time to average yet.
+pub fn monitor_json(m: &Monitor, beat: Option<&Beat>, uptime: &UptimeWindows) -> Value {
     let (status, ping, last_check, last_message) = match beat {
         Some(b) => (json!(b.status), json!(b.ping), json!(b.time), json!(b.msg)),
         // No heartbeat yet: Node reports PENDING.
@@ -134,9 +129,9 @@ pub fn monitor_json(m: &Monitor, beat: Option<&Beat>) -> Value {
         "interval": m.interval,
         "weight": m.weight,
         "parent": m.parent,
-        "uptime24h": Value::Null,
-        "uptime7d": Value::Null,
-        "uptime30d": Value::Null,
+        "uptime24h": uptime.day,
+        "uptime7d": uptime.week,
+        "uptime30d": uptime.month,
         "metricCpuThreshold": m.metric_cpu_threshold,
         "metricRamThreshold": m.metric_ram_threshold,
         "metricDiskThreshold": m.metric_disk_threshold,

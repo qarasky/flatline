@@ -2,12 +2,15 @@
 
 pub mod auth;
 pub mod monitors;
+pub mod notifications;
+pub mod push;
 pub mod stream;
 
+use axum::extract::DefaultBodyLimit;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router, middleware};
 use serde_json::{Value, json};
 
@@ -68,13 +71,21 @@ impl IntoResponse for ApiError {
 
 /// Assemble the API router.
 ///
-/// Public: `/api/v1/auth/setup` and `/api/v1/auth/login` (the sign-in flow
-/// cannot require a token). Everything else under `/api/v1` needs a bearer
-/// token. The push endpoint (M2) authenticates by monitor token in the path.
+/// Public: `/api/v1/auth/setup`, `/api/v1/auth/login` (the sign-in flow
+/// cannot require a token) and the agent push endpoint, which
+/// authenticates by monitor token in the path. Everything else under
+/// `/api/v1` needs a bearer token.
 pub fn router(state: AppState) -> Router {
     let public = Router::new()
         .route("/api/v1/auth/setup", get(auth::setup_status))
         .route("/api/v1/auth/login", post(auth::login));
+
+    // The agent's metrics payloads are capped like the Node backend's JSON
+    // parser: 256kb, high enough for a big sample, low enough to reject
+    // nonsense before it reaches the handler.
+    let agent = Router::new()
+        .route("/api/push/{pushToken}", get(push::push).post(push::push))
+        .layer(DefaultBodyLimit::max(256 * 1024));
 
     let authed = Router::new()
         .route("/api/v1/health", get(health))
@@ -89,6 +100,18 @@ pub fn router(state: AppState) -> Router {
                 .patch(monitors::patch)
                 .delete(monitors::delete),
         )
+        .route(
+            "/api/v1/monitors/{id}/heartbeats",
+            get(monitors::heartbeats),
+        )
+        .route(
+            "/api/v1/notifications",
+            get(notifications::list).post(notifications::create),
+        )
+        .route(
+            "/api/v1/notifications/{id}",
+            patch(notifications::patch).delete(notifications::delete),
+        )
         .route("/api/v1/monitor-types", get(monitor_types))
         .route("/api/v1/events", get(stream::events))
         .route_layer(middleware::from_fn_with_state(
@@ -96,7 +119,7 @@ pub fn router(state: AppState) -> Router {
             crate::auth::require_token,
         ));
 
-    public.merge(authed).with_state(state)
+    public.merge(agent).merge(authed).with_state(state)
 }
 
 /// One row of the health query: monitor plus its latest heartbeat status.

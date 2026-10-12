@@ -7,9 +7,10 @@ use sqlx::SqlitePool;
 
 use crate::AppState;
 use crate::api::ApiError;
+use crate::heartbeats::Beat;
 use crate::monitors::{
-    Beat, Monitor, TYPES, apply_interval_defaults, apply_payload, generate_push_token,
-    monitor_json, validate_parent,
+    Monitor, TYPES, apply_interval_defaults, apply_payload, generate_push_token, monitor_json,
+    validate_parent,
 };
 
 /// Query parameters shared by list.
@@ -106,40 +107,23 @@ async fn latest_beats(
     let placeholders = vec!["?"; ids.len()].join(",");
     // Dynamic only in placeholder count; ids are bound, never interpolated.
     let sql = format!(
-        "SELECT monitor_id, status, ping, msg, time FROM (
-            SELECT monitor_id, status, ping, msg, time,
+        "SELECT monitor_id, id, time, status, ping, msg, important, retries, down_count, duration FROM (
+            SELECT h.*,
                    ROW_NUMBER() OVER (PARTITION BY monitor_id ORDER BY time DESC, id DESC) AS rn
-            FROM heartbeats WHERE monitor_id IN ({placeholders})
+            FROM heartbeats h WHERE monitor_id IN ({placeholders})
          ) WHERE rn = 1"
     );
 
-    let mut query = sqlx::query_as::<_, BeatRow>(sqlx::AssertSqlSafe(sql));
+    let mut query = sqlx::query_as::<_, Beat>(sqlx::AssertSqlSafe(sql));
     for id in ids {
         query = query.bind(id);
     }
 
     for row in query.fetch_all(pool).await.map_err(internal)? {
-        beats.insert(
-            row.monitor_id,
-            Beat {
-                status: row.status,
-                ping: row.ping,
-                msg: row.msg,
-                time: row.time,
-            },
-        );
+        beats.insert(row.monitor_id, row);
     }
 
     Ok(beats)
-}
-
-#[derive(sqlx::FromRow)]
-struct BeatRow {
-    monitor_id: i64,
-    status: i64,
-    ping: Option<f64>,
-    msg: Option<String>,
-    time: String,
 }
 
 /// GET /api/v1/monitors
@@ -181,7 +165,8 @@ pub async fn list(
 
     let mut result = Vec::with_capacity(monitors.len());
     for monitor in &monitors {
-        let object = monitor_json(monitor, beats.get(&monitor.id));
+        let uptime = state.engine.uptime_windows(monitor.id).await;
+        let object = monitor_json(monitor, beats.get(&monitor.id), &uptime);
         // Status filtering happens after resolution, like the Node backend:
         // it depends on the latest heartbeat, not a column.
         if let Some(wanted) = &query.status {
@@ -237,9 +222,68 @@ pub async fn get_one(
 ) -> Result<Json<Value>, ApiError> {
     let monitor = load(&state.pool, id).await?;
     let beats = latest_beats(&state.pool, &[id]).await?;
+    let uptime = state.engine.uptime_windows(id).await;
     Ok(Json(json!({
         "ok": true,
-        "monitor": monitor_json(&monitor, beats.get(&id)),
+        "monitor": monitor_json(&monitor, beats.get(&id), &uptime),
+    })))
+}
+
+/// GET /api/v1/monitors/{id}/heartbeats
+///
+/// Recent heartbeats, newest first. High-volume, so a plain `limit`
+/// (default 100, capped at 1000) plus the true total — Node parity.
+pub async fn heartbeats(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    let monitor = load(&state.pool, id).await?;
+
+    let limit = match params.get("limit") {
+        Some(raw) => {
+            if raw.is_empty() || !raw.chars().all(|c| c.is_ascii_digit()) {
+                return Err(ApiError::bad("limit must be a positive integer."));
+            }
+            raw.parse::<i64>().unwrap_or(100).min(1000)
+        }
+        None => 100,
+    };
+
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM heartbeats WHERE monitor_id = ?")
+        .bind(monitor.id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(internal)?;
+
+    let rows: Vec<Beat> =
+        sqlx::query_as("SELECT * FROM heartbeats WHERE monitor_id = ? ORDER BY id DESC LIMIT ?")
+            .bind(monitor.id)
+            .bind(limit)
+            .fetch_all(&state.pool)
+            .await
+            .map_err(internal)?;
+
+    let heartbeats: Vec<Value> = rows
+        .iter()
+        .map(|beat| {
+            json!({
+                "time": beat.time,
+                "status": beat.status,
+                "ping": beat.ping,
+                "msg": beat.msg,
+                "important": beat.important != 0,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "ok": true,
+        "monitorId": monitor.id,
+        "count": heartbeats.len(),
+        "heartbeats": heartbeats,
+        "total": total,
+        "limit": limit,
     })))
 }
 
@@ -318,10 +362,14 @@ pub async fn create(
     .map_err(internal)?;
 
     state.events.invalidate();
+    if let Some(list) = payload.get("notificationIDList") {
+        apply_notification_links(&state.pool, stored.id, list).await?;
+    }
+    state.engine.restart(stored.id).await;
 
     Ok(Json(json!({
         "ok": true,
-        "monitor": monitor_json(&stored, None),
+        "monitor": monitor_json(&stored, None, &crate::heartbeats::UptimeWindows::default()),
         "ignoredFields": ignored,
     })))
 }
@@ -385,10 +433,17 @@ pub async fn patch(
     .map_err(internal)?;
 
     state.events.invalidate();
+    if let Some(list) = payload.get("notificationIDList") {
+        apply_notification_links(&state.pool, id, list).await?;
+    }
+    state.engine.restart(id).await;
+
+    let beats = latest_beats(&state.pool, &[id]).await?;
+    let uptime = state.engine.uptime_windows(id).await;
 
     Ok(Json(json!({
         "ok": true,
-        "monitor": monitor_json(&stored, None),
+        "monitor": monitor_json(&stored, beats.get(&id), &uptime),
         "ignoredFields": ignored,
     })))
 }
@@ -428,6 +483,9 @@ pub async fn delete(
     }
     query.execute(&state.pool).await.map_err(internal)?;
 
+    for monitor_id in &deleted {
+        state.engine.stop(*monitor_id);
+    }
     state.events.invalidate();
 
     Ok(Json(json!({
@@ -435,6 +493,72 @@ pub async fn delete(
         "deleted": deleted,
         "count": deleted.len(),
     })))
+}
+
+/// `notificationIDList` links, Node style: a map of notification id to
+/// enabled (`{"1": true}`), or an array of ids meaning "exactly these".
+async fn apply_notification_links(
+    pool: &SqlitePool,
+    monitor_id: i64,
+    value: &Value,
+) -> Result<(), ApiError> {
+    match value {
+        Value::Null => {}
+        Value::Object(map) => {
+            for (key, enabled) in map {
+                let Ok(id) = key.parse::<i64>() else {
+                    continue;
+                };
+                if enabled.as_bool().unwrap_or(false) {
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO monitor_notifications (monitor_id, notification_id)
+                         SELECT ?, id FROM notifications WHERE id = ?",
+                    )
+                    .bind(monitor_id)
+                    .bind(id)
+                    .execute(pool)
+                    .await
+                    .map_err(internal)?;
+                } else {
+                    sqlx::query(
+                        "DELETE FROM monitor_notifications
+                         WHERE monitor_id = ? AND notification_id = ?",
+                    )
+                    .bind(monitor_id)
+                    .bind(id)
+                    .execute(pool)
+                    .await
+                    .map_err(internal)?;
+                }
+            }
+        }
+        Value::Array(items) => {
+            sqlx::query("DELETE FROM monitor_notifications WHERE monitor_id = ?")
+                .bind(monitor_id)
+                .execute(pool)
+                .await
+                .map_err(internal)?;
+            for item in items {
+                if let Some(id) = item.as_i64() {
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO monitor_notifications (monitor_id, notification_id)
+                         SELECT ?, id FROM notifications WHERE id = ?",
+                    )
+                    .bind(monitor_id)
+                    .bind(id)
+                    .execute(pool)
+                    .await
+                    .map_err(internal)?;
+                }
+            }
+        }
+        _ => {
+            return Err(ApiError::bad(
+                "`notificationIDList` must be an object or an array.",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn internal(e: sqlx::Error) -> ApiError {

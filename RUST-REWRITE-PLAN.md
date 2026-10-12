@@ -2,8 +2,8 @@
 
 Status: **started.** Scope locked with the operator on 2026-10-12. The
 existing Node backend and the Go agent stay untouched until cutover; this
-document is the contract the Rust rewrite is built against. M0 (skeleton,
-auth, health) is shipped in `backend-rs/`.
+document is the contract the Rust rewrite is built against. M0–M2 are
+shipped in `backend-rs/`.
 
 ## Locked scope (from the operator's answers)
 
@@ -123,9 +123,15 @@ backend-rs/
   PATCH, `monitor-types`, `/auth/setup|login|me` compat (token accepted as
   the password), SSE `/api/v1/events` with ready/keepalive/revalidation/
   stream caps, invalidate on every mutation. 20 tests.
-- **M2 — checks + heartbeats:** HTTP scheduler, retries → PENDING → DOWN,
-  uptime windows, Telegram host alerts, push endpoint (agent contract),
-  push-timeout, detail/history endpoints.
+- **M2 — checks + heartbeats (shipped):** HTTP scheduler (method, timeout,
+  redirects, ignoreTls, accepted status ranges, Node-compatible messages),
+  retries → PENDING → DOWN, time-weighted uptime 24h/7d/30d computed from
+  heartbeats, Telegram alerts with the resend walk and notification links
+  (`notificationIDList` on create/patch), the push endpoint with the
+  telemetry fast path, push-timeout watching, `GET .../heartbeats`
+  (newest first + total), a minimal notifications API (list redacted,
+  create/patch/delete), and SSE `heartbeat` patches with uptime. Metrics
+  storage and the 400 "metrics dropped" response arrive with M3. 33 tests.
 - **M3 — metrics pipeline:** ingest + transforms, archive + sampledAt,
   live cache + SSE metrics, bulk latest, summary two-tier, rollups +
   prune, threshold alerts, `cpuPeak10m`.

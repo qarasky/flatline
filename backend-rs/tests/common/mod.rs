@@ -35,10 +35,18 @@ pub async fn harness() -> Harness {
         .unwrap()
         .expect("a fresh database mints a token");
 
+    let events = Events::new();
+    // The test seam skips the push watcher's boot delay; engine tests call
+    // `start_all` explicitly, everything else stays inert.
+    let engine = flatline_backend::monitors::engine::Engine::for_tests(
+        pool.clone(),
+        std::sync::Arc::clone(&events),
+    );
     let state = AppState {
         pool: pool.clone(),
         config: std::sync::Arc::new(config),
-        events: Events::new(),
+        events,
+        engine,
     };
 
     Harness {
