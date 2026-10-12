@@ -68,7 +68,9 @@ Migration: `db/knex_migrations/2026-10-0X-0000-monitor-metric.js`
         { "name": "api", "image": "api:1.4.2", "state": "running", "health": "healthy", "ports": [ "8080:80" ], "uptime": 86400 }
     ],
     "dockerError": "no docker access (...)", // only when collection failed
-    "updates": { "total": 70, "security": 8 } // absent when unknown, never zero-filled
+    "updates": { "total": 70, "security": 8 }, // absent when unknown, never zero-filled
+    "agent": { "version": "1.4.0", "uptime": 86400, "samplesDropped": 2,
+               "failedPushes": 0, "collectorErrors": { "gpu": 1 } }
 }
 ```
 
@@ -92,6 +94,14 @@ Notes:
   nothing; present with `total: 0` means fully updated. `security` appears
   only when the platform exposes severity — total-only platforms report no
   security field rather than a fabricated zero.
+- `agent` is the agent's self-report, modelled on Telegraf's internal metrics
+  input: `version` and `uptime` (drift and restart/crash-loop detection),
+  plus counters since process start — `samplesDropped`, `failedPushes`,
+  per-collector `collectorErrors` (only nonzero entries are sent) and
+  `lastError`, which clears on the next successful push. Counts describe
+  "has had trouble since start", not necessarily "failing now". Old agents
+  omit the block, old servers ignore it. `docker` collector errors also
+  travel as `dockerError`; the board renders those in one place only.
 - `container.uptime` is seconds since start, 0 when unknown.
 - Disk is an array (root plus any data mounts); the agent sends every local
   mount it can read, the board shows the fullest first.

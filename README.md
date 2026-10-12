@@ -26,6 +26,9 @@ for the full list of changes.
   from workload health.
 - See pending OS update counts per host (`No updates` / `Updates: N` /
   `Security Updates: N`), read-only, from agent 1.3.
+- Spot agent trouble at a glance: version, dropped samples, failed pushes and
+  per-collector error counts travel in every payload and render on the card
+  when something is off.
 - Wall-mount a group of servers on its own kiosk page —
   `/superboard/kiosk/work` — while home shows every fleet on one board,
   or combine scopes with `/superboard/kiosk/work,personal`.
@@ -104,10 +107,12 @@ The operator dashboard and Superboard use bearer-authenticated SSE
 connect/reconnect; heartbeat changes arrive as soon as checks finish.
 External monitor check frequencies do not change.
 
-[Superboard agent 1.3](superboard/README.md) pushes raw CPU counters at 1Hz
+[Superboard agent 1.4](superboard/README.md) pushes raw CPU counters at 1Hz
 (the server derives utilization: responsive live, ~30s means in history),
-1-second-fresh RAM, independent slower collectors, and read-only pending-update
-counts every 4h. Latest samples are cached; live history is
+1-second-fresh RAM, independent slower collectors, read-only pending-update
+counts every 4h, and a Telegraf-style self-report (version, uptime, dropped
+samples, collector errors) that cards surface as version + warning lines.
+Latest samples are cached; live history is
 sampled every 30s and retained for 30 days. Existing explicit agent intervals
 are preserved until changed. Upgrade the backend before enabling 1Hz agents.
 

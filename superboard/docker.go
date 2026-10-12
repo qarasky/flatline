@@ -192,6 +192,7 @@ func collectDocker() ([]Container, error) {
 	}
 	errs = append(errs, fmt.Sprintf("docker ps: %v", err))
 
+	stats.recordCollectorError("docker")
 	return nil, fmt.Errorf("no docker access (%s)", strings.Join(errs, "; "))
 }
 

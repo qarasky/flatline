@@ -190,11 +190,12 @@ func readCPUCounters() (cpuCounter, []cpuCounter, error) {
 
 // snapshotCPUCounters reads the current cumulative counters in payload
 // form: the raw snapshot the server diffs against the previous push. A
-// read failure yields an error and the caller omits the field, so the
-// server falls back to the compat percent instead of a wrong number.
+// failure is counted in the self-report and yields an error, so the caller
+// omits the field and the server falls back to the compat percent.
 func snapshotCPUCounters() (*CPUCounters, error) {
 	total, perCore, err := readCPUCounters()
 	if err != nil {
+		stats.recordCollectorError("cpu")
 		return nil, err
 	}
 	out := &CPUCounters{Total: total.total, Idle: total.idle}

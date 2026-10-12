@@ -8,7 +8,7 @@ shipped (and listed in the deploy record once rolled out).
 
 ## Status
 
-- [ ] 1.1 Agent self-telemetry
+- [x] 1.1 Agent self-telemetry — shipped in agent 1.4.0
 - [ ] 1.2 Disk-backed send buffer
 - [ ] 2.1 Threshold alerts
 - [ ] 2.2 Multi-tier retention
@@ -44,6 +44,12 @@ Validated by the review — keep these decisions, they are not gaps:
 
 ### 1.1 Agent self-telemetry
 
+- **Status:** shipped in agent 1.4.0 (2026-10-12). Deviations from the sketch
+  below: `lastPushOk` was dropped as redundant (the sample timestamp already
+  proves delivery), replaced by `uptime` (crash-loop detection) and
+  `lastError` (cause of the most recent push failure, cleared on success).
+  Counts are backed by atomic counters and ride every payload including
+  `superboard check`; only nonzero collector entries are serialized.
 - **Why:** Telegraf treats agent health as a first-class metric
   (`gather_errors`, `gather_timeouts`, `metrics_dropped`, `metrics_written`).
   Today a broken collector only writes to journald: the board cannot tell

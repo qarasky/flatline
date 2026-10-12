@@ -13,7 +13,7 @@ The token is saved in `/etc/superboard/config.json` with mode 0600. systemd runs
 the agent as root; non-systemd hosts get a warned, unsupervised cron `@reboot`
 fallback. Do not install the service from `/tmp`.
 
-Agent 1.3 defaults to 1Hz live pushes carrying raw cumulative CPU counters
+Agent 1.4 defaults to 1Hz live pushes carrying raw cumulative CPU counters
 (`/proc/stat` snapshots) with 1-second-fresh RAM; the server derives
 utilization from consecutive snapshots (responsive live, ~30s means in
 history), so a one-second 95% spike archives as ~3%, not 95%. The agent's
@@ -22,6 +22,13 @@ own percent fields remain as fallback for old backends. GPU refreshes every
 every 4h (read-only, counts only, absent when unknown). Slow collectors
 cannot block fast sampling. Failed sends back off with only the newest
 sample queued.
+
+Every payload carries an `agent` self-report, Telegraf-style: version,
+process uptime, dropped samples, failed pushes with the last error reason,
+and per-collector error counts (only nonzero entries). Cards show the agent
+version and an amber warning line when something has gone wrong; a clean
+agent adds no noise. Counts reset on agent restart and describe "has had
+trouble since start", not necessarily "failing right now".
 
 Existing installs keep their explicit interval. To enable 1Hz, upgrade the
 **backend first**, set `interval_seconds` to `1` in the existing config, then

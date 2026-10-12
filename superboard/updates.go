@@ -43,6 +43,7 @@ func collectUpdates() (*Updates, error) {
 	if total, ok := apkCheckUpdates(); ok {
 		return &Updates{Total: total}, nil
 	}
+	stats.recordCollectorError("updates")
 	return nil, fmt.Errorf("no supported package manager found")
 }
 

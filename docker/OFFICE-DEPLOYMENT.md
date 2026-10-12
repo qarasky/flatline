@@ -75,8 +75,10 @@ Committed but **not yet deployed** anywhere:
 - Backend: raw CPU counters with server-side utilization derivation (live
   short-window, ~30s means in history) and agent pending-update counts ingest.
 - Dashboard: pending-update line on cards, group-scoped boards
-  (`/superboard/kiosk/<group>`), right-click rename.
-- Agent **1.3.0**: sends raw counters plus update counts; rebuild
+  (`/superboard/kiosk/<group>`), right-click rename, agent version + warning
+  lines.
+- Agent **1.4.0**: sends raw counters, update counts, and a self-report block
+  (version, uptime, dropped samples, failed pushes, collector errors); rebuild
   (`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o superboard .`) and
   restart on office and all client hosts.
 - Order: backend → dashboard → agents. Both directions are compatible; the

@@ -47,6 +47,13 @@ Cards show pending-update counts when the agent reports them: `No updates`
 green, `Updates: N` yellow below 50 / red at 50+, `Security Updates: N` dark
 red. A missing field means unknown and renders nothing.
 
+Agent 1.4+ payloads carry a self-report: the header line shows the agent
+version (tooltip: version + process uptime) and a card prints one amber
+`Agent: …` warning line when there are dropped samples, failed pushes, or
+non-docker collector errors, with the full detail (per-collector counts, last
+push error) in the tooltip. Docker collector failures keep their existing
+single line in the containers section instead.
+
 Container tiles use three columns and roughly nine visible slots. More than
 nine containers loop vertically; up to six problems are pinned. Hover/focus
 pauses motion and reduced-motion preferences disable animation. Red means a

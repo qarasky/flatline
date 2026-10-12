@@ -228,5 +228,5 @@ func (c *liveCollector) sample() (*Payload, error) {
 		CPU:  cpuVal,
 		Mem:  Mem{Total: vm.Total, Used: vm.Used, Percent: vm.UsedPercent, Temp: c.memTemp},
 		Disk: c.disk, GPU: c.gpu, Docker: c.docker, DockerError: c.dockerError,
-		Updates: c.updates}, nil
+		Updates: c.updates, Agent: agentInfoSnapshot()}, nil
 }

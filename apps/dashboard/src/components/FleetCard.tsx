@@ -1,6 +1,6 @@
 import { memo, type MouseEvent } from "react";
 import type { MonitorSummary, MetricsPayload, CPUPeak } from "@/lib/api";
-import { fleetAttention, percentage, sampleAgeMs, updatesStatus } from "@/lib/fleet-presentation";
+import { agentWarnings, fleetAttention, formatDuration, percentage, sampleAgeMs, updatesStatus } from "@/lib/fleet-presentation";
 import { ContainerTiles } from "@/components/ContainerTiles";
 import { CoreSquares } from "@/components/CoreSquares";
 import { MetricBar, usageTone } from "@/components/MetricBar";
@@ -19,14 +19,6 @@ export function formatBytes(bytes: number | undefined): string {
     let unit = 0;
     while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
     return `${value.toFixed(value >= 100 || unit === 0 ? 0 : 1)} ${units[unit]}`;
-}
-
-export function formatDuration(seconds: number | undefined): string | null {
-    if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) { return null; }
-    if (seconds < 60) { return `${Math.floor(seconds)}s`; }
-    if (seconds < 3600) { return `${Math.floor(seconds / 60)}m`; }
-    if (seconds < 86400) { return `${Math.floor(seconds / 3600)}h`; }
-    return `${Math.floor(seconds / 86400)}d`;
 }
 
 export function ageOf(value: string | null | undefined): string {
@@ -63,6 +55,11 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
     const displayName = monitor.name || hostname || "Unnamed server";
     const updates = updatesStatus(metrics.updates);
     const updatesTone = updates?.tone === "ok" ? "text-ok" : updates?.tone === "warn" ? "text-warn" : updates?.tone === "bad" ? "text-bad" : "text-critical";
+    const agent = metrics.agent;
+    const warning = agentWarnings(agent);
+    const agentTip = agent
+        ? `Agent ${agent.version ?? "unknown"}${Number.isFinite(agent.uptime) ? ` · running ${formatDuration(agent.uptime) ?? "0s"}` : ""}`
+        : undefined;
 
     return (
         <article
@@ -79,9 +76,10 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
                 <div className="min-w-0">
                     <h2 className="fleet-name truncate"><button type="button" className="fleet-history-link truncate max-w-full" onClick={() => onOpenHistory(monitor.id)}
                         aria-label={`Open load history for ${displayName}`} title={hostname && hostname !== displayName ? `${displayName} · hostname ${hostname} · View history` : `${displayName} · View history`}>{displayName} <span aria-hidden="true" className="text-quiet">↗</span></button></h2>
-                    <p className="fleet-secondary mt-1">
+                    <p className="fleet-secondary mt-1" title={agentTip}>
                         {metrics.host?.os ?? monitor.type}{cpu?.cores ? ` · ${cpu.cores} cores` : ""}
                         {metrics.host?.uptime ? ` · uptime ${formatDuration(metrics.host.uptime)}` : ""}
+                        {agent?.version ? ` · agent ${agent.version}` : ""}
                     </p>
                 </div>
                 <div className="fleet-health">
@@ -96,6 +94,12 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
             {updates ? (
                 <p className={`fleet-secondary tnum ${updatesTone}`} title={updates.title} aria-label={`System updates: ${updates.label}`}>
                     {updates.label}
+                </p>
+            ) : null}
+
+            {warning ? (
+                <p className="fleet-secondary text-warn" title={warning.title} role="status">
+                    {warning.text}
                 </p>
             ) : null}
 

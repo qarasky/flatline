@@ -80,6 +80,34 @@ type Updates struct {
 	Security int `json:"security,omitempty"`
 }
 
+// AgentInfo is the agent's self-report, modelled on Telegraf's internal
+// metrics input: the monitoring software reports its own failures, because
+// otherwise a broken collector writes to journald and nobody reads it.
+//
+// Counters are cumulative since process start and reset on restart, so they
+// describe the current agent. Only nonzero values are serialized; a healthy
+// agent's block stays tiny. Strings are deliberately absent except lastError:
+// counts travel, configs and inventories do not.
+type AgentInfo struct {
+	Version string `json:"version"`
+	// Uptime in seconds since the agent process started. A small number on
+	// a long-running host means a crash loop, not a fresh install.
+	Uptime uint64 `json:"uptime"`
+	// SamplesDropped counts samples superseded before delivery (the
+	// capacity-one queue replaced them with something newer).
+	SamplesDropped uint64 `json:"samplesDropped,omitempty"`
+	// FailedPushes counts failed deliveries since start, including 400s the
+	// server rejected: the number is history, lastError says what happened.
+	FailedPushes uint64 `json:"failedPushes,omitempty"`
+	// LastError is the most recent push failure, cleared by the next
+	// successful push. Empty when the pipeline is currently clean.
+	LastError string `json:"lastError,omitempty"`
+	// CollectorErrors counts failures per collector since start. Docker
+	// failures also travel as dockerError; the board suppresses the generic
+	// warning for those to avoid printing the same problem twice.
+	CollectorErrors map[string]uint64 `json:"collectorErrors,omitempty"`
+}
+
 // Mem holds bytes for totals and percent 0–100. Temp is the same deal as
 // CPU: present on almost nothing (VPS never), hidden when zero.
 type Mem struct {
@@ -149,4 +177,5 @@ type Payload struct {
 	Docker         []Container `json:"docker"`
 	DockerError    string      `json:"dockerError,omitempty"`
 	Updates        *Updates    `json:"updates,omitempty"`
+	Agent          *AgentInfo  `json:"agent,omitempty"`
 }

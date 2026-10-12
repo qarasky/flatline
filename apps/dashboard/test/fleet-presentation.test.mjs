@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, fleetAttention, groupSlug, matchGroups, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
+import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, fleetAttention, formatDuration, groupSlug, matchGroups, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -80,6 +80,29 @@ test("rename input trims, caps, and rejects empties; menus stay on-screen", () =
     assert.deepEqual(clampMenuPosition(10, 10, 176, 40, 1920, 1080), { x: 10, y: 10 });
     assert.deepEqual(clampMenuPosition(1900, 1060, 176, 40, 1920, 1080), { x: 1736, y: 1032 });
     assert.deepEqual(clampMenuPosition(-50, -50, 176, 40, 1920, 1080), { x: 8, y: 8 });
+});
+test("agent warnings stay quiet when clean and exclude docker (shown elsewhere)", () => {
+    assert.equal(agentWarnings(undefined), null);
+    assert.equal(agentWarnings({ version: "1.4.0", uptime: 90 }), null);
+    // Docker failures already render as the container-section error line.
+    assert.equal(agentWarnings({ collectorErrors: { docker: 8640 } }), null);
+    const warn = agentWarnings({
+        version: "1.4.0", uptime: 7200, collectorErrors: { gpu: 3, updates: 2 },
+        failedPushes: 2, samplesDropped: 1, lastError: "push: connection refused",
+    });
+    assert.equal(warn?.text, "Agent: 5 collector errors · 2 push failures · 1 sample dropped");
+    assert.match(warn.title, /Agent 1\.4\.0/);
+    assert.match(warn.title, /running 2h/);
+    assert.match(warn.title, /gpu 3, updates 2/);
+    assert.match(warn.title, /connection refused/);
+    assert.equal(agentWarnings({ collectorErrors: { cpu: 1 } })?.text, "Agent: 1 collector error");
+});
+test("durations format compactly for cards and tooltips", () => {
+    for (const v of [undefined, NaN, 0, -5]) { assert.equal(formatDuration(v), null); }
+    assert.equal(formatDuration(45), "45s");
+    assert.equal(formatDuration(600), "10m");
+    assert.equal(formatDuration(7200), "2h");
+    assert.equal(formatDuration(3 * 86400), "3d");
 });
 test("high usage includes memory, disks and legacy GPU VRAM; unknown numbers stay unknown", () => {
     assert.equal(fleetAttention({gpu:{available:true, memTotal:100, memUsed:95}}, "2026-10-09T12:00:00Z", 180, now).hot, true);

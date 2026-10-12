@@ -79,6 +79,68 @@ export function containerIssue(container: Container): boolean {
 }
 
 /**
+ * Format a duration in seconds as a compact human string, or null when the
+ * value is absent or not finite.
+ */
+export function formatDuration(seconds: number | undefined): string | null {
+    if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) { return null; }
+    if (seconds < 60) { return `${Math.floor(seconds)}s`; }
+    if (seconds < 3600) { return `${Math.floor(seconds / 60)}m`; }
+    if (seconds < 86400) { return `${Math.floor(seconds / 3600)}h`; }
+    return `${Math.floor(seconds / 86400)}d`;
+}
+
+type AgentMetrics = NonNullable<MetricsPayload["agent"]>;
+
+export interface AgentWarning {
+    text: string;
+    title: string;
+}
+
+/**
+ * Human summary of the agent self-report, or null when there is nothing to
+ * report — a clean agent adds no card noise.
+ *
+ * Docker collector errors are deliberately excluded: the containers section
+ * already renders dockerError, and printing the same problem twice on one
+ * card helps nobody. Counts are cumulative since the agent started, so a
+ * warning means "has had trouble", not necessarily "failing right now";
+ * the title carries the detail needed to check journald.
+ */
+export function agentWarnings(agent: AgentMetrics | undefined): AgentWarning | null {
+    if (!agent) { return null; }
+
+    const collectorErrors = Object.entries(agent.collectorErrors ?? {})
+        .filter(([name, count]) => name !== "docker" && Number.isFinite(count) && count > 0);
+    const failedPushes = Number.isFinite(agent.failedPushes) ? agent.failedPushes as number : 0;
+    const samplesDropped = Number.isFinite(agent.samplesDropped) ? agent.samplesDropped as number : 0;
+
+    const parts: string[] = [];
+    const details: string[] = [];
+    if (collectorErrors.length) {
+        const total = collectorErrors.reduce((sum, [, count]) => sum + count, 0);
+        parts.push(`${total} collector error${total === 1 ? "" : "s"}`);
+        details.push(collectorErrors.map(([name, count]) => `${name} ${count}`).join(", "));
+    }
+    if (failedPushes > 0) {
+        parts.push(`${failedPushes} push failure${failedPushes === 1 ? "" : "s"}`);
+    }
+    if (samplesDropped > 0) {
+        parts.push(`${samplesDropped} sample${samplesDropped === 1 ? "" : "s"} dropped`);
+    }
+    if (!parts.length) { return null; }
+
+    const title: string[] = [ `Agent ${agent.version ?? "unknown"}` ];
+    if (agent.uptime !== undefined && Number.isFinite(agent.uptime)) {
+        title.push(`running ${formatDuration(agent.uptime) ?? "0s"}`);
+    }
+    if (details.length) { title.push(`errors: ${details.join("; ")}`); }
+    if (agent.lastError) { title.push(`last push error: ${agent.lastError}`); }
+
+    return { text: `Agent: ${parts.join(" · ")}`, title: title.join(" · ") };
+}
+
+/**
  * Clean a monitor name typed into the rename dialog: trimmed, capped the
  * way the API caps it, empty when there is nothing to save.
  */

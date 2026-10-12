@@ -12,7 +12,8 @@ import (
 )
 
 // A single collector and a single sender, with one pending sample. A slow
-// network replaces old pending samples rather than building a stale backlog.
+// network replaces old pending samples rather than building a stale backlog;
+// each replacement counts as a dropped sample in the self-report.
 func offerLatest(samples chan *Payload, payload *Payload) {
 	select {
 	case samples <- payload:
@@ -21,6 +22,7 @@ func offerLatest(samples chan *Payload, payload *Payload) {
 	}
 	select {
 	case <-samples:
+		stats.recordDrop()
 	default:
 	}
 	select {
@@ -70,6 +72,7 @@ func runLoop(cfg *Config) error {
 			return nil
 		case payload := <-samples:
 			if err := client.push(payload); err != nil {
+				stats.recordPushFailure(err)
 				log.Printf("push failed: %v", err)
 				timer := time.NewTimer(backoff)
 				select {
@@ -81,6 +84,7 @@ func runLoop(cfg *Config) error {
 				backoff = min(30*time.Second, backoff*2)
 				continue
 			}
+			stats.recordPushOk()
 			backoff = interval
 			if time.Since(lastLog) >= time.Minute {
 				if payload.Updates != nil {

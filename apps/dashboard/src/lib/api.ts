@@ -388,6 +388,14 @@ export interface MetricsPayload {
     docker?: { name?: string; image?: string; state?: string; health?: string; ports?: string[]; uptime?: number }[];
     dockerError?: string;
     updates?: { total?: number; security?: number };
+    agent?: {
+        version?: string;
+        uptime?: number;
+        samplesDropped?: number;
+        failedPushes?: number;
+        lastError?: string;
+        collectorErrors?: Record<string, number>;
+    };
 }
 
 export interface LatestMetrics {

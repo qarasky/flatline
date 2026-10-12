@@ -17,12 +17,15 @@ rolling 10-minute total-CPU peaks, compact looping container tiles, the shared
 Flatline favicon, and single-origin production routing
 ([docker/OFFICE-DEPLOYMENT.md](docker/OFFICE-DEPLOYMENT.md)).
 
-Later work (agent 1.3 era): CPU utilization is derived **server-side** from raw
-cumulative counters the agent pushes (long-window means in history, short-window
-live readings, agent-side percent retained only as a compat fallback); agents
-report read-only pending-update counts rendered as green/yellow/red/dark-red on
-cards; boards are group-scoped by URL (`/superboard/kiosk/work`); servers can be
-renamed on the board via a right-click menu.
+Later work (agent 1.3–1.4 era): CPU utilization is derived **server-side** from
+raw cumulative counters the agent pushes (long-window means in history,
+short-window live readings, agent-side percent retained only as a compat
+fallback); agents report read-only pending-update counts rendered as
+green/yellow/red/dark-red on cards; boards are group-scoped by URL
+(`/superboard/kiosk/work`); servers can be renamed on the board via a
+right-click menu; and agents self-report health (`agent` block: version,
+uptime, dropped samples, failed pushes, per-collector error counts) which
+cards surface as version text and an amber warning line.
 
 Still planned: private aggregate saved views, and the ranked backlog in
 [IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md) (agent self-telemetry,

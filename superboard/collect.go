@@ -143,6 +143,7 @@ func collectMem() (Mem, error) {
 func collectDisk() ([]Disk, error) {
 	partitions, err := disk.Partitions(false)
 	if err != nil {
+		stats.recordCollectorError("disk")
 		return nil, fmt.Errorf("disk partitions: %w", err)
 	}
 
@@ -197,12 +198,14 @@ func collectGPU() GPU {
 	out, err := cmd.Output()
 	if err != nil {
 		log.Printf("warning: nvidia-smi failed: %v", err)
+		stats.recordCollectorError("gpu")
 		return GPU{Available: false}
 	}
 
 	records, err := csv.NewReader(strings.NewReader(strings.TrimSpace(string(out)))).ReadAll()
 	if err != nil || len(records) == 0 {
 		log.Printf("warning: nvidia-smi output unparseable: %v", err)
+		stats.recordCollectorError("gpu")
 		return GPU{Available: false}
 	}
 
@@ -234,6 +237,7 @@ func collectGPU() GPU {
 	}
 
 	if len(gpus) == 0 {
+		stats.recordCollectorError("gpu")
 		return GPU{Available: false}
 	}
 
@@ -304,6 +308,10 @@ func collect() (*Payload, error) {
 	} else {
 		payload.Updates = updates
 	}
+
+	// Self-report rides every payload, including one-shot checks: version,
+	// uptime, dropped samples, push failures and per-collector error counts.
+	payload.Agent = agentInfoSnapshot()
 
 	return payload, nil
 }
