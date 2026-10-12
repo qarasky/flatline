@@ -136,6 +136,19 @@ pub async fn ensure_initial_token(
     Ok(Some(token))
 }
 
+/// Mint an admin token unconditionally. Used by the importer: the operator
+/// must be able to sign in even when every imported key's plaintext is lost.
+pub async fn mint_admin_token(pool: &SqlitePool, data_dir: &Path) -> anyhow::Result<String> {
+    let token = mint_token();
+    sqlx::query("INSERT INTO tokens (name, hash, scheme) VALUES ('admin', ?, 'sha256')")
+        .bind(hash_token(&token))
+        .execute(pool)
+        .await?;
+
+    write_token_file(&data_dir.join("initial-token.txt"), &token)?;
+    Ok(token)
+}
+
 /// Write the token file with owner-only permissions.
 fn write_token_file(path: &Path, token: &str) -> anyhow::Result<()> {
     std::fs::write(path, format!("{token}\n"))?;

@@ -11,6 +11,7 @@ pub mod config;
 pub mod db;
 pub mod events;
 pub mod heartbeats;
+pub mod import;
 pub mod metrics;
 pub mod monitors;
 pub mod notify;

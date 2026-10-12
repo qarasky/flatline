@@ -2,7 +2,7 @@
 
 Status: **started.** Scope locked with the operator on 2026-10-12. The
 existing Node backend and the Go agent stay untouched until cutover; this
-document is the contract the Rust rewrite is built against. M0–M4 are
+document is the contract the Rust rewrite is built against. M0–M5 are
 shipped in `backend-rs/`.
 
 ## Locked scope (from the operator's answers)
@@ -152,12 +152,27 @@ backend-rs/
   cookies), and SPA serving from `FLATLINE_WEB_DIST` with the Node routing
   contract (assets immutable, shell fallback, API paths stay JSON). Served
   from disk rather than embedded: the image copies the build. 82 tests.
-- **M5 — importer + cutover tooling:** old-DB importer, Docker image,
-  compose update, cutover/rollback runbook.
+- **M5 — importer + cutover tooling (shipped):** one-time importer
+  (`flatline-backend import --from <old.db> [--data-dir ./data] [--force]`)
+  that opens the old database read-only and maps monitors (push/http/group;
+  parent links resolved order-independently), heartbeats, raw and hourly
+  metrics, API keys (bcrypt kept so automation survives), notifications
+  with links, and status pages (pages, groups, monitor links, incidents,
+  CNAMEs). Unsupported monitor types are reported loudly, never silently
+  dropped; a fresh admin token is minted so sign-in is guaranteed. Docker
+  image (`docker/rust.dockerfile`: dashboard build + Rust build + slim
+  runtime, healthcheck) and `docker/compose.rust.yaml` with its own
+  project name for side-by-side staging; `docker/RUST-CUTOVER.md` is the
+  step-by-step runbook. The importer was validated against a consistent
+  copy of the production database: 31 monitors, 111k heartbeats, 73k
+  metric rows, 29 API keys, the status page — and the imported data was
+  served correctly through the live API.
 - **M6 — parity verification:** contract tests against both backends on a
   copy of the production DB; golden-path checklist.
 
 ## Cutover and rollback
+
+Concrete commands live in `docker/RUST-CUTOVER.md`; the shape is:
 
 1. Build the Rust image; deploy alongside (different port) on office.
 2. Import a copy of the production DB; run contract tests against both.
