@@ -36,6 +36,10 @@ CREATE TABLE monitors (
     ignore_tls           INTEGER NOT NULL DEFAULT 0,
     maxredirects         INTEGER NOT NULL DEFAULT 10,
     push_token           TEXT,
+    -- Server-side threshold alerts (Phase 5 port): 1-100, NULL disabled.
+    metric_cpu_threshold  INTEGER,
+    metric_ram_threshold  INTEGER,
+    metric_disk_threshold INTEGER,
     created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
 );
 CREATE UNIQUE INDEX monitors_push_token_idx ON monitors (push_token) WHERE push_token IS NOT NULL;

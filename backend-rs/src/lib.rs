@@ -8,6 +8,8 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod db;
+pub mod events;
+pub mod monitors;
 
 use std::sync::Arc;
 
@@ -19,6 +21,7 @@ use sqlx::SqlitePool;
 pub struct AppState {
     pub pool: SqlitePool,
     pub config: Arc<config::Config>,
+    pub events: Arc<events::Events>,
 }
 
 /// Open the database, run migrations, and make sure an admin token exists.
@@ -36,6 +39,7 @@ pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
     Ok(AppState {
         pool,
         config: Arc::new(config),
+        events: events::Events::new(),
     })
 }
 

@@ -117,8 +117,12 @@ backend-rs/
   (tokens, monitors, heartbeats), token auth (sha256 + bcrypt import),
   `/api/v1/health` with the Node-compatible envelope, first-boot admin
   token file, 7 tests, fmt/clippy clean.
-- **M1 — monitors core:** schema, CRUD, groups, pause/resume,
-  monitor-types, SSE invalidate, `/auth/*` compat.
+- **M1 — monitors core (shipped):** CRUD with the Node envelope
+  (`{ok, count, monitors, pagination}` / `{ok, monitor, ignoredFields}`),
+  groups with cycle validation and `deleteChildren`, pause/resume via
+  PATCH, `monitor-types`, `/auth/setup|login|me` compat (token accepted as
+  the password), SSE `/api/v1/events` with ready/keepalive/revalidation/
+  stream caps, invalidate on every mutation. 20 tests.
 - **M2 — checks + heartbeats:** HTTP scheduler, retries → PENDING → DOWN,
   uptime windows, Telegram host alerts, push endpoint (agent contract),
   push-timeout, detail/history endpoints.
