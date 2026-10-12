@@ -66,7 +66,8 @@ Migration: `db/knex_migrations/2026-10-0X-0000-monitor-metric.js`
     "disk": [ { "mount": "/", "total": 100, "used": 42, "percent": 42.0 } ],
     "gpu": { "available": false },
     "docker": [
-        { "name": "api", "image": "api:1.4.2", "state": "running", "health": "healthy", "ports": [ "8080:80" ], "uptime": 86400 }
+        { "name": "api", "image": "api:1.4.2", "state": "running", "health": "healthy", "ports": [ "8080:80" ], "uptime": 86400,
+          "stats": { "cpuPercent": 42.5, "memUsed": 536870912, "memLimit": 2147483648, "memPercent": 25 } }
     ],
     "dockerError": "no docker access (...)", // only when collection failed
     "updates": { "total": 70, "security": 8 }, // absent when unknown, never zero-filled
@@ -123,6 +124,15 @@ Notes:
   `br-`, `virbr`, `vnet`, `tap`, `tun`, `wg`) so container traffic is not
   double counted; if a host has only virtual interfaces, all are summed.
 - `container.uptime` is seconds since start, 0 when unknown.
+- `container.stats` is one best-effort live reading (agent 1.5+): absent for
+  stopped containers or when the daemon could not be asked. CPU follows
+  Docker's convention — percent of a single core, so a container using four
+  cores reads 400% — and is absent on the first read after an agent start or
+  container restart, because a percentage needs two cumulative reads.
+  Memory subtracts page cache (`cache` on cgroup v1, `inactive_file` on
+  v2); a limit above 1<<60 is the cgroup v2 "no limit" sentinel and yields
+  no percentage. Unknown is omitted, never zero — an idle container
+  legitimately reads 0%.
 - Disk is an array (root plus any data mounts); the agent sends every local
   mount it can read, the board shows the fullest first.
 - `docker` is an empty array when Docker is absent, not null, for the same reason.
@@ -184,7 +194,7 @@ Single static binary (`CGO_ENABLED=0`), linux/amd64. No runtime dependencies.
 | `gopsutil/load` | load average 1/5/15 | gauge, sent as-is |
 | `gopsutil/host` | hostname, os, uptime | |
 | OS package managers | pending update counts (total, security) | read-only queries every 4h; apt-check exact, dnf security best-effort, rest total-only; failure → field absent, never fatal |
-| Docker socket | containers: name, image, state, health, ports | list + inspect; **no stats streaming in v1** |
+| Docker socket | containers: name, image, state, health, ports, one-shot CPU/mem stats | list + inspect + best-effort stats for running containers; **no stats streaming** |
 | `nvidia-smi` | util, mem, temp if present | exec + parse, best-effort; failure → `available: false`, never fatal |
 
 ### Behaviour
@@ -252,11 +262,13 @@ Single static binary (`CGO_ENABLED=0`), linux/amd64. No runtime dependencies.
 
 ### Explicitly out of v1
 
-Per-container CPU/mem (stats streaming), threshold evaluation client-side,
-log shipping, anything that is not "collect these things and POST them."
-Agent 1.3 added pending-update counts to the list (read-only, counts only);
-see the ranked backlog in [IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md)
-for what is deliberately deferred and why.
+Threshold evaluation client-side, log shipping, per-container stats
+streaming (one-shot readings ship; live streams and per-container history do
+not), anything that is not "collect these things and POST them."
+Agent 1.3 added pending-update counts, agent 1.5 per-container one-shot
+stats and host I/O counters; see the ranked backlog in
+[IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md) for what is deliberately
+deferred and why.
 
 ---
 

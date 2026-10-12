@@ -16,7 +16,8 @@ via arguments/environment, or captured. The folder and ignore rules are unchange
 
 - Agent **1.5.0** (raw CPU counters, server-side utilization derivation,
   pending-update counts, self-telemetry, disk-backed send buffer with
-  `sampledAt` backfill, load average, network/disk I/O counters) is committed
+  `sampledAt` backfill, load average, network/disk I/O counters,
+  per-container CPU/memory stats) is committed
   but **not yet deployed to these hosts**.
   Order: backend + dashboard images first, then rebuild the agent binary and
   restart `superboard` on each box. The backend is backward compatible either

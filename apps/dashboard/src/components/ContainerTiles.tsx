@@ -1,13 +1,15 @@
 import type { CSSProperties } from "react";
-import { containerTileLayout, containerTone, type FleetContainer } from "@/lib/fleet-presentation";
+import { containerStatsSummary, containerTileLayout, containerTone, type FleetContainer } from "@/lib/fleet-presentation";
 
 const SYMBOLS = { up: "●", stopped: "■", bad: "!", pending: "◐" };
 function Tile({ container }: { container: FleetContainer }) {
     const tone = containerTone(container);
+    const stats = containerStatsSummary(container.stats);
     const state = `${container.state ?? "unknown"}${container.health ? ` · ${container.health}` : ""}`;
-    const description = `${container.name ?? "?"}: ${state}${tone === "up" && !container.health ? " (no health check reported)" : ""}${tone === "stopped" ? " (stop reason unknown)" : ""}`;
+    const description = `${container.name ?? "?"}: ${state}${stats ? `, ${stats.title}` : ""}${tone === "up" && !container.health ? " (no health check reported)" : ""}${tone === "stopped" ? " (stop reason unknown)" : ""}`;
     return <li className="fleet-container-tile" data-tone={tone} title={`${description}${container.image ? ` · ${container.image}` : ""}`} aria-label={description}>
         <span className="fleet-container-symbol" aria-hidden="true">{SYMBOLS[tone]}</span><span className="truncate">{container.name ?? "?"}</span>
+        {stats ? <span className="fleet-container-stats tnum" aria-hidden="true">{stats.label}</span> : null}
     </li>;
 }
 

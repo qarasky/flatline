@@ -389,7 +389,10 @@ export interface MetricsPayload {
         temp?: number;
         gpus?: { name?: string; util?: number; memUsed?: number; memTotal?: number; temp?: number }[];
     };
-    docker?: { name?: string; image?: string; state?: string; health?: string; ports?: string[]; uptime?: number }[];
+    docker?: {
+        name?: string; image?: string; state?: string; health?: string; ports?: string[]; uptime?: number;
+        stats?: { cpuPercent?: number; memUsed?: number; memLimit?: number; memPercent?: number };
+    }[];
     dockerError?: string;
     updates?: { total?: number; security?: number };
     load?: { avg1?: number; avg5?: number; avg15?: number };

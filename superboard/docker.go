@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -87,6 +88,131 @@ type dockerInspect struct {
 			HostPort string `json:"HostPort"`
 		} `json:"Ports"`
 	} `json:"NetworkSettings"`
+}
+
+// containerStatsRaw is the subset of /containers/{id}/stats we need. One
+// one-shot read carries cumulative CPU counters and current memory; CPU
+// percentage needs the delta against the previous read, which we keep
+// ourselves because one-shot responses are ten seconds apart.
+type containerStatsRaw struct {
+	CPUStats struct {
+		CPUUsage struct {
+			TotalUsage uint64 `json:"total_usage"`
+		} `json:"cpu_usage"`
+		SystemUsage uint64   `json:"system_cpu_usage"`
+		OnlineCPUs  uint32   `json:"online_cpus"`
+		PercpuUsage []uint64 `json:"percpu_usage"`
+	} `json:"cpu_stats"`
+	MemoryStats struct {
+		Usage uint64            `json:"usage"`
+		Limit uint64            `json:"limit"`
+		Stats map[string]uint64 `json:"stats"`
+	} `json:"memory_stats"`
+}
+
+// containerCPUSample is one cumulative CPU read for one container.
+type containerCPUSample struct {
+	total  uint64
+	system uint64
+}
+
+// dockerStatsCache remembers the previous cumulative CPU counters per
+// container so the next 10s refresh can compute a utilization percentage.
+var dockerStatsCache = struct {
+	mu   sync.Mutex
+	last map[string]containerCPUSample
+}{last: make(map[string]containerCPUSample)}
+
+// dockerStatsWarned logs one stats failure per container per process:
+// a container that cannot be measured every ten seconds must not spam the
+// journal, but the first occurrence is worth seeing.
+var dockerStatsWarned = struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}{seen: make(map[string]bool)}
+
+// containerCPUPercent converts two cumulative CPU reads into Docker's
+// convention: percent of a single core, so a container using four cores
+// reads 400%. A system counter that did not advance (no elapsed time) or a
+// container counter that went backwards (restart) yields 0 — the caller
+// treats "no valid delta" as unknown, never as a reading.
+func containerCPUPercent(prevTotal, prevSystem, curTotal, curSystem uint64, cores int) float64 {
+	if cores < 1 {
+		cores = 1
+	}
+	if curSystem <= prevSystem || curTotal < prevTotal {
+		return 0
+	}
+	return float64(curTotal-prevTotal) / float64(curSystem-prevSystem) * float64(cores) * 100
+}
+
+// containerMemoryUsage returns the container's working-set bytes and, when
+// the limit is meaningful, the percentage of it. Docker's raw usage
+// includes page cache; cache (cgroup v1) or inactive_file (cgroup v2) is
+// subtracted, as docker stats does. A limit above 1<<60 is the cgroup v2
+// "no limit" sentinel: a percentage against it would be meaningless.
+func containerMemoryUsage(usage, limit uint64, stats map[string]uint64) (uint64, *float64) {
+	cache := stats["cache"]
+	if cache == 0 {
+		cache = stats["inactive_file"]
+	}
+	used := uint64(0)
+	if usage > cache {
+		used = usage - cache
+	}
+	if limit > 0 && limit < 1<<60 {
+		percent := float64(used) / float64(limit) * 100
+		return used, &percent
+	}
+	return used, nil
+}
+
+// buildContainerStats turns one stats read into the payload block,
+// computing CPU against the previous read and memory against the limit.
+func buildContainerStats(id string, raw *containerStatsRaw) *ContainerStats {
+	cores := int(raw.CPUStats.OnlineCPUs)
+	if cores == 0 {
+		cores = len(raw.CPUStats.PercpuUsage)
+	}
+
+	cur := containerCPUSample{
+		total:  raw.CPUStats.CPUUsage.TotalUsage,
+		system: raw.CPUStats.SystemUsage,
+	}
+	dockerStatsCache.mu.Lock()
+	prev, ok := dockerStatsCache.last[id]
+	dockerStatsCache.last[id] = cur
+	dockerStatsCache.mu.Unlock()
+
+	out := &ContainerStats{}
+	if ok && cur.system > prev.system && cur.total >= prev.total {
+		percent := containerCPUPercent(prev.total, prev.system, cur.total, cur.system, cores)
+		out.CPUPercent = &percent
+	}
+	out.MemUsed, out.MemPercent = containerMemoryUsage(raw.MemoryStats.Usage, raw.MemoryStats.Limit, raw.MemoryStats.Stats)
+	out.MemLimit = raw.MemoryStats.Limit
+	return out
+}
+
+// pruneDockerStatsCache forgets containers that no longer appear, so the
+// map cannot grow with churn.
+func pruneDockerStatsCache(seen map[string]bool) {
+	dockerStatsCache.mu.Lock()
+	defer dockerStatsCache.mu.Unlock()
+	for id := range dockerStatsCache.last {
+		if !seen[id] {
+			delete(dockerStatsCache.last, id)
+		}
+	}
+}
+
+// containerStats fetches one one-shot stats read for a container.
+func (c *dockerClient) containerStats(id string) (*containerStatsRaw, error) {
+	var stats containerStatsRaw
+	if err := c.get("/v1.43/containers/"+id+"/stats?stream=false&one-shot=true", &stats); err != nil {
+		return nil, err
+	}
+	return &stats, nil
 }
 
 // containerUptime converts a Docker StartedAt timestamp (RFC3339) into
@@ -206,11 +332,13 @@ func collectDockerSocket(socketPath string) ([]Container, error) {
 	}
 
 	out := make([]Container, 0, len(list))
+	seen := make(map[string]bool, len(list))
 	for _, item := range list {
 		name := strings.TrimPrefix(item.Names[0], "/")
 		if len(item.Names) == 0 {
 			name = item.ID[:12]
 		}
+		seen[item.ID] = true
 
 		c := Container{
 			Name:  name,
@@ -243,6 +371,22 @@ func collectDockerSocket(socketPath string) ([]Container, error) {
 			}
 		}
 
+		// CPU/memory stats for running containers, best-effort: a container
+		// that cannot be measured simply carries no stats block, and the
+		// first failure per container is logged once.
+		if item.State == "running" {
+			if raw, err := client.containerStats(item.ID); err == nil {
+				c.Stats = buildContainerStats(item.ID, raw)
+			} else {
+				dockerStatsWarned.mu.Lock()
+				if !dockerStatsWarned.seen[item.ID] {
+					dockerStatsWarned.seen[item.ID] = true
+					log.Printf("warning: docker stats %s failed (will not repeat): %v", name, err)
+				}
+				dockerStatsWarned.mu.Unlock()
+			}
+		}
+
 		// Fall back to the list-response ports when inspect gave nothing.
 		if len(c.Ports) == 0 {
 			for _, p := range item.Ports {
@@ -258,6 +402,8 @@ func collectDockerSocket(socketPath string) ([]Container, error) {
 
 		out = append(out, c)
 	}
+
+	pruneDockerStatsCache(seen)
 
 	if out == nil {
 		out = []Container{}

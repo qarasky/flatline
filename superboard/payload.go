@@ -197,8 +197,8 @@ type GPUDetail struct {
 	Temp     float64 `json:"temp,omitempty"`
 }
 
-// Container is list + state, not stats. Per-container CPU/mem needs the stats
-// stream and is explicitly phase 2.
+// Container is list + state plus best-effort live stats. Per-container
+// history is deliberately out of scope; stats are the current reading.
 type Container struct {
 	Name   string   `json:"name"`
 	Image  string   `json:"image"`
@@ -208,6 +208,21 @@ type Container struct {
 	// Uptime in seconds since the container started. 0 means unknown, not
 	// "just started" — the board shows nothing rather than a wrong number.
 	Uptime uint64 `json:"uptime,omitempty"`
+	// Stats is absent when the container is not running or the daemon could
+	// not be asked; a present block always carries memory, CPU only when a
+	// previous cumulative read exists (first tick, restarts).
+	Stats *ContainerStats `json:"stats,omitempty"`
+}
+
+// ContainerStats is one live reading for one container. CPU follows Docker's
+// convention: percent of a single core, so a container using four cores
+// reads 400%. Pointers distinguish "unknown" from a real zero (an idle
+// container is 0%, not missing).
+type ContainerStats struct {
+	CPUPercent *float64 `json:"cpuPercent,omitempty"`
+	MemUsed    uint64   `json:"memUsed,omitempty"`
+	MemLimit   uint64   `json:"memLimit,omitempty"`
+	MemPercent *float64 `json:"memPercent,omitempty"`
 }
 
 // Payload is the full document POSTed as `metrics` to /api/push/:token.

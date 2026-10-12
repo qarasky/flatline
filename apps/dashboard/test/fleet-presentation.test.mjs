@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, fleetAttention, formatBytes, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
+import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -114,6 +114,26 @@ test("bytes and rates format compactly; a real zero rate stays visible", () => {
     assert.equal(formatRate(-1), null);
     assert.equal(formatRate(0), "0 B/s", "an idle interface is data, not missing");
     assert.equal(formatRate(2_500_000), "2.4 MB/s");
+});
+test("container stats stay honest: no stats means no label, zero CPU is a reading", () => {
+    assert.equal(containerStatsSummary(undefined), null);
+    assert.equal(containerStatsSummary({}), null);
+    assert.equal(formatBytesCompact(512 * 1024 * 1024), "512M");
+    assert.equal(formatBytesCompact(1.5 * 1024 ** 3), "1.5G");
+    assert.equal(formatBytesCompact(undefined), null);
+
+    const idle = containerStatsSummary({ cpuPercent: 0, memUsed: 256 * 1024 * 1024, memLimit: 1024 ** 3, memPercent: 25 });
+    assert.equal(idle?.label, "0% · 256M", "an idle container shows 0%, not nothing");
+    assert.match(idle.title, /CPU 0\.0%/);
+    assert.match(idle.title, /memory 256 MB of 1\.0 GB \(25%\)/);
+
+    const busy = containerStatsSummary({ cpuPercent: 412.34, memUsed: 1024 });
+    assert.equal(busy?.label, "412% · 1.0K", "Docker's per-core convention survives (can exceed 100%)");
+    assert.match(busy.title, /CPU 412\.3%/);
+
+    const memOnly = containerStatsSummary({ memUsed: 2048 });
+    assert.equal(memOnly?.label, "2.0K");
+    assert.doesNotMatch(memOnly.title, /CPU/);
 });
 test("high usage includes memory, disks and legacy GPU VRAM; unknown numbers stay unknown", () => {
     assert.equal(fleetAttention({gpu:{available:true, memTotal:100, memUsed:95}}, "2026-10-09T12:00:00Z", 180, now).hot, true);

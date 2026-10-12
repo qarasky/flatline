@@ -23,8 +23,9 @@ for the full list of changes.
   and **p90 / p95 / p99**, mean, and peak summaries. Windows beyond a week
   read hourly rollups (two-year retention); peak stays the true maximum.
 - Track containers in three-column status tiles with automatic vertical looping,
-  pinned problems, and no manual scrolling. Host reachability stays separate
-  from workload health.
+  pinned problems, and no manual scrolling; each tile shows a compact CPU /
+  memory reading when the agent can measure it. Host reachability stays
+  separate from workload health.
 - See pending OS update counts per host (`No updates` / `Updates: N` /
   `Security Updates: N`), read-only, from agent 1.3.
 - Get paged on sustained resource pressure: per-server CPU / RAM / disk

@@ -13,7 +13,7 @@ shipped (and listed in the deploy record once rolled out).
 - [x] 2.1 Threshold alerts — shipped server-side (Phase 5)
 - [x] 2.2 Multi-tier retention — shipped (hourly min/max/avg, two years)
 - [x] 3.1 Network throughput, disk I/O, load average — shipped (live rates; no dedicated history charts yet)
-- [ ] 3.2 Per-container CPU / memory
+- [x] 3.2 Per-container CPU / memory — shipped (one-shot stats per refresh; no streams or per-container history)
 - [ ] 3.3 SMART disk health
 
 ## Where we already match the field
@@ -161,6 +161,13 @@ Validated by the review — keep these decisions, they are not gaps:
 
 ### 3.2 Per-container CPU / memory
 
+- **Status:** shipped in agent 1.5.0 (2026-10-12). As built: one-shot stats
+  per Docker refresh (10s) for running containers, on the existing socket
+  client; CPU percent computed against the previous read (Docker's per-core
+  convention, can exceed 100%), memory with cache subtracted and the cgroup
+  v2 no-limit sentinel handled. Tiles show a compact `CPU · memory` label,
+  tooltip carries the detail; absent stats mean unknown, never zero. Not
+  done: stats streaming and per-container history.
 - **Why:** our spec deferred stats streaming "in v1"; Beszel and cAdvisor both
   treat it as table stakes, and it is the question the container tiles raise:
   which container is eating the box.

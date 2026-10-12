@@ -61,8 +61,8 @@ colors, looping automatically when more than nine containers are present.
 Host cards show pending-update counts (`No updates` green, `Updates: N` yellow
 below 50 / red at 50+, `Security Updates: N` dark red); unknown stays blank.
 
-Not implemented: Docker event subscriptions, per-container
-CPU/memory stats, and log shipping. Update checks are read-only and never
+Not implemented: Docker event subscriptions and log shipping. Update checks
+are read-only and never
 install packages or reboot hosts. See
 [`../SUPERBOARD-SPEC.md`](../SUPERBOARD-SPEC.md) for storage/stream semantics
 and limits, and [`../IMPROVEMENT-ROADMAP.md`](../IMPROVEMENT-ROADMAP.md) for

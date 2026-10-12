@@ -102,6 +102,53 @@ export function formatRate(bytesPerSecond: number | undefined): string | null {
 }
 
 /**
+ * Ultra-compact byte count for container tiles ("512M", "1.5G"), or null
+ * when absent. Full formatting lives in the tooltip.
+ */
+export function formatBytesCompact(bytes: number | undefined): string | null {
+    if (bytes === undefined || !Number.isFinite(bytes) || bytes < 0) { return null; }
+    const units = ["B", "K", "M", "G", "T", "P"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    const text = value >= 100 || unit === 0 ? `${Math.round(value)}` : value.toFixed(1);
+    return `${text}${units[unit]}`;
+}
+
+type ContainerStats = NonNullable<NonNullable<MetricsPayload["docker"]>[number]["stats"]>;
+
+/**
+ * One-line live stats for a container tile plus the tooltip detail.
+ *
+ * Docker's CPU convention is percent of a single core, so a container using
+ * four cores reads 400% — that is the number docker stats shows, and
+ * normalising it here would hide which container is actually busy. Returns
+ * null when nothing is known: a statless container must show nothing, never
+ * a fake zero.
+ */
+export function containerStatsSummary(stats: ContainerStats | undefined): { label: string; title: string } | null {
+    if (!stats) { return null; }
+    const cpu = Number.isFinite(stats.cpuPercent) ? stats.cpuPercent as number : null;
+    const mem = stats.memUsed !== undefined && Number.isFinite(stats.memUsed) ? stats.memUsed as number : null;
+    if (cpu === null && mem === null) { return null; }
+
+    const cpuText = cpu === null ? null : cpu === 0 ? "0%" : cpu < 10 ? `${cpu.toFixed(1)}%` : `${Math.round(cpu)}%`;
+    const memText = mem === null ? null : formatBytesCompact(mem);
+    const label = [ cpuText, memText ].filter(Boolean).join(" · ");
+
+    const titleParts: string[] = [];
+    if (cpu !== null) { titleParts.push(`CPU ${cpu.toFixed(1)}%`); }
+    if (mem !== null) {
+        const limit = stats.memLimit !== undefined && Number.isFinite(stats.memLimit) && stats.memLimit > 0 ? stats.memLimit : null;
+        const percent = Number.isFinite(stats.memPercent) ? Math.round(stats.memPercent as number) : null;
+        titleParts.push(limit
+            ? `memory ${formatBytes(mem)} of ${formatBytes(limit)}${percent !== null ? ` (${percent}%)` : ""}`
+            : `memory ${formatBytes(mem)}`);
+    }
+    return { label, title: titleParts.join(" · ") };
+}
+
+/**
  * Format a duration in seconds as a compact human string, or null when the
  * value is absent or not finite.
  */

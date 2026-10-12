@@ -70,7 +70,9 @@ counters; rates are derived server-side over the window between pushes, and
 gaps simply hide the line.
 
 Container tiles use three columns and roughly nine visible slots. More than
-nine containers loop vertically; up to six problems are pinned. Hover/focus
+nine containers loop vertically; up to six problems are pinned. Tiles show a
+compact `CPU · memory` reading when the agent reports stats (Docker's
+per-core CPU convention; tooltip carries the full detail). Hover/focus
 pauses motion and reduced-motion preferences disable animation. Red means a
 known failure, yellow a transition/unknown state, green running/healthy, and
 black exited/removed with unknown stop intent. Symbols and tooltips supplement
