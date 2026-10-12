@@ -35,6 +35,7 @@ type telemetry struct {
 	loadErrors     atomic.Uint64
 	netErrors      atomic.Uint64
 	diskioErrors   atomic.Uint64
+	smartErrors    atomic.Uint64
 	lastError      atomic.Pointer[string]
 }
 
@@ -85,11 +86,13 @@ func (t *telemetry) recordCollectorError(name string) {
 		t.netErrors.Add(1)
 	case "diskio":
 		t.diskioErrors.Add(1)
+	case "smart":
+		t.smartErrors.Add(1)
 	}
 }
 
 // collectorErrorNames is the stable, sorted order of collector keys.
-var collectorErrorNames = []string{"cpu", "disk", "diskio", "docker", "gpu", "load", "net", "updates"}
+var collectorErrorNames = []string{"cpu", "disk", "diskio", "docker", "gpu", "load", "net", "smart", "updates"}
 
 // agentInfoSnapshot assembles the self-report that rides every payload.
 // Only nonzero collector counters are included, so a healthy agent's block
@@ -113,6 +116,7 @@ func agentInfoSnapshot() *AgentInfo {
 		"gpu":     stats.gpuErrors.Load(),
 		"load":    stats.loadErrors.Load(),
 		"net":     stats.netErrors.Load(),
+		"smart":   stats.smartErrors.Load(),
 		"updates": stats.updatesErrors.Load(),
 	}
 	errors := map[string]uint64{}

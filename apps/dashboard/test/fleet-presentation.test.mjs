@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, updatesStatus } from "../src/lib/fleet-presentation.ts";
+import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, smartWarning, updatesStatus } from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -134,6 +134,37 @@ test("container stats stay honest: no stats means no label, zero CPU is a readin
     const memOnly = containerStatsSummary({ memUsed: 2048 });
     assert.equal(memOnly?.label, "2.0K");
     assert.doesNotMatch(memOnly.title, /CPU/);
+});
+test("smart warnings speak only for real trouble", () => {
+    assert.equal(smartWarning(undefined), null);
+    assert.equal(smartWarning({ available: false }), null);
+    assert.equal(smartWarning({ available: true, disks: [] }), null);
+    assert.equal(smartWarning({ available: true, disks: [ { device: "sda", health: "passed" } ] }), null);
+
+    const failing = smartWarning({ available: true, disks: [
+        { device: "sda", health: "passed", tempC: 38 },
+        { device: "sdb", health: "failed", reallocatedSectors: 512, powerOnHours: 12345 },
+    ] });
+    assert.equal(failing?.tone, "bad");
+    assert.equal(failing?.text, "SMART sdb: failing");
+    assert.match(failing.title, /sda: passed, 38°C/);
+    assert.match(failing.title, /sdb: failed, 512 reallocated, 514d on/);
+
+    const many = smartWarning({ available: true, disks: [
+        { device: "sda", health: "failed" }, { device: "sdb", health: "failed" },
+    ] });
+    assert.equal(many?.text, "SMART: 2 disks failing");
+
+    const worn = smartWarning({ available: true, disks: [ { device: "nvme0n1", health: "passed", wearPercent: 85 } ] });
+    assert.equal(worn?.tone, "warn");
+    assert.equal(worn?.text, "SSD wear 85% (nvme0n1)");
+    assert.equal(smartWarning({ available: true, disks: [ { device: "nvme0n1", wearPercent: 79 } ] }), null);
+
+    // Failing outranks wear when both exist.
+    const both = smartWarning({ available: true, disks: [
+        { device: "sda", health: "failed" }, { device: "nvme0n1", wearPercent: 99 },
+    ] });
+    assert.equal(both?.tone, "bad");
 });
 test("high usage includes memory, disks and legacy GPU VRAM; unknown numbers stay unknown", () => {
     assert.equal(fleetAttention({gpu:{available:true, memTotal:100, memUsed:95}}, "2026-10-09T12:00:00Z", 180, now).hot, true);

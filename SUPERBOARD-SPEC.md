@@ -75,7 +75,8 @@ Migration: `db/knex_migrations/2026-10-0X-0000-monitor-metric.js`
                "failedPushes": 0, "collectorErrors": { "gpu": 1 } },
     "load": { "avg1": 0.42, "avg5": 0.51, "avg15": 0.60 },
     "net": [ { "iface": "eth0", "rxBytes": 123456789, "txBytes": 9876543 } ],
-    "diskIo": [ { "device": "sda", "readBytes": 1234567890, "writeBytes": 987654321 } ]
+    "diskIo": [ { "device": "sda", "readBytes": 1234567890, "writeBytes": 987654321 } ],
+    "smart": { "available": true, "disks": [ { "device": "sda", "health": "passed", "tempC": 38, "reallocatedSectors": 0, "powerOnHours": 12345 } ] }
 }
 ```
 
@@ -124,6 +125,13 @@ Notes:
   `br-`, `virbr`, `vnet`, `tap`, `tun`, `wg`) so container traffic is not
   double counted; if a host has only virtual interfaces, all are summed.
 - `container.uptime` is seconds since start, 0 when unknown.
+- `smart` is disk health (agent 1.5+), best-effort like the GPU block:
+  `available: false` is explicit ("no smartctl / no readable device"), never
+  absent. `health` is "passed"/"failed" from smartctl; `reallocatedSectors`
+  is ATA attribute 5; `wearPercent` comes from NVMe `percentage_used` only —
+  ATA wear attributes mean "remaining" on some vendors and "used" on others,
+  so they are deliberately not guessed. Unknown counters are omitted, never
+  zero-filled. Refreshed every 6 hours.
 - `container.stats` is one best-effort live reading (agent 1.5+): absent for
   stopped containers or when the daemon could not be asked. CPU follows
   Docker's convention — percent of a single core, so a container using four
@@ -196,6 +204,7 @@ Single static binary (`CGO_ENABLED=0`), linux/amd64. No runtime dependencies.
 | OS package managers | pending update counts (total, security) | read-only queries every 4h; apt-check exact, dnf security best-effort, rest total-only; failure → field absent, never fatal |
 | Docker socket | containers: name, image, state, health, ports, one-shot CPU/mem stats | list + inspect + best-effort stats for running containers; **no stats streaming** |
 | `nvidia-smi` | util, mem, temp if present | exec + parse, best-effort; failure → `available: false`, never fatal |
+| `smartctl -j` | disk health, temp, reallocated sectors, NVMe wear | every 6h, whole disks, best-effort; missing tool → `available: false`, never fatal |
 
 ### Behaviour
 

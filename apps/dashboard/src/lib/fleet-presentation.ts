@@ -210,6 +210,53 @@ export function agentWarnings(agent: AgentMetrics | undefined): AgentWarning | n
     return { text: `Agent: ${parts.join(" · ")}`, title: title.join(" · ") };
 }
 
+type SmartInfo = NonNullable<MetricsPayload["smart"]>;
+
+/**
+ * One warning line for disk health, or null when there is nothing to say.
+ *
+ * Failing health outranks wear; wear only speaks at 80% used or above.
+ * Healthy disks stay silent — the card is a wall display, and "all disks
+ * fine" is not news. The tooltip always carries the per-disk detail when a
+ * warning is shown.
+ */
+export function smartWarning(smart: SmartInfo | undefined): { text: string; title: string; tone: "warn" | "bad" } | null {
+    if (!smart?.available || !smart.disks?.length) { return null; }
+
+    const title = smart.disks.map((disk) => {
+        const bits = [ disk.health ?? "health unknown" ];
+        if (Number.isFinite(disk.tempC)) { bits.push(`${Math.round(disk.tempC as number)}°C`); }
+        if (Number.isFinite(disk.wearPercent)) { bits.push(`wear ${Math.round(disk.wearPercent as number)}%`); }
+        if (Number.isFinite(disk.reallocatedSectors) && (disk.reallocatedSectors as number) > 0) {
+            bits.push(`${disk.reallocatedSectors} reallocated`);
+        }
+        if (disk.powerOnHours) { bits.push(`${Math.round(disk.powerOnHours / 24)}d on`); }
+        return `${disk.device ?? "disk"}: ${bits.join(", ")}`;
+    }).join(" · ");
+
+    const failing = smart.disks.filter((disk) => disk.health === "failed");
+    if (failing.length) {
+        const names = failing.map((disk) => disk.device ?? "disk");
+        return {
+            tone: "bad",
+            text: names.length === 1 ? `SMART ${names[0]}: failing` : `SMART: ${names.length} disks failing`,
+            title,
+        };
+    }
+
+    const worn = smart.disks.filter((disk) => Number.isFinite(disk.wearPercent) && (disk.wearPercent as number) >= 80);
+    if (worn.length) {
+        const worst = worn.reduce((a, b) => ((b.wearPercent as number) > (a.wearPercent as number) ? b : a));
+        return {
+            tone: "warn",
+            text: `SSD wear ${Math.round(worst.wearPercent as number)}% (${worst.device ?? "disk"})`,
+            title,
+        };
+    }
+
+    return null;
+}
+
 /**
  * Clean a monitor name typed into the rename dialog: trimmed, capped the
  * way the API caps it, empty when there is nothing to save.

@@ -38,6 +38,8 @@ for the full list of changes.
 - Read load average and live network / disk I/O throughput on each server
   card (rates derived server-side from raw counters, virtual interfaces
   excluded so container traffic is not double counted).
+- See per-container CPU / memory on the container tiles, and a SMART warning
+  when a disk reports failing health or heavy SSD wear (NVMe).
 - Wall-mount a group of servers on its own kiosk page —
   `/superboard/kiosk/work` — while home shows every fleet on one board,
   or combine scopes with `/superboard/kiosk/work,personal`.

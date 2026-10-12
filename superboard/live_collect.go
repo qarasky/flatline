@@ -34,6 +34,9 @@ type liveCollector struct {
 	// Nil means unknown (unsupported distro or failed check): the board
 	// shows nothing rather than a wrong "fully updated".
 	updates *Updates
+	// smart caches disk health, refreshed every few hours. Nil until the
+	// first worker run; available:false is explicit when smartctl is absent.
+	smart *SMART
 }
 
 func refreshLoop(ctx context.Context, interval time.Duration, collect func()) {
@@ -137,6 +140,12 @@ func newLiveCollector(ctx context.Context) (*liveCollector, error) {
 		c.updates = updates
 		c.mu.Unlock()
 	})
+	go refreshLoop(ctx, smartRefreshInterval, func() {
+		smart := collectSMART()
+		c.mu.Lock()
+		c.smart = smart
+		c.mu.Unlock()
+	})
 	return c, nil
 }
 
@@ -229,7 +238,8 @@ func (c *liveCollector) sample() (*Payload, error) {
 		Mem:  Mem{Total: vm.Total, Used: vm.Used, Percent: vm.UsedPercent, Temp: c.memTemp},
 		Disk: c.disk, GPU: c.gpu, Docker: c.docker, DockerError: c.dockerError,
 		Updates: c.updates, Agent: agentInfoSnapshot(),
-		Load: collectLoad(), Net: collectNet(), DiskIO: collectDiskIO()}
+		Load: collectLoad(), Net: collectNet(), DiskIO: collectDiskIO(),
+		Smart: c.smart}
 	stampSample(payload)
 	return payload, nil
 }

@@ -85,7 +85,7 @@ Committed but **not yet deployed** anywhere:
 - Agent **1.5.0**: sends raw counters, update counts, a self-report block
   (version, uptime, dropped samples, failed pushes, collector errors), load
   average, network and disk I/O counters, per-container one-shot CPU/memory
-  stats, plus a disk-backed send buffer
+  stats, SMART disk health (every 6h), plus a disk-backed send buffer
   (default `/var/lib/superboard/buffer`, 32 MiB cap)
   with `sampledAt` backfill; rebuild
   (`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o superboard .`) and

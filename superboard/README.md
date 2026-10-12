@@ -62,8 +62,9 @@ Host cards show pending-update counts (`No updates` green, `Updates: N` yellow
 below 50 / red at 50+, `Security Updates: N` dark red); unknown stays blank.
 
 Not implemented: Docker event subscriptions and log shipping. Update checks
-are read-only and never
-install packages or reboot hosts. See
+are read-only and never install packages or reboot hosts. SMART disk health
+is read-only via smartctl (every 6h; absent tool reports `available:
+false`). See
 [`../SUPERBOARD-SPEC.md`](../SUPERBOARD-SPEC.md) for storage/stream semantics
 and limits, and [`../IMPROVEMENT-ROADMAP.md`](../IMPROVEMENT-ROADMAP.md) for
 the ranked backlog.

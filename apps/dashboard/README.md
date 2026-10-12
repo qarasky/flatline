@@ -69,6 +69,12 @@ Cards show load average next to `Peak 10m` (tooltip: 1/5/15) and a
 counters; rates are derived server-side over the window between pushes, and
 gaps simply hide the line.
 
+SMART disk health speaks only when there is trouble: a red `SMART <dev>:
+failing` line or an amber `SSD wear N%` warning at 80% or above, with
+per-disk detail (health, temperature, reallocated sectors, power-on time)
+in the tooltip. Healthy disks render nothing; agents without smartctl
+report `available: false` and are distinguishable from healthy ones.
+
 Container tiles use three columns and roughly nine visible slots. More than
 nine containers loop vertically; up to six problems are pinned. Tiles show a
 compact `CPU · memory` reading when the agent reports stats (Docker's

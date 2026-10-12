@@ -125,6 +125,28 @@ type DiskIoRate struct {
 	WindowSeconds    float64 `json:"windowSeconds"`
 }
 
+// SMART is disk health, best-effort by contract like the GPU block:
+// available:false is explicit ("no smartctl / no readable device"), never
+// absent, so a blind agent is distinguishable from a healthy one.
+type SMART struct {
+	Available bool        `json:"available"`
+	Disks     []SMARTDisk `json:"disks,omitempty"`
+}
+
+// SMARTDisk is one whole disk's health. Health is "passed"/"failed" when
+// smartctl reported it; the counters are omitted when unknown, never
+// zero-filled. WearPercent comes from NVMe percentage_used only: ATA wear
+// attributes mean "remaining" on some vendors and "used" on others, and
+// guessing would be wrong half the time.
+type SMARTDisk struct {
+	Device             string  `json:"device"`
+	Health             string  `json:"health,omitempty"`
+	TempC              float64 `json:"tempC,omitempty"`
+	WearPercent        float64 `json:"wearPercent,omitempty"`
+	ReallocatedSectors float64 `json:"reallocatedSectors,omitempty"`
+	PowerOnHours       uint64  `json:"powerOnHours,omitempty"`
+}
+
 // AgentInfo is the agent's self-report, modelled on Telegraf's internal
 // metrics input: the monitoring software reports its own failures, because
 // otherwise a broken collector writes to journald and nobody reads it.
@@ -248,6 +270,7 @@ type Payload struct {
 	Load        *Load          `json:"load,omitempty"`
 	Net         []NetInterface `json:"net,omitempty"`
 	DiskIO      []DiskIO       `json:"diskIo,omitempty"`
+	Smart       *SMART         `json:"smart,omitempty"`
 	// Server-derived rates (live samples only; absent from agent payloads).
 	NetRate    *NetRate    `json:"netRate,omitempty"`
 	DiskIoRate *DiskIoRate `json:"diskIoRate,omitempty"`

@@ -400,6 +400,10 @@ export interface MetricsPayload {
     diskIo?: { device?: string; readBytes?: number; writeBytes?: number }[];
     netRate?: { rxBytesPerSec?: number; txBytesPerSec?: number; windowSeconds?: number };
     diskIoRate?: { readBytesPerSec?: number; writeBytesPerSec?: number; windowSeconds?: number };
+    smart?: {
+        available?: boolean;
+        disks?: { device?: string; health?: string; tempC?: number; wearPercent?: number; reallocatedSectors?: number; powerOnHours?: number }[];
+    };
     agent?: {
         version?: string;
         uptime?: number;

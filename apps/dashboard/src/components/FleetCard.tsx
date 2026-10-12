@@ -1,6 +1,6 @@
 import { memo, type MouseEvent } from "react";
 import type { MonitorSummary, MetricsPayload, CPUPeak } from "@/lib/api";
-import { agentWarnings, fleetAttention, formatBytes, formatDuration, formatRate, percentage, sampleAgeMs, updatesStatus } from "@/lib/fleet-presentation";
+import { agentWarnings, fleetAttention, formatBytes, formatDuration, formatRate, percentage, sampleAgeMs, smartWarning, updatesStatus } from "@/lib/fleet-presentation";
 import { ContainerTiles } from "@/components/ContainerTiles";
 import { CoreSquares } from "@/components/CoreSquares";
 import { MetricBar, usageTone } from "@/components/MetricBar";
@@ -66,6 +66,7 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
     const rateTip = netRate || ioRate
         ? `Rates over the last ${Math.round((netRate?.windowSeconds ?? ioRate?.windowSeconds ?? 0) * 10) / 10}s of agent pushes; gaps produce no rate`
         : undefined;
+    const smart = smartWarning(metrics.smart);
 
     return (
         <article
@@ -134,6 +135,11 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
                 {netText || ioText ? (
                     <p className="fleet-secondary tnum" title={rateTip}>
                         {netText}{netText && ioText ? " · " : ""}{ioText}
+                    </p>
+                ) : null}
+                {smart ? (
+                    <p className={`fleet-secondary ${smart.tone === "bad" ? "text-bad" : "text-warn"}`} title={smart.title} role="status">
+                        {smart.text}
                     </p>
                 ) : null}
                 {gpus.map((g, i) => (

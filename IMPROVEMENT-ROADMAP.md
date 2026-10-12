@@ -14,7 +14,7 @@ shipped (and listed in the deploy record once rolled out).
 - [x] 2.2 Multi-tier retention — shipped (hourly min/max/avg, two years)
 - [x] 3.1 Network throughput, disk I/O, load average — shipped (live rates; no dedicated history charts yet)
 - [x] 3.2 Per-container CPU / memory — shipped (one-shot stats per refresh; no streams or per-container history)
-- [ ] 3.3 SMART disk health
+- [x] 3.3 SMART disk health — shipped (smartctl, 6h refresh, NVMe wear only)
 
 ## Where we already match the field
 
@@ -179,6 +179,14 @@ Validated by the review — keep these decisions, they are not gaps:
 
 ### 3.3 SMART disk health
 
+- **Status:** shipped in agent 1.5.0 (2026-10-12). As built: `smartctl -j -H
+  -A` per whole disk every 6 hours, parsed in-process (smartctl exit codes
+  are a bitmask — a failing disk exits nonzero with valid JSON, so output is
+  parsed regardless). Health from `smart_status`, temperature and power-on
+  hours from either ATA or NVMe blocks, reallocated sectors from ATA
+  attribute 5, wear from NVMe `percentage_used` only. The board warns on
+  `failed` health (red) or ≥80% wear (amber), tooltip carries per-disk
+  detail; healthy disks stay silent. Missing smartctl → `available: false`.
 - **Why:** predictive disk failure is worth more than another percent chart,
   and Beszel ships it. Best-effort `smartctl` exec fits our collector pattern
   exactly (like `nvidia-smi`).

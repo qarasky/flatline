@@ -299,6 +299,7 @@ func collect() (*Payload, error) {
 		Load:   collectLoad(),
 		Net:    collectNet(),
 		DiskIO: collectDiskIO(),
+		Smart:  collectSMART(),
 	}
 	if err != nil {
 		payload.DockerError = err.Error()
