@@ -1,8 +1,10 @@
 # Office deployment
 
 Public origin: `https://uptime.mediaboost.kz`, existing Cloudflare Tunnel to
-`http://localhost:3001`. Gateway routes `/api/` and `/upload/` to the backend,
-`/status/` and `/_next/` to the status site, and other paths to the dashboard.
+`http://localhost:3001`. Gateway routes `/api/` and `/upload/` to the backend
+and every other path to the dashboard app, which serves both the operator
+dashboard and the public status pages (v2 consolidation; the separate status
+site was removed).
 SSE buffering is disabled. Only the gateway is published.
 
 The standalone `compose.production.yaml` is deployed as
@@ -11,14 +13,13 @@ alongside it. Uses the system (rootful) Docker daemon via `sudo docker`.
 Moved from the `office` user's rootless daemon on 2026-10-11; the old
 rootless daemon is no longer used for this stack.
 
-Build all images for `linux/amd64` on the build machine, then transfer/load
+Build the images for `linux/amd64` on the build machine, then transfer/load
 them into office's system daemon (`sudo docker load ...`). All `docker`
 commands on office run as root:
 
 ```sh
 docker build --platform linux/amd64 -f docker/dockerfile --target release -t artchsh/flatline:office-live .
 docker build --platform linux/amd64 -f docker/dashboard.dockerfile -t artchsh/flatline-dashboard:office-live .
-docker build --platform linux/amd64 -f docker/status-site.dockerfile --build-arg NEXT_PUBLIC_FLATLINE_URL=https://uptime.mediaboost.kz -t artchsh/flatline-status:office-live .
 ```
 
 Stage on loopback port 3101. Do not replace the original Kuma data directory.
@@ -71,6 +72,12 @@ unless its notification links have first been disabled.
 ## Pending rollout — 2026-10-12
 
 Committed but **not yet deployed** anywhere:
+
+- v2 consolidation: the dashboard image now serves the public status pages;
+  the standalone status-site image/container is retired. On deploy, remove
+  the old `status-site` service (`sudo docker compose rm -sf status-site`)
+  and recreate the gateway with the updated config — `/status/` and
+  `/_next/` routes are gone; the catch-all handles them.
 
 - Backend: raw CPU counters with server-side utilization derivation (live
   short-window, ~30s means in history), agent pending-update counts ingest,

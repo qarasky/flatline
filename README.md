@@ -46,7 +46,9 @@ for the full list of changes.
 - Rename servers on the board directly (right-click → Rename).
 - Share monitor data across accounts without sharing passwords or API tokens.
 - Publish client status pages with password gates, branding, and group-driven
-  generation; manage the installation through scoped REST calls.
+  generation; manage the installation through scoped REST calls. Status pages
+  live in the dashboard app (`/status/:slug`, plus host-routed client
+  domains).
 
 ### Operator dashboard
 
@@ -99,19 +101,20 @@ SFTP, NTP, Postgres, and Redis, plus maintenance windows, proxy support, and 2FA
 
 ## Architecture
 
-Three processes, one backend:
+Two processes, one backend (v2 consolidation: status pages live in the
+dashboard app — the standalone Next.js status site is gone):
 
 | App | Dir | Port | What |
 |---|---|---|---|
 | Backend (API only) | `server/` | 3001 | Monitors, checks, notifications, REST v1. Serves JSON, no HTML. |
-| Public status site | `apps/status-site` | 3002 | Per-client status pages (Next.js). |
-| Operator dashboard | `apps/dashboard` | 3003 | Dense monitor table, Superboard, users (Vite + React). |
+| Operator dashboard + public status pages | `apps/dashboard` | 3003 | Dense monitor table, Superboard, users; `/status/:slug` and host-routed client domains (Vite + React). |
 
 The dashboard uses bearer-authenticated HTTP. Sign in with a username and
 password to obtain a browser token; integrations use per-user API keys from
-`POST /api/v1/api-keys` or the **Agents** panel. The status site reads the
-status-page API; password-gated pages use page-scoped unlock cookies rather
-than granting visitors operator access.
+`POST /api/v1/api-keys` or the **Agents** panel. Public status pages are the
+same app on public routes; they read the status-page API, and password-gated
+pages use page-scoped unlock cookies rather than granting visitors operator
+access.
 
 ### Live updates
 
@@ -163,10 +166,10 @@ npm ci
 ./dev.sh
 ```
 
-`./dev.sh` starts all three servers and seeds a demo database on first run.
-Open the dashboard (address printed by the script) and sign in — on a fresh
-database it asks you to create the first operator account. `./dev.sh stop`
-stops everything; `./dev.sh status` checks health.
+`./dev.sh` starts the backend and the dashboard/status app, and seeds a demo
+database on first run. Open the dashboard (address printed by the script) and
+sign in — on a fresh database it asks you to create the first operator
+account. `./dev.sh stop` stops everything; `./dev.sh status` checks health.
 
 ### 🐳 Docker
 
@@ -180,8 +183,8 @@ cd flatline
 docker compose up -d --build
 ```
 
-This starts all three services: the API on **3001**, the dashboard on **3003**,
-the status site on **3002**. Data lives in `./data`. On first run, open the
+This starts the API on **3001** and the dashboard/status app on **3003**.
+Data lives in `./data`. On first run, open the
 dashboard and create the operator account — no token pasting, no seed scripts.
 
 Browsers reach the backend at `BACKEND_URL` (default `http://127.0.0.1:3001`;
@@ -192,7 +195,7 @@ public origin when the browser is elsewhere:
 BACKEND_URL=http://192.168.1.10:3001 docker compose up -d --build
 ```
 
-Behind a reverse proxy, serve all three from one origin instead: the status
+Behind a reverse proxy, serve both from one origin instead: the status
 page unlock posts cross-origin otherwise, and the browser will not keep the
 unlock cookie.
 
@@ -220,7 +223,7 @@ npm ci
 npm run start-server-dev
 ```
 
-Then run the frontend apps: `apps/status-site` and
+Then run the frontend app:
 [apps/dashboard](apps/dashboard/README.md), pointed at the backend URL.
 
 Data is stored in `./data` (SQLite by default).

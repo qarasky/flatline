@@ -7,8 +7,10 @@ Upstream stays untouched; no PRs are sent back.
 
 The sections below retain early investigation and migration notes; old stack
 descriptions and unchecked rebrand lists are historical, not the current UI.
-The active stack is an API-only Node backend, React/Vite operator dashboard,
-Next.js status site, and Go host agent. See [README.md](README.md) for current
+The active stack is an API-only Node backend and a single React/Vite app that
+serves both the operator dashboard and the public status pages (v2
+consolidation: the standalone Next.js status site was removed), plus a Go
+host agent. See [README.md](README.md) for current
 setup instructions and fictional-data screenshots.
 
 Delivered since the initial frontend cutover: bearer-authenticated SSE,
@@ -99,9 +101,10 @@ The Vue frontend is deleted and the backend is API-only:
   required to boot. The old `/status/:slug` HTML routes are gone; the JSON
   data routes (`/api/status-page/*`, heartbeat, incidents, badges, RSS,
   resolve-host, unlock) stay because the Next.js app reads them.
-- `apps/status-site` (Next.js, `:3002`) owns public status pages;
-  `apps/dashboard` (Vite + React, `:3003`) owns monitors, Superboard and
-  user administration.
+- `apps/dashboard` (Vite + React, `:3003`) owns monitors, Superboard and
+  user administration. Since the v2 consolidation it also serves the public
+  status pages (`/status/:slug`, host-mapped client domains); the former
+  `apps/status-site` (Next.js, `:3002`) is gone.
 - Auth is one model: `server/routers/auth-router.js` exposes password login
   (mints a 30-day full-scope token), setup status, invite check/redeem and
   account admin over REST. The dashboard signs in with username + password

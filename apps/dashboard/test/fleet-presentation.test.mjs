@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, smartWarning, updatesStatus } from "../src/lib/fleet-presentation.ts";
+import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, smartWarning, statusSlugFromPath, updatesStatus } from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -165,6 +165,15 @@ test("smart warnings speak only for real trouble", () => {
         { device: "sda", health: "failed" }, { device: "nvme0n1", wearPercent: 99 },
     ] });
     assert.equal(both?.tone, "bad");
+});
+test("status routes parse slugs; other paths are not status routes", () => {
+    assert.equal(statusSlugFromPath("/status/client-a"), "client-a");
+    assert.equal(statusSlugFromPath("/status/client-a/"), "client-a");
+    assert.equal(statusSlugFromPath("/status/Aiel%20Qorgan"), "Aiel Qorgan");
+    assert.equal(statusSlugFromPath("/status/a/b"), null, "slugs are single segments");
+    assert.equal(statusSlugFromPath("/status/"), null);
+    assert.equal(statusSlugFromPath("/"), null);
+    assert.equal(statusSlugFromPath("/superboard/kiosk"), null);
 });
 test("high usage includes memory, disks and legacy GPU VRAM; unknown numbers stay unknown", () => {
     assert.equal(fleetAttention({gpu:{available:true, memTotal:100, memUsed:95}}, "2026-10-09T12:00:00Z", 180, now).hot, true);

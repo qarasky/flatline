@@ -165,6 +165,392 @@ body {
 .fleet-container-list:hover .fleet-container-loop, .fleet-container-list:focus-within .fleet-container-loop { animation-play-state: paused; }
 @keyframes container-loop { to { transform: translateY(-50%); } }
 @media (prefers-reduced-motion: reduce) { .fleet-container-loop[data-looping] { animation: none; } }
+
+/* ------------------------------------------------------------ status page
+ *
+ * Ported from the standalone status site (v2 consolidation). Everything is
+ * scoped under .status-page so these tokens and class names cannot collide
+ * with the dashboard's. Two colour systems, deliberately kept apart:
+ * --brand comes from the client's accent and is used for chrome only;
+ * --ok/--warn/--bad/--maint are fixed, so "up / degraded / outage" mean the
+ * same thing on every client page.
+ */
+
+.status-page {
+    --brand: #ff4d2e;
+    --bg: #111113;
+    --surface: #161618;
+    --surface-2: #0b0b0d;
+    --fg: #f2efea;
+    --muted: #bab3ad;
+    --quiet: #938c87;
+    --line: #26262a;
+    --ok: #3fb950;
+    --warn: #f0c54b;
+    --bad: #e5484d;
+    --maint: #4c8dff;
+    --radius: 14px;
+    --radius-sm: 9px;
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+}
+
+.status-page a { color: inherit; }
+
+.status-page .wrap {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 40px 20px 80px;
+}
+
+.status-page .site-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 22px 0 28px;
+}
+
+.status-page .site-logo {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    object-fit: contain;
+    background: var(--surface);
+}
+
+.status-page .site-title {
+    margin: 0;
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.status-page .site-description {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 14px;
+    max-width: 60ch;
+}
+
+.status-page .hero {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 34px 24px;
+    text-align: center;
+    margin-bottom: 34px;
+}
+
+.status-page .hero-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.status-page .hero-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.status-page .hero-label {
+    font-size: 27px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+}
+
+.status-page .hero-meta {
+    margin-top: 6px;
+    font-size: 13px;
+    opacity: 0.7;
+}
+
+.status-page .hero.up {
+    color: var(--ok);
+    background: color-mix(in srgb, var(--ok) 8%, transparent);
+    border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+}
+
+.status-page .hero.down {
+    color: var(--bad);
+    background: color-mix(in srgb, var(--bad) 9%, transparent);
+    border-color: color-mix(in srgb, var(--bad) 34%, transparent);
+}
+
+.status-page .hero.degraded {
+    color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 9%, transparent);
+    border-color: color-mix(in srgb, var(--warn) 32%, transparent);
+}
+
+.status-page .hero.maintenance {
+    color: var(--maint);
+    background: color-mix(in srgb, var(--maint) 9%, transparent);
+    border-color: color-mix(in srgb, var(--maint) 32%, transparent);
+}
+
+.status-page .hero.unknown { color: var(--muted); }
+
+.status-page .section { margin-bottom: 34px; }
+
+.status-page .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+    margin: 0 0 12px;
+}
+
+.status-page .incident {
+    border: 1px solid var(--line);
+    border-left-width: 3px;
+    border-radius: var(--radius-sm);
+    padding: 16px 18px;
+    margin-bottom: 10px;
+    background: var(--surface);
+}
+
+.status-page .incident.warn { border-left-color: var(--warn); }
+.status-page .incident.danger { border-left-color: var(--bad); }
+.status-page .incident.info,
+.status-page .incident.primary,
+.status-page .incident.success,
+.status-page .incident.secondary,
+.status-page .incident.light,
+.status-page .incident.dark { border-left-color: var(--maint); }
+
+.status-page .incident-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.status-page .incident-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.status-page .incident-badge {
+    flex-shrink: 0;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 3px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+    color: var(--maint);
+    background: color-mix(in srgb, var(--maint) 16%, transparent);
+}
+
+.status-page .incident-body {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.55;
+}
+
+.status-page .incident-body p { margin: 0 0 8px; }
+.status-page .incident-body p:last-child { margin-bottom: 0; }
+
+.status-page .incident-badge-resolved {
+    color: var(--muted);
+    background: color-mix(in srgb, var(--muted) 16%, transparent);
+}
+
+.status-page .site-logo-fallback {
+    display: block;
+    background: var(--brand);
+    border-radius: 9px;
+}
+
+.status-page .incident-time {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--quiet);
+}
+
+.status-page .group {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+
+.status-page .group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 13px 16px;
+    background: var(--surface);
+}
+
+.status-page .group-name {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.status-page .monitor {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--line);
+    background: var(--surface-2);
+}
+
+.status-page .monitor-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Status is never colour alone: dot + word, so it survives a monochrome
+   renderer and a colourblind reader. */
+.status-page .pill {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 999px;
+}
+
+.status-page .pill .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.status-page .pill.up { color: var(--ok); background: color-mix(in srgb, var(--ok) 15%, transparent); }
+.status-page .pill.down { color: var(--bad); background: color-mix(in srgb, var(--bad) 15%, transparent); }
+.status-page .pill.degraded { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
+.status-page .pill.maintenance { color: var(--maint); background: color-mix(in srgb, var(--maint) 15%, transparent); }
+.status-page .pill.unknown { color: var(--muted); background: color-mix(in srgb, var(--muted) 15%, transparent); }
+
+.status-page .beats {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+.status-page .beat {
+    width: 3px;
+    height: 22px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--quiet) 45%, transparent);
+}
+
+.status-page .beat.up { background: var(--ok); }
+.status-page .beat.down { background: var(--bad); }
+.status-page .beat.maintenance { background: var(--maint); }
+.status-page .beat.pending { background: var(--warn); }
+
+.status-page .beat-time {
+    font-size: 11px;
+    color: var(--quiet);
+    min-width: 74px;
+    text-align: right;
+}
+
+.status-page .unlock {
+    max-width: 360px;
+    margin: 12vh auto;
+    padding: 28px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+}
+
+.status-page .unlock h1 {
+    margin: 0 0 4px;
+    font-size: 18px;
+}
+
+.status-page .unlock p.sub {
+    margin: 0 0 20px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.status-page .unlock input {
+    width: 100%;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 15px;
+    color: var(--fg);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+}
+
+.status-page .unlock input:focus {
+    outline: 2px solid var(--brand);
+    outline-offset: 1px;
+}
+
+.status-page .unlock button {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--brand);
+    border: 0;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.status-page .error {
+    background: color-mix(in srgb, var(--bad) 12%, transparent);
+    color: var(--bad);
+    font-size: 13px;
+    padding: 9px 11px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 14px;
+}
+
+.status-page .footer {
+    margin-top: 44px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    color: var(--quiet);
+    font-size: 13px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    align-items: center;
+}
+
+.status-page .footer a { color: var(--muted); }
+
+@media (max-width: 640px) {
+    .status-page .wrap { padding: 28px 14px 60px; }
+    .status-page .hero { padding: 24px 14px; }
+    .status-page .hero-label { font-size: 21px; }
+    .status-page .monitor { flex-wrap: wrap; }
+    .status-page .beats { width: 100%; }
+    .status-page .beat-time { display: none; }
+}
 .fleet-history-link { cursor: pointer; text-align: left; }
 .fleet-history-link:focus-visible { outline: 2px solid #9eb8cd; outline-offset: -2px; }
 .fleet-history-link:hover { text-decoration: underline; text-decoration-color: #ffffff50; text-underline-offset: 4px; }

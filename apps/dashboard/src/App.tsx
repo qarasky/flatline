@@ -18,7 +18,8 @@ import { UsersPanel } from "@/components/UsersPanel";
 import { TokenGate } from "@/components/TokenGate";
 import { SuperboardApp } from "@/components/Superboard";
 import { inviteTokenFrom, navigate, usePath } from "@/lib/router";
-import { boardRouteFrom } from "@/lib/fleet-presentation";
+import { boardRouteFrom, statusSlugFromPath } from "@/lib/fleet-presentation";
+import { StatusPageApp } from "@/components/status/StatusPageApp";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -761,14 +762,32 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
 }
 
 /**
+ * Site root: a client's status domain shows its status page; everything
+ * else is the operator dashboard.
+ *
+ * A stored operator token means "this browser is the operator", so the
+ * dashboard wins immediately — client status domains have their own origin
+ * and therefore their own (empty) token store. Without a token the host is
+ * resolved against the status-page domain map first, so a mapped client
+ * domain renders its page instead of a login gate.
+ */
+function RootRoute({ inviteToken }: { inviteToken: string | null }) {
+    const [authed] = useState(() => Boolean(getToken()));
+    if (authed) {
+        return <Dashboard inviteToken={inviteToken} />;
+    }
+    return <StatusPageApp slug={null} fallback={<Dashboard inviteToken={inviteToken} />} />;
+}
+
+/**
  * Application root.
  *
- * Routes: the monitor table at "/", the wall board at "/superboard"
- * (optionally scoped to monitor groups, e.g. "/superboard/work"), the
- * chrome-free board at "/superboard/kiosk" (same scopes, e.g.
- * "/superboard/kiosk/work"), and invite redemption at "/invite/:token".
+ * Routes: the operator dashboard at "/" (unless the host maps to a status
+ * page), public status pages at "/status/:slug", the wall board at
+ * "/superboard" (optionally group-scoped), the chrome-free board at
+ * "/superboard/kiosk", and invite redemption at "/invite/:token".
  * The route is resolved before either view mounts, so the dashboard's
- * polling never runs while the board is open.
+ * polling never runs while the board or a status page is open.
  */
 export default function App() {
     const path = usePath();
@@ -777,6 +796,15 @@ export default function App() {
 
     if (board) {
         return <SuperboardApp kiosk={board.kiosk} filter={board.filter} />;
+    }
+
+    const statusSlug = statusSlugFromPath(path);
+    if (statusSlug) {
+        return <StatusPageApp slug={statusSlug} />;
+    }
+
+    if (path === "/") {
+        return <RootRoute inviteToken={inviteToken} />;
     }
 
     return <Dashboard inviteToken={inviteToken} />;

@@ -1,9 +1,9 @@
-# Production stack: API backend, operator dashboard, public status site.
+# Production stack: API backend plus one app that serves the operator
+# dashboard and the public status pages (v2 consolidation).
 #
 # Backend origin from a browser's point of view defaults to
 # http://127.0.0.1:3001 (set BACKEND_URL to the LAN host or public origin
-# when browsers are elsewhere). The status site reaches the backend
-# container-to-container, so it needs no browser-reachable default.
+# when browsers are elsewhere).
 #
 # First run: the dashboard shows first-run setup — create the operator
 # account there. No token pasting, no seed scripts.
@@ -40,18 +40,3 @@ services:
       flatline:
         condition: service_healthy
 
-  status-site:
-    build:
-      context: .
-      dockerfile: docker/status-site.dockerfile
-      args:
-        NEXT_PUBLIC_FLATLINE_URL: ${BACKEND_URL:-http://127.0.0.1:3001}
-    image: artchsh/flatline-status:2
-    restart: unless-stopped
-    ports:
-      - "3002:3002"
-    environment:
-      FLATLINE_URL: http://flatline:3001
-    depends_on:
-      flatline:
-        condition: service_healthy

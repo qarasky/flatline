@@ -69,6 +69,10 @@ async function readJson<T>(url: string, options: FetchOptions): Promise<T> {
             ...(options.cookie ? { Cookie: options.cookie } : {}),
         },
         cache: "no-store",
+        // Server-side rendering forwards the cookie header explicitly; a
+        // browser cannot set Cookie, so same-origin requests send the unlock
+        // cookie via credentials instead. Node ignores the option.
+        credentials: options.cookie ? "omit" : "include",
         signal: options.signal,
     });
 

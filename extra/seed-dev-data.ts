@@ -1,5 +1,5 @@
 /*
- * Dev-only seeder for the Next.js status site.
+ * Dev-only seeder for local development.
  *
  * Creates one open page (with a client accent colour and a realistic beat
  * history) and one password-protected page, so both rendering paths and the

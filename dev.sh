@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Start the three Flatline dev servers, detached so they survive the shell that
+# Start the two Flatline dev servers, detached so they survive the shell that
 # launched them.
 #
 # Servers started in the foreground die whenever the session hosting them
@@ -9,10 +9,10 @@
 # machine on the LAN.
 #
 # Usage:
-#   ./dev.sh            start (or restart) all three
-#   ./dev.sh stop       stop all three
+#   ./dev.sh            start (or restart) both
+#   ./dev.sh stop       stop both
 #   ./dev.sh status     show what is listening
-#   ./dev.sh logs       tail all three logs
+#   ./dev.sh logs       tail both logs
 #
 # Node >= 26.2.0 is required by the backend.
 
@@ -23,7 +23,6 @@ LOGS="$ROOT/.dev-logs"
 DATA_DIR="${FLATLINE_DATA_DIR:-$ROOT/.dev-data}"
 
 BACKEND_PORT="${FLATLINE_BACKEND_PORT:-3001}"
-STATUS_PORT="${FLATLINE_STATUS_PORT:-3002}"
 DASH_PORT="${FLATLINE_DASHBOARD_PORT:-3003}"
 
 mkdir -p "$LOGS" "$DATA_DIR"
@@ -58,12 +57,11 @@ case "${1:-start}" in
     stop)
         echo "Stopping Flatline dev servers:"
         stop_one "dashboard" "vite --port $DASH_PORT"
-        stop_one "status site" "next start --port $STATUS_PORT"
         stop_one "backend" "tsx server/server.js"
         sleep 1
         ;;
     status)
-        for port in "$BACKEND_PORT" "$STATUS_PORT" "$DASH_PORT"; do
+        for port in "$BACKEND_PORT" "$DASH_PORT"; do
             printf '%s: %s\n' "$port" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/" 2>/dev/null || echo down)"
         done
         exit 0
@@ -82,7 +80,7 @@ echo "Starting Flatline dev servers (logs in .dev-logs/):"
 # there is something to look at.
 if [ ! -f "$DATA_DIR/kuma.db" ]; then
     echo "  seeding $DATA_DIR …"
-    if ! node --import=tsx "$ROOT/extra/seed-status-site.ts" "$DATA_DIR" >"$LOGS/seed.log" 2>&1; then
+    if ! node --import=tsx "$ROOT/extra/seed-dev-data.ts" "$DATA_DIR" >"$LOGS/seed.log" 2>&1; then
         echo "  seeding failed; see .dev-logs/seed.log"
         tail -n 5 "$LOGS/seed.log"
         exit 1
@@ -100,8 +98,8 @@ fi
     start_one "backend" npx tsx server/server.js
 )
 
-# Wait for the backend before starting the frontends: the status site is server
-# rendered and proxies to it, so it would 500 on boot otherwise.
+# Wait for the backend before starting the dashboard: it proxies to it, so the
+# first requests would fail on boot otherwise.
 for _ in $(seq 1 40); do
     if curl -s -m 2 -o /dev/null "http://127.0.0.1:$BACKEND_PORT/api/v1"; then
         break
@@ -109,20 +107,13 @@ for _ in $(seq 1 40); do
     sleep 1
 done
 
-# Public status site. Built output; run `npm run build` in the app after changes.
-(
-    cd "$ROOT/apps/status-site"
-    FLATLINE_URL="http://127.0.0.1:$BACKEND_PORT" \
-    NEXT_PUBLIC_FLATLINE_URL="http://127.0.0.1:$BACKEND_PORT" \
-    start_one "status-site" npx next start --hostname 0.0.0.0 --port "$STATUS_PORT"
-)
-
-# Operator dashboard. --host is required: Vite binds to localhost by default,
-# which is unreachable from another machine. VITE_FLATLINE_URL is baked in at
-# start, so it must be an address the browser can reach: the LAN IP, which
-# works from this machine and every other machine on the network. A hostname
-# does not resolve reliably (notably on macOS), and 127.0.0.1 would break LAN
-# browsers, so neither is used.
+# Operator dashboard and public status pages in one Vite app. --host is
+# required: Vite binds to localhost by default, which is unreachable from
+# another machine. VITE_FLATLINE_URL is baked in at start, so it must be an
+# address the browser can reach: the LAN IP, which works from this machine and
+# every other machine on the network. A hostname does not resolve reliably
+# (notably on macOS), and 127.0.0.1 would break LAN browsers, so neither is
+# used.
 LAN_IP_NOW="$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")"
 (
     cd "$ROOT/apps/dashboard"
@@ -136,8 +127,8 @@ LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || echo "this-host")"
 
 echo
 echo "  backend     http://$LAN_IP:$BACKEND_PORT"
-echo "  status site http://$LAN_IP:$STATUS_PORT/status/northwind"
 echo "  dashboard   http://$LAN_IP:$DASH_PORT"
+echo "  status page http://$LAN_IP:$DASH_PORT/status/northwind"
 echo
 echo "  ./dev.sh status   check health"
 echo "  ./dev.sh logs     follow logs"

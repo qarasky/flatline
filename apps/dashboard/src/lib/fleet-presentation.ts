@@ -331,6 +331,27 @@ function decodeSegment(segment: string): string {
 }
 
 /**
+ * Pull a status page slug out of `/status/:slug`.
+ *
+ * Public route: no operator token is involved, and the API decides what the
+ * caller may see (password-gated pages show the unlock form).
+ * @param path Current path
+ * @returns Decoded slug, or null when this is not a status route
+ */
+export function statusSlugFromPath(path: string): string | null {
+    const clean = path.replace(/\/+$/, "") || "/";
+    const match = /^\/status\/([^/]+)$/.exec(clean);
+    if (!match) {
+        return null;
+    }
+    try {
+        return decodeURIComponent(match[1]);
+    } catch {
+        return match[1];
+    }
+}
+
+/**
  * Match a comma-separated group filter against the roster's groups.
  *
  * Each entry matches a group by slug or case-insensitive exact name; only

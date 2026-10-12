@@ -1,20 +1,16 @@
-"use client";
-
 import { useState } from "react";
 
 /**
  * Password prompt for a protected status page.
  *
- * Posts to the Flatline server, which sets the unlock cookie and redirects
- * back. Kept as a component rather than a Next route handler so the cookie
- * lands on the origin that actually serves the page, which is why the form
- * is server-relative rather than pointing at this app.
+ * Posts to the Flatline API, which sets the page-scoped unlock cookie on
+ * this origin; the parent then re-fetches with `credentials: include`.
+ * Kept as a component rather than a page so the cookie lands on the origin
+ * that actually serves the page.
  */
-export function UnlockForm({ slug, error: initialError }: { slug: string; error?: string | null }) {
-    const [error, setError] = useState<string | null>(initialError ?? null);
+export function UnlockForm({ slug, onUnlocked }: { slug: string; onUnlocked: () => void }) {
+    const [error, setError] = useState<string | null>(null);
     const [pending, setPending] = useState(false);
-
-    const base = process.env.NEXT_PUBLIC_FLATLINE_URL ?? "";
 
     async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -25,7 +21,7 @@ export function UnlockForm({ slug, error: initialError }: { slug: string; error?
         const password = String(form.get("password") ?? "");
 
         try {
-            const response = await fetch(`${base}/api/v1/status-pages/unlock/${encodeURIComponent(slug)}`, {
+            const response = await fetch(`/api/v1/status-pages/unlock/${encodeURIComponent(slug)}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ password }),
@@ -39,8 +35,9 @@ export function UnlockForm({ slug, error: initialError }: { slug: string; error?
                 return;
             }
 
-            // 302 from the server means the cookie is set; reload to render it.
-            window.location.reload();
+            // 302 from the server means the cookie is set; reload the data
+            // in place rather than reloading the page.
+            onUnlocked();
         } catch {
             setError("Could not reach the status server.");
             setPending(false);
@@ -48,7 +45,7 @@ export function UnlockForm({ slug, error: initialError }: { slug: string; error?
     }
 
     return (
-        <div className="wrap">
+        <div className="status-page"><div className="wrap">
             <form className="unlock" onSubmit={onSubmit}>
                 <h1>This status page is private</h1>
                 <p className="sub">Enter the password you were given.</p>
@@ -67,6 +64,6 @@ export function UnlockForm({ slug, error: initialError }: { slug: string; error?
                     {pending ? "Checking…" : "Unlock"}
                 </button>
             </form>
-        </div>
+        </div></div>
     );
 }

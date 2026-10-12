@@ -6,13 +6,24 @@ and replacing the Vue frontend with two focused apps.
 Status: **shipped.** Phase 1 (backend) and Phase 2 (both apps) are built;
 the old Vue frontend is deleted and the backend serves JSON only.
 
+**Revision (v2 consolidation, 2026-10-12):** the separate Next.js status app
+is gone. Status pages are public routes in the dashboard SPA
+(`/status/:slug`, and the site root on host-mapped client domains). The
+original "separate app" decision bought process isolation and server
+rendering; in practice the app was 511 lines carrying a full Next.js
+runtime, every page is `noindex`, and the only no-JS consumer (curl) has the
+JSON API. The data path is unchanged: password-gated API reads, page-scoped
+unlock cookies, and the same markup and CSS, now scoped under
+`.status-page`. Cost accepted: the first paint is a loading state instead of
+server-rendered HTML.
+
 ---
 
 ## Decisions locked
 
 | Decision | Choice |
 |---|---|
-| Public status surface | **Separate app** from the private dashboard |
+| Public status surface | Public **routes in the dashboard app** (v2 consolidation; originally a separate Next.js app — revised, see below) |
 | Status pages from groups | Opt-in per group; slug pinned on create; live sync; unpublish-not-delete |
 | Aggregate "all clients" page | **Private internal view**, not a public status page |
 | Indexing | All status pages `noindex, nofollow, no robots` |
@@ -145,7 +156,7 @@ unpredictable slugs. `Disallow:` in robots.txt does **not** prevent crawling of 
 
 Two apps. The backend is frozen; this phase changes zero backend behaviour.
 
-### 2a. Public status site — Next.js (or Vite SSR), App Router
+### 2a. Public status site — Next.js (superseded in v2: now public routes in the dashboard SPA), App Router
 
 Serves both `/status/:slug` and host-based (`status.client-a.kz` → resolve by Host).
 

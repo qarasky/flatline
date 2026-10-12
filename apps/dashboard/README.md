@@ -20,6 +20,10 @@ replace the backend URL placeholder at startup via `FLATLINE_URL`.
 ## Main views
 
 - `/`: searchable grouped monitors, bulk operations, detail panels, Agents and Users.
+- `/status/:slug`: public client status pages (no operator token involved).
+  On host-mapped client domains the site root resolves the slug from the
+  request host instead. Password-gated pages show the unlock form; the page
+  refreshes every 30s while visible.
 - `/superboard`: live host metrics and compact container tiles.
 - `/superboard/kiosk`: wall-display chrome, clock and automatic fleet pagination.
 - `/superboard/kiosk/<group>`: the same board scoped to a monitor group —
