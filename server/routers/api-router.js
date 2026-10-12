@@ -18,7 +18,7 @@ const { Prometheus } = require("../prometheus");
 const Database = require("../database");
 const { UptimeCalculator } = require("../uptime-calculator");
 const { Settings } = require("../settings");
-const { storeMetrics } = require("../monitor-metrics");
+const { storeMetrics, resolveSampleTime } = require("../monitor-metrics");
 
 let router = express.Router();
 
@@ -83,12 +83,18 @@ router.all("/api/push/:pushToken", async (request, response) => {
         // Down/maintenance/recovery and legacy pushes always use the full path.
         const telemetry = request.method === "POST" && request.query.telemetry === "1" && request.body?.metrics != null;
         const now = dayjs.utc();
+        // Buffered agents deliver late samples with the time they were
+        // taken; use it when trustworthy so backfilled history is honest.
+        // The heartbeat keeps the receive-time clock either way.
+        const metrics = request.body?.metrics && typeof request.body.metrics === "object" && !Array.isArray(request.body.metrics)
+            ? request.body.metrics : null;
+        const sampleTime = resolveSampleTime(metrics?.sampledAt, now.valueOf());
         const heartbeatSpacing = Math.max(1, Math.min(30, monitor.interval / 3));
         if (telemetry && !monitor.isUpsideDown() && statusFromParam === UP && previousHeartbeat?.status === UP &&
             now.diff(dayjs.utc(previousHeartbeat.time), "millisecond") < heartbeatSpacing * 1000 &&
             !(await Monitor.isUnderMaintenance(monitor.id))) {
             try {
-                await storeMetrics(monitor.id, R.isoDateTimeMillis(now), request.body.metrics, { live: true });
+                await storeMetrics(monitor.id, sampleTime ?? R.isoDateTimeMillis(now), request.body.metrics, { live: true });
                 return response.json({ ok: true });
             } catch (e) {
                 return response.status(400).json({ ok: false, msg: `Metrics dropped: ${e.message}` });
@@ -166,7 +172,7 @@ router.all("/api/push/:pushToken", async (request, response) => {
         // only the response reflects a metrics problem.
         let metricsError = null;
         try {
-            await storeMetrics(monitor.id, bean.time, request.body?.metrics, { live: telemetry });
+            await storeMetrics(monitor.id, sampleTime ?? bean.time, request.body?.metrics, { live: telemetry });
         } catch (e) {
             metricsError = e.message;
             log.error("router", `Dropping metrics for monitor ${monitor.id}: ${e.message}`);

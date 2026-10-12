@@ -58,6 +58,7 @@ Migration: `db/knex_migrations/2026-10-0X-0000-monitor-metric.js`
 ```json
 {
     "v": 1,
+    "sampledAt": "2026-10-12T09:15:00.123Z",
     "host": { "hostname": "client-a-db-01", "os": "linux", "uptime": 864001 },
     "cpu": { "percent": 23.5, "cores": 8, "perCore": [12.1, 88.4, ...],
              "counters": { "total": 103000, "idle": 92905, "perCore": [ { "total": 51500, "idle": 46452 }, ... ] } },
@@ -89,6 +90,12 @@ Notes:
   iowait. `percent`/`perCore` travel alongside as a compat fallback for old
   backends; new servers overwrite them with windowed derivations and ignore
   the agent's numbers whenever counters are present.
+- `sampledAt` is when the agent took the sample (RFC3339, UTC). The server
+  validates it (not more than 5 minutes in the future, not older than
+  retention) and falls back to receive time otherwise — the server stays the
+  clock authority. Used so a buffered agent's backfilled samples carry their
+  real times: history stays honest about when things happened. The heartbeat
+  always uses receive time.
 - `updates` counts pending OS updates: totals only, never a package inventory.
   Absent means unknown (unsupported distro, failed check) and the board shows
   nothing; present with `total: 0` means fully updated. `security` appears
@@ -169,13 +176,24 @@ Single static binary (`CGO_ENABLED=0`), linux/amd64. No runtime dependencies.
   every 5s, Docker every 10s, pending-update counts every 4h in independent
   workers. Docker events, network counters and history charts remain
   future work. Slow collector values are cached between refreshes.
-- A capacity-one pending-sample queue drops superseded samples during a slow
-  push. One sender, bounded HTTP timeout, and capped retry backoff: never an
-  ever-growing queue of old telemetry. No ±5-second jitter on a 1Hz cadence.
+- Delivery is disk-backed (agent 1.4+): samples wait in a bounded queue
+  (`/var/lib/superboard/buffer`, cap `buffer_max_bytes`, default 32 MiB) until
+  the server accepts them, oldest-first, so backend outages and agent
+  restarts become late history instead of missing history. A backlog drains
+  at ~20 pushes/s; the oldest samples are dropped when the cap is hit. When
+  the directory cannot be used, the agent falls back to the in-memory
+  newest-wins queue. One sender, bounded HTTP timeout, capped retry backoff,
+  and one disk-buffer directory: never an ever-growing in-memory queue. No
+  ±5-second jitter on a 1Hz cadence.
+- The server archives backfilled samples at their real cadence: an archive
+  row is due when either 30 seconds of wall clock or 30 seconds of *sample
+  time* have passed since the last persist, so a drained backlog restores
+  30s-resolution history rather than collapsing into one receive-time burst.
 - The monitor's check interval must be at least 3× the agent interval (e.g.
   60s pushes against a 180s interval). Matching them flaps: a push landing
   seconds past the window reads as DOWN, then UP on arrival, every cycle.
-- Push failure backs off and then sends the newest pending sample. A failed push
+- Push failure backs off and then retries the oldest pending sample from the
+  buffer. A failed push
   is *not* reported as host-down locally — silence is the signal, and the
   server already turns silence into an alert.
 - Config file (`/etc/superboard/config.json`, mode 0600): server URL + push

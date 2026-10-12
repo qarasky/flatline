@@ -13,6 +13,42 @@ function metricTime(value) {
     return Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`);
 }
 
+/** Format epoch millis the way the database stores times (SQL, UTC). */
+function sqlTimeMillis(ms) {
+    return new Date(ms).toISOString().replace("T", " ").replace("Z", "");
+}
+
+/**
+ * Resolve an agent-supplied sample time, if it is trustworthy.
+ *
+ * Buffered agents (disk-backed send buffer) deliver telemetry late and
+ * carry the time each sample was actually taken. Use it when present so a
+ * backfilled history is honest about when things happened; reject it when
+ * absent, unparseable, obviously in the future (clock skew), or older than
+ * the retention window (it could never be archived). The caller falls back
+ * to receive time. The clock authority stays the server: agent time is an
+ * optimisation for backfill, never a requirement.
+ * @param {unknown} sampledAt Agent-provided timestamp
+ * @param {number} now Current epoch millis
+ * @returns {string|null} SQL-formatted time, or null to use receive time
+ */
+function resolveSampleTime(sampledAt, now = Date.now()) {
+    if (typeof sampledAt !== "string" || sampledAt.trim() === "") {
+        return null;
+    }
+    const parsed = metricTime(sampledAt);
+    if (!Number.isFinite(parsed)) {
+        return null;
+    }
+    if (parsed > now + 5 * 60_000) {
+        return null;
+    }
+    if (parsed < now - METRICS_RETENTION_DAYS * 24 * 3600_000) {
+        return null;
+    }
+    return sqlTimeMillis(parsed);
+}
+
 function getLatestMetrics(id) {
     const sample = latest.get(Number(id))?.sample;
     return sample ? { ...sample, cpuPeak10m: currentPeak(id) } : null;
@@ -126,7 +162,17 @@ async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
     monitorID = Number(monitorID);
     const previous = latest.get(monitorID);
     const now = Date.now();
+    const incomingTime = metricTime(time);
     let persistedAt = previous?.persistedAt ?? 0;
+    let persistedSampleTime = previous?.persistedSampleTime ?? -Infinity;
+
+    // An archive row is due when the wall clock says 30s have passed since
+    // the last persist (normal live pacing) OR when the sample clock says
+    // 30s of telemetry time have accumulated (a buffered agent draining a
+    // backlog arrives quickly; its samples still archive at their real
+    // cadence instead of collapsing into one receive-time burst).
+    const persistDue = !live || now - persistedAt >= HISTORY_INTERVAL_MS ||
+        (Number.isFinite(incomingTime) && incomingTime - persistedSampleTime >= HISTORY_INTERVAL_MS);
 
     // Server-side CPU derivation: when the agent sends raw cumulative
     // counters, percentages come from counter deltas, not the agent's
@@ -140,7 +186,6 @@ async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
     let pushCounters = previous?.pushCounters;
     let persistedCounters = previous?.persistedCounters;
     try {
-        const incomingTime = metricTime(time);
         const cur = asCounters(JSON.parse(encoded).cpu);
         if (cur && Number.isFinite(incomingTime) &&
             (!previous?.pushCounters || incomingTime >= previous.pushCounters.time)) {
@@ -153,7 +198,7 @@ async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
                 }
             }
             pushCounters = { counters: cur, time: incomingTime };
-            if (!live || now - persistedAt >= HISTORY_INTERVAL_MS) {
+            if (persistDue) {
                 if (previous?.persistedCounters) {
                     const archiveDerived = transformCounters(previous.persistedCounters.counters, cur);
                     if (archiveDerived) {
@@ -166,7 +211,7 @@ async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
             }
         } else if (cur && !previous && Number.isFinite(incomingTime)) {
             pushCounters = { counters: cur, time: incomingTime };
-            if (!live || now - persistedAt >= HISTORY_INTERVAL_MS) {
+            if (persistDue) {
                 persistedCounters = { counters: cur, time: incomingTime };
             }
         }
@@ -178,13 +223,16 @@ async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
         persistedCounters = previous?.persistedCounters;
     }
 
-    if (!live || now - persistedAt >= HISTORY_INTERVAL_MS) {
+    if (persistDue) {
         const bean = R.dispense("monitor_metric");
         bean.monitor_id = monitorID;
         bean.time = time;
         bean.payload = rowEncoded;
         await R.store(bean);
         persistedAt = now;
+        if (Number.isFinite(incomingTime)) {
+            persistedSampleTime = incomingTime;
+        }
     }
     const current = latest.get(monitorID);
     if (!current || metricTime(time) >= metricTime(current.sample.time)) {
@@ -195,7 +243,7 @@ async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
         const newer = latest.get(monitorID);
         if (newer && metricTime(time) < metricTime(newer.sample.time)) { return true; }
         latest.delete(monitorID);
-        latest.set(monitorID, { sample, persistedAt, pushCounters, persistedCounters });
+        latest.set(monitorID, { sample, persistedAt, persistedSampleTime, pushCounters, persistedCounters });
         if (latest.size > MAX_LATEST) {
             latest.delete(latest.keys().next().value);
         }
@@ -225,4 +273,5 @@ module.exports = {
     forgetMetrics,
     HISTORY_INTERVAL_MS,
     resetMetricsCache,
+    resolveSampleTime,
 };

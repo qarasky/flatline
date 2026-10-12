@@ -312,6 +312,7 @@ func collect() (*Payload, error) {
 	// Self-report rides every payload, including one-shot checks: version,
 	// uptime, dropped samples, push failures and per-collector error counts.
 	payload.Agent = agentInfoSnapshot()
+	stampSample(payload)
 
 	return payload, nil
 }

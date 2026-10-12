@@ -24,10 +24,40 @@ type Config struct {
 	// because metrics (hostnames, container names, versions) are genuinely
 	// useful recon travelling in cleartext otherwise.
 	AllowInsecure bool `json:"allow_insecure,omitempty"`
+	// BufferDir holds samples waiting for delivery (disk-backed queue).
+	// Contains hostnames and container names: keep it 0700, root-owned.
+	BufferDir string `json:"buffer_dir,omitempty"`
+	// BufferMaxBytes caps that directory; oldest samples are dropped first
+	// when full, so an endless outage cannot fill the disk.
+	BufferMaxBytes int64 `json:"buffer_max_bytes,omitempty"`
 }
 
 // Fast live telemetry; existing explicitly configured intervals are preserved.
 const DefaultIntervalSeconds = 1
+
+// DefaultBufferDir is where undelivered samples wait across restarts.
+const DefaultBufferDir = "/var/lib/superboard/buffer"
+
+// DefaultBufferMaxBytes caps the buffer at 32 MiB: at 1Hz and ~1.5KB per
+// sample that is many hours of telemetry — long enough for any realistic
+// outage, small enough to be harmless on a tiny VPS disk.
+const DefaultBufferMaxBytes = 32 << 20
+
+// bufferDir resolves the configured buffer directory, applying the default.
+func (c *Config) bufferDir() string {
+	if c.BufferDir != "" {
+		return c.BufferDir
+	}
+	return DefaultBufferDir
+}
+
+// bufferMaxBytes resolves the configured cap, applying the default.
+func (c *Config) bufferMaxBytes() int64 {
+	if c.BufferMaxBytes > 0 {
+		return c.BufferMaxBytes
+	}
+	return DefaultBufferMaxBytes
+}
 
 // DefaultConfigPath is where `install` writes and `run` reads.
 const DefaultConfigPath = "/etc/superboard/config.json"
@@ -54,6 +84,9 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if cfg.IntervalSeconds <= 0 {
 		cfg.IntervalSeconds = DefaultIntervalSeconds
+	}
+	if cfg.BufferMaxBytes < 0 {
+		cfg.BufferMaxBytes = DefaultBufferMaxBytes
 	}
 
 	return &cfg, nil

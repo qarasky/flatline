@@ -17,6 +17,8 @@ package main
 // collection attaches the reason. The board shows "unavailable" for that,
 // "no containers" for a clean empty list.
 
+import "time"
+
 /** Envelope version. Bump when fields change shape, never for additions. */
 const payloadVersion = 1
 
@@ -93,8 +95,9 @@ type AgentInfo struct {
 	// Uptime in seconds since the agent process started. A small number on
 	// a long-running host means a crash loop, not a fresh install.
 	Uptime uint64 `json:"uptime"`
-	// SamplesDropped counts samples superseded before delivery (the
-	// capacity-one queue replaced them with something newer).
+	// SamplesDropped counts samples lost before delivery: buffer evictions
+	// when the byte cap is hit, failed or corrupt buffer writes, and
+	// superseded samples in the fallback in-memory queue.
 	SamplesDropped uint64 `json:"samplesDropped,omitempty"`
 	// FailedPushes counts failed deliveries since start, including 400s the
 	// server rejected: the number is history, lastError says what happened.
@@ -167,15 +170,30 @@ type Container struct {
 // Payload is the full document POSTed as `metrics` to /api/push/:token.
 // Unknown fields are ignored server-side, so additions are safe.
 type Payload struct {
-	V              int         `json:"v"`
-	SampleInterval int         `json:"sampleInterval,omitempty"`
-	Host           Host        `json:"host"`
-	CPU            CPU         `json:"cpu"`
-	Mem            Mem         `json:"mem"`
-	Disk           []Disk      `json:"disk"`
-	GPU            GPU         `json:"gpu"`
-	Docker         []Container `json:"docker"`
-	DockerError    string      `json:"dockerError,omitempty"`
-	Updates        *Updates    `json:"updates,omitempty"`
-	Agent          *AgentInfo  `json:"agent,omitempty"`
+	V              int `json:"v"`
+	SampleInterval int `json:"sampleInterval,omitempty"`
+	// SampledAt is when this sample was taken (RFC3339, millisecond, UTC).
+	// Live agents include it so buffered backfill can carry the true sample
+	// time; the server validates it and falls back to receive time. The
+	// server stays the clock authority — this is an optimisation, never a
+	// requirement.
+	SampledAt   string      `json:"sampledAt,omitempty"`
+	Host        Host        `json:"host"`
+	CPU         CPU         `json:"cpu"`
+	Mem         Mem         `json:"mem"`
+	Disk        []Disk      `json:"disk"`
+	GPU         GPU         `json:"gpu"`
+	Docker      []Container `json:"docker"`
+	DockerError string      `json:"dockerError,omitempty"`
+	Updates     *Updates    `json:"updates,omitempty"`
+	Agent       *AgentInfo  `json:"agent,omitempty"`
+}
+
+// sampleTimeFormat is RFC3339 with milliseconds in UTC, matching the server's
+// millisecond storage precision.
+const sampleTimeFormat = "2006-01-02T15:04:05.000Z07:00"
+
+// stampSample records when the sample was taken.
+func stampSample(p *Payload) {
+	p.SampledAt = time.Now().UTC().Format(sampleTimeFormat)
 }

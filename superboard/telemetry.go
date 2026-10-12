@@ -39,8 +39,9 @@ type telemetry struct {
 // collector functions are package functions, not methods on liveCollector.
 var stats telemetry
 
-// recordDrop counts one sample superseded before it could be sent: the
-// capacity-one queue replaced it with something newer.
+// recordDrop counts one sample lost before delivery: a buffer eviction when
+// the byte cap is hit, a failed or corrupt buffer write, or a superseded
+// sample in the fallback in-memory queue.
 func (t *telemetry) recordDrop() {
 	t.samplesDropped.Add(1)
 }

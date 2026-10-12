@@ -23,9 +23,12 @@ short-window live readings, agent-side percent retained only as a compat
 fallback); agents report read-only pending-update counts rendered as
 green/yellow/red/dark-red on cards; boards are group-scoped by URL
 (`/superboard/kiosk/work`); servers can be renamed on the board via a
-right-click menu; and agents self-report health (`agent` block: version,
+right-click menu; agents self-report health (`agent` block: version,
 uptime, dropped samples, failed pushes, per-collector error counts) which
-cards surface as version text and an amber warning line.
+cards surface as version text and an amber warning line; and delivery is
+disk-backed (`/var/lib/superboard/buffer`, bounded, oldest-first drain)
+with `sampledAt` so backfilled history keeps its real timestamps — backend
+outages and agent restarts become late history instead of missing history.
 
 Still planned: private aggregate saved views, and the ranked backlog in
 [IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md) (agent self-telemetry,

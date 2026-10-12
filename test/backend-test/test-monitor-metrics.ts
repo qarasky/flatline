@@ -190,6 +190,95 @@ test("monitor metrics ingest", async (t) => {
         assert.strictEqual(bad.status, 400);
         assert.strictEqual(getLatestMetrics(monitor.id).metrics.cpu.percent, 9);
     });
+
+    await t.test("resolveSampleTime accepts sane agent times and rejects the rest", async () => {
+        const { resolveSampleTime } = require("../../server/monitor-metrics");
+        const now = Date.parse("2026-10-12T12:00:00Z");
+        assert.strictEqual(resolveSampleTime("2026-10-12T11:59:59.500Z", now), "2026-10-12 11:59:59.500");
+        assert.strictEqual(resolveSampleTime("2026-10-12 11:00:00", now), "2026-10-12 11:00:00.000");
+        assert.strictEqual(resolveSampleTime("2026-10-12T12:06:00Z", now), null, "6 minutes ahead is clock skew");
+        assert.strictEqual(resolveSampleTime("2026-09-01T00:00:00Z", now), null, "older than retention");
+        assert.strictEqual(resolveSampleTime("garbage", now), null);
+        assert.strictEqual(resolveSampleTime(undefined, now), null);
+        assert.strictEqual(resolveSampleTime(12345, now), null);
+    });
+
+    await t.test("a backfilled push stores the sample time; the heartbeat keeps receive time", async () => {
+        const { R } = require("redbean-node");
+        const { getLatestMetrics } = require("../../server/monitor-metrics");
+        const owner = await R.findOne("better_auth_user", " email = ? ", [ "admin@noreply.uptime-kuma.internal" ]);
+        const monitor = R.dispense("monitor");
+        monitor.user_id = owner.id;
+        monitor.name = "Backfill Host";
+        monitor.type = "push";
+        monitor.interval = 180;
+        monitor.retryInterval = 180;
+        monitor.timeout = 144;
+        monitor.active = 1;
+        monitor.push_token = "test-backfill-token";
+        await R.store(monitor);
+
+        const sampledAt = new Date(Date.now() - 90_000).toISOString();
+        const res = await fetch(`${base}/api/push/test-backfill-token?telemetry=1`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ metrics: { v: 1, sampledAt, cpu: { percent: 5 } } }),
+        });
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(getLatestMetrics(monitor.id).time, sampledAt.replace("T", " ").replace("Z", ""));
+
+        const Monitor = require("../../server/model/monitor");
+        const beat = await Monitor.getPreviousHeartbeat(monitor.id);
+        const beatAge = Date.now() - Date.parse(beat.time.replace(" ", "T") + "Z");
+        assert.ok(beatAge < 10_000, `heartbeat must use receive time, got age ${beatAge}ms`);
+    });
+
+    await t.test("buffered backfill archives at sample cadence, not receive-time bursts", async (st) => {
+        const { R } = require("redbean-node");
+        const { storeMetrics, resetMetricsCache } = require("../../server/monitor-metrics");
+        resetMetricsCache();
+        const owner = await R.findOne("better_auth_user", " email = ? ", [ "admin@noreply.uptime-kuma.internal" ]);
+
+        const makeHost = async (name: string, token: string) => {
+            const monitor = R.dispense("monitor");
+            monitor.user_id = owner.id;
+            monitor.name = name;
+            monitor.type = "push";
+            monitor.interval = 180;
+            monitor.retryInterval = 180;
+            monitor.timeout = 144;
+            monitor.active = 1;
+            monitor.push_token = token;
+            await R.store(monitor);
+            return monitor;
+        };
+
+        let fakeNow = Date.now();
+        st.mock.method(Date, "now", () => fakeNow);
+        const sql = (ms: number) => new Date(ms).toISOString().replace("T", " ").replace("Z", "");
+
+        // Six samples 30s apart in sample time, delivered within milliseconds
+        // of each other: each sample-gap triggers its own archive row.
+        const backfill = await makeHost("Backfill Cadence", "test-cadence-token");
+        const t0 = fakeNow - 3 * 3600_000;
+        for (let i = 0; i < 6; i++) {
+            await storeMetrics(backfill.id, sql(t0 + i * 30_000), { v: 1, cpu: { percent: 10 + i } }, { live: true });
+        }
+        const rows = await R.getAll("SELECT time FROM monitor_metric WHERE monitor_id = ? ORDER BY time", [ backfill.id ]);
+        assert.strictEqual(rows.length, 6, "one archive row per 30s of sample time");
+        assert.strictEqual(rows[0].time, sql(t0));
+        assert.strictEqual(rows[5].time, sql(t0 + 150_000));
+
+        // Control: six samples one second apart in sample time collapse to
+        // the normal 30s archive cadence (first sample only, wall clock is
+        // frozen).
+        const dense = await makeHost("Dense Backfill", "test-dense-token");
+        for (let i = 0; i < 6; i++) {
+            await storeMetrics(dense.id, sql(t0 + i * 1000), { v: 1, cpu: { percent: 20 + i } }, { live: true });
+        }
+        const denseRows = await R.getAll("SELECT time FROM monitor_metric WHERE monitor_id = ? ORDER BY time", [ dense.id ]);
+        assert.strictEqual(denseRows.length, 1, "sub-30s samples must not flood history");
+    });
 });
 
 test("monitor metrics read API", async (t) => {

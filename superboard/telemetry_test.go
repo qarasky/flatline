@@ -82,7 +82,7 @@ func TestPayloadAgentOmittedWhenAbsent(t *testing.T) {
 func TestPayloadAgentRoundTrip(t *testing.T) {
 	p := Payload{V: 1, Agent: &AgentInfo{
 		Version: "1.4.0", Uptime: 90, SamplesDropped: 2, FailedPushes: 3,
-		LastError: "push: connection refused",
+		LastError:       "push: connection refused",
 		CollectorErrors: map[string]uint64{"gpu": 1, "updates": 4},
 	}}
 	data, err := json.Marshal(p)

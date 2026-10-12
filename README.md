@@ -112,7 +112,9 @@ External monitor check frequencies do not change.
 1-second-fresh RAM, independent slower collectors, read-only pending-update
 counts every 4h, and a Telegraf-style self-report (version, uptime, dropped
 samples, collector errors) that cards surface as version + warning lines.
-Latest samples are cached; live history is
+Delivery is disk-backed: backend outages and agent restarts become late
+history instead of missing history, and backfilled samples carry their real
+times (`sampledAt`). Latest samples are cached; live history is
 sampled every 30s and retained for 30 days. Existing explicit agent intervals
 are preserved until changed. Upgrade the backend before enabling 1Hz agents.
 

@@ -197,6 +197,17 @@ func cmdUninstall(configPath string) error {
 		log.Printf("superboard: no running agent to stop (%s)", strings.TrimSpace(string(out)))
 	}
 
+	// The buffer is a cache of undelivered telemetry: worthless once the
+	// agent is gone, and it contains hostnames/container names. Resolve a
+	// custom path from the config before deleting it.
+	bufferDir := DefaultBufferDir
+	if cfg, err := loadConfig(configPath); err == nil {
+		bufferDir = cfg.bufferDir()
+	}
+	if err := os.RemoveAll(bufferDir); err != nil {
+		log.Printf("superboard: buffer cleanup: %v", err)
+	}
+
 	if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove config: %w", err)
 	}

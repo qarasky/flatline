@@ -224,9 +224,11 @@ func (c *liveCollector) sample() (*Payload, error) {
 	// Temp rides along from the slow sensor worker; the cached average
 	// deliberately does not carry its own copy.
 	cpuVal.Temp = c.cpuTemp
-	return &Payload{V: payloadVersion, Host: h,
+	payload := &Payload{V: payloadVersion, Host: h,
 		CPU:  cpuVal,
 		Mem:  Mem{Total: vm.Total, Used: vm.Used, Percent: vm.UsedPercent, Temp: c.memTemp},
 		Disk: c.disk, GPU: c.gpu, Docker: c.docker, DockerError: c.dockerError,
-		Updates: c.updates, Agent: agentInfoSnapshot()}, nil
+		Updates: c.updates, Agent: agentInfoSnapshot()}
+	stampSample(payload)
+	return payload, nil
 }

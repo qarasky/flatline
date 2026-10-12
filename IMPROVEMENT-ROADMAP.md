@@ -9,7 +9,7 @@ shipped (and listed in the deploy record once rolled out).
 ## Status
 
 - [x] 1.1 Agent self-telemetry — shipped in agent 1.4.0
-- [ ] 1.2 Disk-backed send buffer
+- [x] 1.2 Disk-backed send buffer — shipped in agent 1.4.0 (with server-side `sampledAt`)
 - [ ] 2.1 Threshold alerts
 - [ ] 2.2 Multi-tier retention
 - [ ] 3.1 Network throughput, disk I/O, load average
@@ -65,6 +65,15 @@ Validated by the review — keep these decisions, they are not gaps:
 
 ### 1.2 Disk-backed send buffer
 
+- **Status:** shipped in agent 1.4.0 (2026-10-12). Shape as built: one file
+  per sample (atomic temp+rename, 0600 in a 0700 dir, seq-named), oldest
+  dropped past the byte cap, oldest-first drain paced at ~20 pushes/s,
+  corrupt entries skipped and counted, crash debris cleaned on open,
+  in-memory fallback when the directory is unusable, `uninstall` removes
+  the directory. Server side: `sampledAt` accepted when sane (≤5 min future,
+  within retention) with receive-time fallback, and archive gating now also
+  fires on 30s of *sample time* so a drained backlog restores its real
+  cadence instead of collapsing into a receive-time burst.
 - **Why:** the last data-integrity hole. Today a capacity-one queue drops
   superseded samples: a backend restart or network outage erases the window,
   and an agent restart loses up to 30s of unarchived samples. All three

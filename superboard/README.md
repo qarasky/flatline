@@ -20,8 +20,17 @@ history), so a one-second 95% spike archives as ~3%, not 95%. The agent's
 own percent fields remain as fallback for old backends. GPU refreshes every
 5s, Docker every 10s, disk/temperatures every 30s, pending-update counts
 every 4h (read-only, counts only, absent when unknown). Slow collectors
-cannot block fast sampling. Failed sends back off with only the newest
-sample queued.
+cannot block fast sampling.
+
+Samples are delivered through a **disk-backed buffer**
+(`/var/lib/superboard/buffer`, capped by `buffer_max_bytes`, default 32 MiB):
+a backend outage or agent restart becomes late history instead of missing
+history. The sender drains oldest-first at ~20 pushes/s; when the cap is hit
+the oldest samples are dropped and counted. If the directory cannot be used
+(permissions, read-only root), the agent falls back to the in-memory
+newest-wins queue and logs it. Every sample carries `sampledAt`, so the
+server archives a drained backlog at its real 30s cadence. `uninstall`
+removes the buffer directory.
 
 Every payload carries an `agent` self-report, Telegraf-style: version,
 process uptime, dropped samples, failed pushes with the last error reason,
