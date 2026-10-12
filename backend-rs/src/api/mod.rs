@@ -1,11 +1,16 @@
 //! HTTP API: router assembly, the error envelope, and the handlers.
 
+pub mod api_keys;
 pub mod auth;
+pub mod badges;
 pub mod metrics;
 pub mod monitors;
 pub mod notifications;
+pub mod openapi;
 pub mod push;
+pub mod status_pages;
 pub mod stream;
+pub mod web;
 
 use axum::extract::DefaultBodyLimit;
 use axum::extract::State;
@@ -72,14 +77,55 @@ impl IntoResponse for ApiError {
 
 /// Assemble the API router.
 ///
-/// Public: `/api/v1/auth/setup`, `/api/v1/auth/login` (the sign-in flow
-/// cannot require a token) and the agent push endpoint, which
-/// authenticates by monitor token in the path. Everything else under
-/// `/api/v1` needs a bearer token.
+/// Public: the sign-in flow, the agent push endpoint (monitor token in the
+/// path), badges, the status-page read API, `robots.txt` and the OpenAPI
+/// document. Everything else under `/api/v1` needs a bearer token. The SPA
+/// fallback answers the remaining GET/HEAD paths when a build exists.
 pub fn router(state: AppState) -> Router {
     let public = Router::new()
         .route("/api/v1/auth/setup", get(auth::setup_status))
-        .route("/api/v1/auth/login", post(auth::login));
+        .route("/api/v1/auth/login", post(auth::login))
+        .route("/api/v1/openapi.json", get(openapi::document))
+        .route("/robots.txt", get(status_pages::robots))
+        .route(
+            "/api/status-page/resolve-host",
+            get(status_pages::resolve_host),
+        )
+        .route("/api/status-page/{slug}", get(status_pages::page))
+        .route(
+            "/api/status-page/heartbeat/{slug}",
+            get(status_pages::heartbeat),
+        )
+        .route(
+            "/api/status-page/{slug}/incident-history",
+            get(status_pages::incident_history),
+        )
+        .route(
+            "/api/status-page/{slug}/manifest.json",
+            get(status_pages::manifest),
+        )
+        .route("/api/status-page/{slug}/badge", get(status_pages::badge))
+        .route(
+            "/api/v1/status-pages/unlock/{slug}",
+            post(status_pages::unlock),
+        )
+        .route("/api/badge/{id}/status", get(badges::status))
+        .route("/api/badge/{id}/uptime", get(badges::uptime))
+        .route(
+            "/api/badge/{id}/uptime/{duration}",
+            get(badges::uptime_duration),
+        )
+        .route("/api/badge/{id}/ping", get(badges::ping))
+        .route(
+            "/api/badge/{id}/ping/{duration}",
+            get(badges::ping_duration),
+        )
+        .route("/api/badge/{id}/avg-response", get(badges::avg_response))
+        .route(
+            "/api/badge/{id}/avg-response/{duration}",
+            get(badges::avg_response_duration),
+        )
+        .route("/api/badge/{id}/response", get(badges::response));
 
     // The agent's metrics payloads are capped like the Node backend's JSON
     // parser: 256kb, high enough for a big sample, low enough to reject
@@ -123,6 +169,14 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/notifications/{id}",
             patch(notifications::patch).delete(notifications::delete),
         )
+        .route(
+            "/api/v1/api-keys",
+            get(api_keys::list).post(api_keys::create),
+        )
+        .route(
+            "/api/v1/api-keys/{id}",
+            patch(api_keys::patch).delete(api_keys::delete),
+        )
         .route("/api/v1/monitor-types", get(monitor_types))
         .route("/api/v1/events", get(stream::events))
         .route_layer(middleware::from_fn_with_state(
@@ -130,7 +184,11 @@ pub fn router(state: AppState) -> Router {
             crate::auth::require_token,
         ));
 
-    public.merge(agent).merge(authed).with_state(state)
+    public
+        .merge(agent)
+        .merge(authed)
+        .fallback(web::fallback)
+        .with_state(state)
 }
 
 /// One row of the health query: monitor plus its latest heartbeat status.

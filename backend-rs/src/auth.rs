@@ -34,6 +34,23 @@ pub fn mint_token() -> String {
 struct TokenRow {
     id: i64,
     hash: String,
+    active: i64,
+    expires: Option<String>,
+}
+
+/// A token is usable while it is active and not expired. An unparseable
+/// expiry is ignored, like the Node `dayjs` check.
+fn token_valid(row: &TokenRow) -> bool {
+    if row.active == 0 {
+        return false;
+    }
+    if let Some(expires) = &row.expires
+        && let Some(at) = crate::metrics::metric_time(expires)
+        && at < chrono::Utc::now().timestamp_millis()
+    {
+        return false;
+    }
+    true
 }
 
 /// Verify a bearer token against the token table.
@@ -48,30 +65,35 @@ pub async fn verify_token(pool: &SqlitePool, token: &str) -> bool {
     }
 
     let digest = hash_token(token);
-    let found: Option<TokenRow> =
-        sqlx::query_as("SELECT id, hash FROM tokens WHERE hash = ? AND scheme = 'sha256'")
-            .bind(&digest)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten();
+    let found: Option<TokenRow> = sqlx::query_as(
+        "SELECT id, hash, active, expires FROM tokens WHERE hash = ? AND scheme = 'sha256'",
+    )
+    .bind(&digest)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
 
     if let Some(row) = found {
+        if !token_valid(&row) {
+            return false;
+        }
         touch(pool, row.id).await;
         return true;
     }
 
-    let imported: Vec<TokenRow> =
-        match sqlx::query_as("SELECT id, hash FROM tokens WHERE scheme = 'bcrypt'")
-            .fetch_all(pool)
-            .await
-        {
-            Ok(rows) => rows,
-            Err(_) => return false,
-        };
+    let imported: Vec<TokenRow> = match sqlx::query_as(
+        "SELECT id, hash, active, expires FROM tokens WHERE scheme = 'bcrypt'",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(_) => return false,
+    };
 
     for row in imported {
-        if bcrypt::verify(token, &row.hash).unwrap_or(false) {
+        if token_valid(&row) && bcrypt::verify(token, &row.hash).unwrap_or(false) {
             touch(pool, row.id).await;
             return true;
         }

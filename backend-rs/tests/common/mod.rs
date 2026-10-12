@@ -44,12 +44,15 @@ pub async fn harness() -> Harness {
     );
     let metrics =
         flatline_backend::metrics::Metrics::new(pool.clone(), std::sync::Arc::clone(&events));
+    let status_page_secret =
+        flatline_backend::status_pages::ensure_secret(&config.data_dir).unwrap();
     let state = AppState {
         pool: pool.clone(),
         config: std::sync::Arc::new(config),
         events,
         engine,
         metrics,
+        status_page_secret: std::sync::Arc::new(status_page_secret),
     };
 
     Harness {

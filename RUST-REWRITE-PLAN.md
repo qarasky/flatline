@@ -2,7 +2,7 @@
 
 Status: **started.** Scope locked with the operator on 2026-10-12. The
 existing Node backend and the Go agent stay untouched until cutover; this
-document is the contract the Rust rewrite is built against. M0–M3 are
+document is the contract the Rust rewrite is built against. M0–M4 are
 shipped in `backend-rs/`.
 
 ## Locked scope (from the operator's answers)
@@ -141,8 +141,17 @@ backend-rs/
   rollup + raw prune jobs, and the 400 "metrics dropped" contract on the
   push route. One deliberate fix over the Node original: the hourly tier
   keeps GPU/VRAM averages (Node silently dropped them). 66 tests.
-- **M4 — completeness:** badges, OpenAPI, API keys, status-page read API
-  (if not vetoed), SPA serving.
+- **M4 — completeness (shipped):** status badges (`status`, `uptime`,
+  `ping`, `avg-response`, `response` and the page badge; shields-style SVG
+  rendered in-crate — flat/flat-square exact, other styles fall back to
+  flat), API keys for the Agents panel (active/expires on the token table,
+  plaintext shown once, disable/revoke honored by auth), the OpenAPI
+  document rewritten for the Rust surface and served unauthenticated, the
+  minimal read-only status-page API (config, heartbeats, incident history
+  with cursors, manifest, badge, host mapping, password gate with signed
+  cookies), and SPA serving from `FLATLINE_WEB_DIST` with the Node routing
+  contract (assets immutable, shell fallback, API paths stay JSON). Served
+  from disk rather than embedded: the image copies the build. 82 tests.
 - **M5 — importer + cutover tooling:** old-DB importer, Docker image,
   compose update, cutover/rollback runbook.
 - **M6 — parity verification:** contract tests against both backends on a

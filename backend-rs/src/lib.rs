@@ -6,6 +6,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod badges;
 pub mod config;
 pub mod db;
 pub mod events;
@@ -13,6 +14,7 @@ pub mod heartbeats;
 pub mod metrics;
 pub mod monitors;
 pub mod notify;
+pub mod status_pages;
 
 use std::sync::Arc;
 
@@ -27,6 +29,8 @@ pub struct AppState {
     pub events: Arc<events::Events>,
     pub engine: Arc<monitors::engine::Engine>,
     pub metrics: Arc<metrics::Metrics>,
+    /// Signing secret for status-page unlock cookies (owner-only file).
+    pub status_page_secret: Arc<String>,
 }
 
 /// Open the database, run migrations, and make sure an admin token exists.
@@ -44,6 +48,7 @@ pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
     let events = events::Events::new();
     let engine = monitors::engine::Engine::new(pool.clone(), Arc::clone(&events));
     let metrics = metrics::Metrics::new(pool.clone(), Arc::clone(&events));
+    let status_page_secret = status_pages::ensure_secret(&config.data_dir)?;
 
     Ok(AppState {
         pool,
@@ -51,6 +56,7 @@ pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
         events,
         engine,
         metrics,
+        status_page_secret: Arc::new(status_page_secret),
     })
 }
 

@@ -1,0 +1,1675 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "Flatline API",
+        "version": "1.0.0",
+        "description": "Monitoring API for automation and agents. Every response includes an `ok` boolean. Authenticate with `Authorization: Bearer <token>`; every token is full-permission (no scopes). Failures use `{ ok, error, message }`. The agent push endpoint and the status-page read API are public."
+    },
+    "servers": [
+        {
+            "url": "/",
+            "description": "This instance"
+        }
+    ],
+    "components": {
+        "securitySchemes": {
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "description": "API token minted under Agents, or the admin token from data/initial-token.txt."
+            }
+        },
+        "parameters": {
+            "page": {
+                "name": "page",
+                "in": "query",
+                "required": false,
+                "schema": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 1
+                },
+                "description": "1-based page number."
+            },
+            "perPage": {
+                "name": "perPage",
+                "in": "query",
+                "required": false,
+                "schema": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200,
+                    "default": 50
+                },
+                "description": "Rows per page, capped at 200."
+            },
+            "monitorId": {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": {
+                    "type": "integer"
+                },
+                "description": "Monitor id owned by the token's user."
+            }
+        },
+        "schemas": {
+            "Error": {
+                "type": "object",
+                "required": [
+                    "ok",
+                    "error",
+                    "message"
+                ],
+                "properties": {
+                    "ok": {
+                        "type": "boolean",
+                        "const": false
+                    },
+                    "error": {
+                        "type": "string",
+                        "enum": [
+                            "bad_request",
+                            "unauthorized",
+                            "forbidden",
+                            "rate_limited",
+                            "not_found",
+                            "server_error"
+                        ]
+                    },
+                    "message": {
+                        "type": "string"
+                    }
+                }
+            },
+            "Pagination": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "integer"
+                    },
+                    "perPage": {
+                        "type": "integer"
+                    },
+                    "total": {
+                        "type": "integer"
+                    },
+                    "totalPages": {
+                        "type": "integer"
+                    },
+                    "hasMore": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "Monitor": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "integer",
+                        "description": "1 = up, 0 = down, 2 = pending, 3 = maintenance"
+                    },
+                    "ping": {
+                        "type": [
+                            "number",
+                            "null"
+                        ]
+                    },
+                    "url": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "interval": {
+                        "type": "integer"
+                    },
+                    "active": {
+                        "type": "boolean"
+                    },
+                    "lastCheck": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "lastMessage": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "uptime24h": {
+                        "type": [
+                            "number",
+                            "null"
+                        ]
+                    },
+                    "uptime7d": {
+                        "type": [
+                            "number",
+                            "null"
+                        ]
+                    },
+                    "uptime30d": {
+                        "type": [
+                            "number",
+                            "null"
+                        ]
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                        }
+                    },
+                    "metricCpuThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "description": "Alert when server-derived CPU stays at or above this percent for 60s. null disables."
+                    },
+                    "metricRamThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "description": "Alert when RAM stays at or above this percent for 60s. null disables."
+                    },
+                    "metricDiskThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "description": "Alert when the fullest reported mount stays at or above this percent for 60s. null disables."
+                    }
+                }
+            },
+            "Heartbeat": {
+                "type": "object",
+                "properties": {
+                    "time": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "ping": {
+                        "type": [
+                            "number",
+                            "null"
+                        ]
+                    },
+                    "msg": {
+                        "type": "string"
+                    },
+                    "important": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "MonitorInput": {
+                "type": "object",
+                "required": [
+                    "name",
+                    "type"
+                ],
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "See GET /api/v1/monitor-types"
+                    },
+                    "url": {
+                        "type": "string"
+                    },
+                    "interval": {
+                        "type": "integer",
+                        "minimum": 20
+                    },
+                    "maxretries": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "active": {
+                        "type": "boolean"
+                    },
+                    "notificationIDList": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "boolean"
+                        },
+                        "description": "Map of notification id to enabled."
+                    },
+                    "metricCpuThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "description": "1-100, or null to disable. See the Monitor schema for alert semantics."
+                    },
+                    "metricRamThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ]
+                    },
+                    "metricDiskThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ]
+                    }
+                }
+            }
+        },
+        "responses": {
+            "Unauthorized": {
+                "description": "Missing, invalid, expired or inactive token.",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/Error"
+                        }
+                    }
+                }
+            },
+            "Forbidden": {
+                "description": "Token lacks the required scope.",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/Error"
+                        }
+                    }
+                }
+            },
+            "BadRequest": {
+                "description": "Invalid request.",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/Error"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "security": [
+        {
+            "bearerAuth": []
+        }
+    ],
+    "paths": {
+        "/api/v1/monitors/{id}/metrics/summary": {
+            "get": {
+                "summary": "Load history charts and percentile statistics",
+                "description": "Requires read scope. Extracts only CPU/RAM/first-GPU/first-VRAM scalars. Windows up to 7 days read raw archived snapshots (normally 30s) with nearest-rank percentiles; longer windows up to 17520 hours (2 years) read hourly rollups (min/max/average per metric), where percentiles describe hourly averages while peak stays the true maximum of the underlying readings. Returns at most 240 chart buckets, stats with count/min/max/mean/p90/p95/p99, coverage timestamps, and capped=true if the newest 50,000-row safety limit truncates the window. GPU/VRAM are null when unavailable. No data is represented as missing, not zero.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    },
+                    {
+                        "name": "hours",
+                        "in": "query",
+                        "schema": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "maximum": 17520,
+                            "default": 1
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Window, coverage, percentile statistics, and bucket-average chart series"
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "404": {
+                        "description": "No such monitor"
+                    }
+                }
+            }
+        },
+        "/api/v1/events": {
+            "get": {
+                "summary": "Live monitor and telemetry changes",
+                "description": "Requires read scope and Authorization header (never a URL token). SSE JSON data frames: ready, heartbeat {monitorId,patch}, metrics {monitorId,time,metrics}, invalidate, unauthorized. On ready/invalidate, resnapshot REST before applying buffered deltas. No replay log. Keepalive every 15s; credentials revalidated every 15s; reconnect after 15 minutes. Bounded to 8 streams/key, 128 total, and 256KiB pending output per stream.",
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "metrics",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "0",
+                                "1"
+                            ],
+                            "default": "1"
+                        },
+                        "description": "0 suppresses telemetry for ordinary monitor dashboards."
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Live event stream",
+                        "content": {
+                            "text/event-stream": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid/missing token or banned account"
+                    },
+                    "403": {
+                        "description": "Missing read scope"
+                    },
+                    "429": {
+                        "description": "Connection or API rate limit"
+                    }
+                }
+            }
+        },
+        "/api/v1": {
+            "get": {
+                "summary": "API index",
+                "description": "Machine-readable list of endpoints. Requires the `read` scope.",
+                "security": [],
+                "responses": {
+                    "200": {
+                        "description": "Endpoint index"
+                    }
+                }
+            }
+        },
+        "/api/v1/openapi.json": {
+            "get": {
+                "summary": "This document",
+                "security": [],
+                "responses": {
+                    "200": {
+                        "description": "OpenAPI description"
+                    }
+                }
+            }
+        },
+        "/api/v1/health": {
+            "get": {
+                "summary": "Aggregate health across all monitors",
+                "description": "Requires the `read` scope. Counts up/down/pending/maintenance/paused.",
+                "responses": {
+                    "200": {
+                        "description": "Health summary",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "health": {
+                                            "type": "object",
+                                            "properties": {
+                                                "total": {
+                                                    "type": "integer"
+                                                },
+                                                "up": {
+                                                    "type": "integer"
+                                                },
+                                                "down": {
+                                                    "type": "integer"
+                                                },
+                                                "pending": {
+                                                    "type": "integer"
+                                                },
+                                                "maintenance": {
+                                                    "type": "integer"
+                                                },
+                                                "paused": {
+                                                    "type": "integer"
+                                                },
+                                                "status": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                        "up",
+                                                        "down"
+                                                    ]
+                                                },
+                                                "downMonitors": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "object"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/monitor-types": {
+            "get": {
+                "summary": "Supported monitor types",
+                "description": "Requires the `read` scope. Returns each valid `type`, plus `writableFields`, the allowlist accepted by POST and PATCH.",
+                "responses": {
+                    "200": {
+                        "description": "Type definitions"
+                    }
+                }
+            }
+        },
+        "/api/v1/monitors": {
+            "get": {
+                "summary": "List monitors",
+                "description": "Requires the `read` scope. Scoped to the token's user. Supports `?status=`, `?tag=`, `?active=`, `?q=`, `?page=`, `?perPage=`.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/page"
+                    },
+                    {
+                        "$ref": "#/components/parameters/perPage"
+                    },
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "up",
+                                "down",
+                                "pending",
+                                "maintenance"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "tag",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "name": "active",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "true",
+                                "false"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "q",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Substring match on name or url."
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated monitors",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "count": {
+                                            "type": "integer"
+                                        },
+                                        "monitors": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/components/schemas/Monitor"
+                                            }
+                                        },
+                                        "pagination": {
+                                            "$ref": "#/components/schemas/Pagination"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Create a monitor",
+                "description": "Requires the `write` scope. Unknown fields are ignored and returned in `ignoredFields`; `user_id` is never writable. Starts checking immediately unless `active` is false.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/MonitorInput"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "monitor": {
+                                            "$ref": "#/components/schemas/Monitor"
+                                        },
+                                        "ignoredFields": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    }
+                }
+            }
+        },
+        "/api/v1/monitors/{id}": {
+            "get": {
+                "summary": "Get one monitor",
+                "description": "Requires the `read` scope.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Monitor",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "monitor": {
+                                            "$ref": "#/components/schemas/Monitor"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "No such monitor for this user."
+                    }
+                }
+            },
+            "patch": {
+                "summary": "Update a monitor",
+                "description": "Requires the `write` scope. Only supplied fields change. `type` cannot be changed after creation.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Updated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "monitor": {
+                                            "$ref": "#/components/schemas/Monitor"
+                                        },
+                                        "ignoredFields": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "404": {
+                        "description": "No such monitor for this user."
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Delete a monitor",
+                "description": "Requires the `write` scope. For groups, `?deleteChildren=true` also deletes descendants; otherwise they are unlinked and kept.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    },
+                    {
+                        "name": "deleteChildren",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "true",
+                                "false"
+                            ]
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "deleted": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "integer"
+                                            }
+                                        },
+                                        "count": {
+                                            "type": "integer"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/monitors/{id}/heartbeats": {
+            "get": {
+                "summary": "Recent heartbeats",
+                "description": "Requires the `read` scope. `?limit` defaults to 100, max 1000.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1000,
+                            "default": 100
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Heartbeats, newest first",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "monitorId": {
+                                            "type": "integer"
+                                        },
+                                        "count": {
+                                            "type": "integer"
+                                        },
+                                        "total": {
+                                            "type": "integer"
+                                        },
+                                        "heartbeats": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/components/schemas/Heartbeat"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/notifications": {
+            "get": {
+                "summary": "List notification configs",
+                "description": "Requires the `read` scope. `telegramBotToken` is redacted. Only the `telegram` type exists in this build.",
+                "responses": {
+                    "200": {
+                        "description": "Notifications with secrets redacted"
+                    }
+                }
+            }
+        },
+        "/api/v1/monitors/{id}/metrics/latest": {
+            "get": {
+                "summary": "Latest metrics sample",
+                "description": "Requires the `read` scope. 404 when the monitor has no samples yet.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Most recent sample",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "monitorId": {
+                                            "type": "integer"
+                                        },
+                                        "time": {
+                                            "type": "string"
+                                        },
+                                        "metrics": {
+                                            "type": "object"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "No samples yet, or no such monitor."
+                    }
+                }
+            }
+        },
+        "/api/v1/monitors/{id}/metrics": {
+            "get": {
+                "summary": "Windowed metrics history",
+                "description": "Requires the `read` scope. Newest first. `hours` defaults to 24, max 168. At most 1000 rows; `capped` reports truncation.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    },
+                    {
+                        "name": "hours",
+                        "in": "query",
+                        "schema": {
+                            "type": "number",
+                            "minimum": 0,
+                            "default": 24,
+                            "maximum": 168
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Metrics window",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "monitorId": {
+                                            "type": "integer"
+                                        },
+                                        "count": {
+                                            "type": "integer"
+                                        },
+                                        "capped": {
+                                            "type": "boolean"
+                                        },
+                                        "hours": {
+                                            "type": "number"
+                                        },
+                                        "metrics": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "time": {
+                                                        "type": "string"
+                                                    },
+                                                    "metrics": {
+                                                        "type": "object"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/setup": {
+            "get": {
+                "summary": "First-run setup status",
+                "description": "Unauthenticated. True when no account exists yet.",
+                "responses": {
+                    "200": {
+                        "description": "Setup state"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/login": {
+            "post": {
+                "summary": "Password login",
+                "description": "Unauthenticated, rate limited. Verifies password (+ TOTP when enrolled) and mints a full-scope token returned exactly once. Login tokens expire after 30 days.",
+                "responses": {
+                    "200": {
+                        "description": "Token and account"
+                    },
+                    "401": {
+                        "description": "Bad credentials, or TOTP required (error two_factor_required)."
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/me": {
+            "get": {
+                "summary": "Own account",
+                "description": "Requires the `read` scope.",
+                "responses": {
+                    "200": {
+                        "description": "Account plus token scopes"
+                    }
+                }
+            }
+        },
+        "/api/v1/monitors/metrics/latest": {
+            "get": {
+                "summary": "Latest metrics samples, batched",
+                "description": "Requires the `read` scope. One query for up to 200 monitors; unknown ids and monitors without samples come back as null entries. Register before /monitors/{id}/metrics/latest so Express does not read \"metrics\" as an id.",
+                "parameters": [
+                    {
+                        "name": "ids",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "example": "4,5,6"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Samples keyed by monitor id, null where missing"
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    }
+                }
+            }
+        },
+        "/api/v1/api-keys": {
+            "get": {
+                "summary": "List API keys (secrets never returned).",
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Mint an API key. The plaintext token is returned exactly once.",
+                "responses": {
+                    "201": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/api-keys/{id}": {
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "integer"
+                    }
+                }
+            ],
+            "patch": {
+                "summary": "Enable or disable an API key (`active` required).",
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Revoke an API key.",
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/push/{pushToken}": {
+            "parameters": [
+                {
+                    "name": "pushToken",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "string"
+                    }
+                },
+                {
+                    "name": "msg",
+                    "in": "query",
+                    "schema": {
+                        "type": "string",
+                        "default": "OK"
+                    }
+                },
+                {
+                    "name": "ping",
+                    "in": "query",
+                    "schema": {
+                        "type": "number"
+                    }
+                },
+                {
+                    "name": "status",
+                    "in": "query",
+                    "schema": {
+                        "type": "string",
+                        "enum": [
+                            "up",
+                            "down"
+                        ],
+                        "default": "up"
+                    }
+                },
+                {
+                    "name": "telemetry",
+                    "in": "query",
+                    "schema": {
+                        "type": "string",
+                        "enum": [
+                            "1"
+                        ]
+                    },
+                    "description": "POST only: 1Hz telemetry fast path."
+                }
+            ],
+            "get": {
+                "summary": "Legacy push: records a heartbeat.",
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Push with an optional `metrics` body. A metrics problem answers 400 while the heartbeat stays recorded.",
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/badge/{id}/status": {
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "integer"
+                    }
+                }
+            ],
+            "get": {
+                "summary": "Monitor status badge (SVG).",
+                "responses": {
+                    "200": {
+                        "description": "SVG badge.",
+                        "content": {
+                            "image/svg+xml": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/badge/{id}/uptime/{duration}": {
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "integer"
+                    }
+                }
+            ],
+            "get": {
+                "summary": "Uptime badge (SVG); duration like `24h`, default 24h.",
+                "responses": {
+                    "200": {
+                        "description": "SVG badge.",
+                        "content": {
+                            "image/svg+xml": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/badge/{id}/ping/{duration}": {
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "integer"
+                    }
+                }
+            ],
+            "get": {
+                "summary": "Average ping badge (SVG); duration like `24h`, default 24h.",
+                "responses": {
+                    "200": {
+                        "description": "SVG badge.",
+                        "content": {
+                            "image/svg+xml": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/badge/{id}/avg-response/{duration}": {
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "integer"
+                    }
+                }
+            ],
+            "get": {
+                "summary": "Average response badge (SVG); hours, default 24, max 720.",
+                "responses": {
+                    "200": {
+                        "description": "SVG badge.",
+                        "content": {
+                            "image/svg+xml": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/badge/{id}/response": {
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "integer"
+                    }
+                }
+            ],
+            "get": {
+                "summary": "Latest response badge (SVG).",
+                "responses": {
+                    "200": {
+                        "description": "SVG badge.",
+                        "content": {
+                            "image/svg+xml": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/status-page/resolve-host": {
+            "get": {
+                "summary": "Resolve a hostname to a status page slug (public).",
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/status-page/{slug}": {
+            "parameters": [
+                {
+                    "name": "slug",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "string"
+                    }
+                }
+            ],
+            "get": {
+                "summary": "Status page config, pinned incidents and public groups (password gated).",
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/status-page/heartbeat/{slug}": {
+            "parameters": [
+                {
+                    "name": "slug",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "string"
+                    }
+                }
+            ],
+            "get": {
+                "summary": "Public heartbeat lists and 24h uptime per monitor (password gated).",
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/status-page/{slug}/incident-history": {
+            "parameters": [
+                {
+                    "name": "slug",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "string"
+                    }
+                },
+                {
+                    "name": "cursor",
+                    "in": "query",
+                    "schema": {
+                        "type": "string"
+                    }
+                }
+            ],
+            "get": {
+                "summary": "Cursor-paginated incident history (password gated).",
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/status-pages/unlock/{slug}": {
+            "parameters": [
+                {
+                    "name": "slug",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "string"
+                    }
+                }
+            ],
+            "post": {
+                "summary": "Unlock a password-protected status page; sets the `fl_status_auth` cookie.",
+                "responses": {
+                    "302": {
+                        "description": "Unlocked; redirects back."
+                    },
+                    "401": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok"
+                                    ],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

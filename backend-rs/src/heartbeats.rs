@@ -243,6 +243,57 @@ pub async fn record(
     })
 }
 
+/// Uptime for one arbitrary window (badges, status pages), same
+/// time-weighted rules as [`uptime_windows`].
+pub async fn uptime_window(
+    pool: &SqlitePool,
+    monitor_id: i64,
+    window_seconds: i64,
+) -> sqlx::Result<Option<f64>> {
+    let start = (Utc::now() - ChronoDuration::seconds(window_seconds))
+        .format("%Y-%m-%d %H:%M:%S%.3f")
+        .to_string();
+
+    let (up, down): (f64, f64) = sqlx::query_as(
+        "WITH relevant AS (
+             SELECT time, status, 0 AS before_window
+             FROM heartbeats WHERE monitor_id = ? AND time >= ?
+             UNION ALL
+             SELECT time, status, 1 AS before_window FROM (
+                 SELECT time, status FROM heartbeats
+                 WHERE monitor_id = ? AND time < ?
+                 ORDER BY time DESC, id DESC LIMIT 1
+             )
+         ),
+         ordered AS (
+             SELECT status,
+                    CASE WHEN before_window = 1 THEN julianday(?) ELSE julianday(time) END AS t0,
+                    julianday(COALESCE(LEAD(time) OVER (ORDER BY time), 'now')) AS t1
+             FROM relevant
+         )
+         SELECT
+             COALESCE(SUM(CASE WHEN status = 1 THEN MAX(0.0, t1 - MAX(t0, julianday(?))) END), 0.0) * 86400.0,
+             COALESCE(SUM(CASE WHEN status = 0 THEN MAX(0.0, t1 - MAX(t0, julianday(?))) END), 0.0) * 86400.0
+         FROM ordered",
+    )
+    .bind(monitor_id)
+    .bind(&start)
+    .bind(monitor_id)
+    .bind(&start)
+    .bind(&start)
+    .bind(&start)
+    .bind(&start)
+    .fetch_one(pool)
+    .await?;
+
+    let total = up + down;
+    if total <= 0.0 {
+        Ok(None)
+    } else {
+        Ok(Some((up / total).clamp(0.0, 1.0)))
+    }
+}
+
 /// All three SPA windows in one pass over the last 30 days of heartbeats.
 ///
 /// The status of a beat holds until the next beat; the newest beat holds
