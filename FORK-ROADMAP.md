@@ -9,9 +9,11 @@ The sections below retain early investigation and migration notes; old stack
 descriptions and unchecked rebrand lists are historical, not the current UI.
 The active stack is an API-only Node backend and a single React/Vite app that
 serves both the operator dashboard and the public status pages (v2
-consolidation: the standalone Next.js status site was removed), plus a Go
+consolidation: the standalone Next.js status site was removed, and the
+backend serves the built SPA itself — one container, one origin), plus a Go
 host agent. See [README.md](README.md) for current
-setup instructions and fictional-data screenshots.
+setup instructions and fictional-data screenshots. A Rust-backend rewrite
+was assessed separately: [RUST-BACKEND-ASSESSMENT.md](RUST-BACKEND-ASSESSMENT.md).
 
 Delivered since the initial frontend cutover: bearer-authenticated SSE,
 1Hz telemetry, 30-second archival, clickable server history with p90/p95/p99,
