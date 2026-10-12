@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { SyntheticEvent } from "react";
 import { ApiError, createMonitor, fetchMonitorTypes, updateMonitor, type MonitorSummary } from "@/lib/api";
-import { COMMON_FIELDS, SCHEDULING_FIELDS, TYPE_SCHEMAS, defaultsFor, fieldsFor, schemaFor, type FieldDef } from "@/lib/monitor-schema";
+import { ALERT_THRESHOLD_FIELDS, COMMON_FIELDS, SCHEDULING_FIELDS, TYPE_SCHEMAS, defaultsFor, fieldsFor, schemaFor, type FieldDef } from "@/lib/monitor-schema";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -178,6 +178,13 @@ export function MonitorForm({
             payload[k] = v;
         }
 
+        // Thresholds are always sent, null when cleared: an empty field means
+        // "disable this alert", and a partial PATCH that omitted the key
+        // would silently keep the old value.
+        for (const field of ALERT_THRESHOLD_FIELDS) {
+            payload[field.key] = values[field.key] ?? null;
+        }
+
         try {
             if (isEdit && initial?.id) {
                 const res = await updateMonitor(initial.id, payload);
@@ -249,6 +256,20 @@ export function MonitorForm({
                         {advanced.length === 0 ? (
                             <p className="text-xs text-quiet md:col-span-2">Scheduling and group options. Defaults are usually right.</p>
                         ) : null}
+                    </div>
+                ) : null}
+                {showAdvanced ? (
+                    <div className="mt-3 rounded-md border border-border p-3">
+                        <p className="mb-2 text-xs font-semibold tracking-wide text-quiet uppercase">Metric alert thresholds</p>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            {ALERT_THRESHOLD_FIELDS.map((f) => (
+                                <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => set(f.key, v)} />
+                            ))}
+                        </div>
+                        <p className="mt-2 text-xs text-quiet">
+                            Push agents only. The server alerts when a value stays at or above its threshold for 60s,
+                            repeats at most every 30 minutes, and declares recovery 5 points below. Empty disables.
+                        </p>
                     </div>
                 ) : null}
             </div>

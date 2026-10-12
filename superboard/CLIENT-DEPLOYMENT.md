@@ -25,6 +25,9 @@ via arguments/environment, or captured. The folder and ignore rules are unchange
   disk location is unsuitable.
 - Configured `interval_seconds` remains 1 on all five hosts; 30-second archival
   and per-host group linking are unchanged.
+- Metric threshold alerts are **server-side**: they activate with the backend
+  deploy alone, no agent upgrade needed. Per-host thresholds are configured in
+  the monitor edit form (Advanced → Metric alert thresholds).
 
 ## Provisioning record — 2026-10-09
 

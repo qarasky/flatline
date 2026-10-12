@@ -54,6 +54,14 @@ non-docker collector errors, with the full detail (per-collector counts, last
 push error) in the tooltip. Docker collector failures keep their existing
 single line in the containers section instead.
 
+The monitor edit form (Advanced → Metric alert thresholds) configures
+per-server CPU/RAM/disk percentage thresholds. Evaluation is server-side at
+ingest: 60-second debounce, 30-minute cooldown while sustained, recovery
+declared 5 points below the threshold, and messages sent through the
+monitor's linked notifications. Clearing a field disables that alert. No
+agent upgrade is needed — thresholds read the metrics the server already
+has.
+
 Container tiles use three columns and roughly nine visible slots. More than
 nine containers loop vertically; up to six problems are pinned. Hover/focus
 pauses motion and reduced-motion preferences disable animation. Red means a

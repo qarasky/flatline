@@ -8,12 +8,21 @@ const HISTORY_INTERVAL_MS = 30_000;
 const { recordCPU, currentPeak, forgetCPU, resetCPU } = require("./cpu-peak");
 const { asCounters, transformCounters } = require("./cpu-counters");
 
+/**
+ * Parse a stored timestamp (SQL or ISO) into epoch millis.
+ * @param {string|number} value Timestamp to parse
+ * @returns {number} Epoch millis, or NaN when unparseable
+ */
 function metricTime(value) {
     const iso = String(value).replace(" ", "T");
     return Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`);
 }
 
-/** Format epoch millis the way the database stores times (SQL, UTC). */
+/**
+ * Format epoch millis the way the database stores times (SQL, UTC).
+ * @param {number} ms Epoch millis
+ * @returns {string} SQL-formatted timestamp
+ */
 function sqlTimeMillis(ms) {
     return new Date(ms).toISOString().replace("T", " ").replace("Z", "");
 }
@@ -49,16 +58,30 @@ function resolveSampleTime(sampledAt, now = Date.now()) {
     return sqlTimeMillis(parsed);
 }
 
+/**
+ * The most recent cached sample for a monitor, with the rolling CPU peak.
+ * @param {number} id Monitor id
+ * @returns {?object} Sample plus cpuPeak10m, or null when nothing cached
+ */
 function getLatestMetrics(id) {
     const sample = latest.get(Number(id))?.sample;
     return sample ? { ...sample, cpuPeak10m: currentPeak(id) } : null;
 }
 
+/**
+ * Drop the cached sample and CPU peak state for a monitor.
+ * @param {number} id Monitor id
+ * @returns {void}
+ */
 function forgetMetrics(id) {
     latest.delete(Number(id));
     forgetCPU(id);
 }
 
+/**
+ * Clear every cached sample and CPU peak (tests, shutdown).
+ * @returns {void}
+ */
 function resetMetricsCache() {
     latest.clear();
     resetCPU();
@@ -130,6 +153,7 @@ function roundPercent(value) {
  * records the core count from the snapshot that was actually measured.
  * @param {object} metrics Decoded metrics object (mutated)
  * @param {{ percent: number, perCore: number[] | null, cores: number }} derived Transform result
+ * @returns {void}
  */
 function applyDerivedCPU(metrics, derived) {
     metrics.cpu = metrics.cpu && typeof metrics.cpu === "object" ? metrics.cpu : {};
@@ -137,9 +161,7 @@ function applyDerivedCPU(metrics, derived) {
     if (derived.perCore) {
         metrics.cpu.perCore = derived.perCore.map(roundPercent);
         metrics.cpu.cores = derived.perCore.length;
-    } else if (Number.isFinite(metrics.cpu.cores)) {
-        metrics.cpu.cores = metrics.cpu.cores;
-    } else if (derived.cores) {
+    } else if (!Number.isFinite(metrics.cpu.cores) && derived.cores) {
         metrics.cpu.cores = derived.cores;
     }
 }
@@ -241,7 +263,9 @@ async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
         // Warming a new peak window is asynchronous; another push may have
         // committed a newer latest sample in the meantime.
         const newer = latest.get(monitorID);
-        if (newer && metricTime(time) < metricTime(newer.sample.time)) { return true; }
+        if (newer && metricTime(time) < metricTime(newer.sample.time)) {
+            return true;
+        }
         latest.delete(monitorID);
         latest.set(monitorID, { sample, persistedAt, persistedSampleTime, pushCounters, persistedCounters });
         if (latest.size > MAX_LATEST) {

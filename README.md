@@ -26,6 +26,10 @@ for the full list of changes.
   from workload health.
 - See pending OS update counts per host (`No updates` / `Updates: N` /
   `Security Updates: N`), read-only, from agent 1.3.
+- Get paged on sustained resource pressure: per-server CPU / RAM / disk
+  thresholds evaluated server-side, with 60-second debounce, 30-minute
+  cooldown, hysteresis, and explicit recovery messages through the same
+  Telegram path as host alerts.
 - Spot agent trouble at a glance: version, dropped samples, failed pushes and
   per-collector error counts travel in every payload and render on the card
   when something is off.
@@ -80,6 +84,8 @@ SFTP, NTP, Postgres, and Redis, plus maintenance windows, proxy support, and 2FA
   Redis, RabbitMQ, Kafka, SFTP, NTP, Oracle DB and more
 - Telegram notifications with templates and MarkdownV2
 - REST API v1 with token scopes and a self-describing OpenAPI document
+- Server-side metric threshold alerts (CPU / RAM / disk) with debounce,
+  cooldown and recovery messages
 - Multi-user with single-use invite links
 - Multiple status pages, maintenance windows, tags, proxy support, 2FA
 - Configurable check intervals; 1Hz host telemetry does not accelerate website checks

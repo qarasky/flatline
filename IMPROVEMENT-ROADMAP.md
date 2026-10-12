@@ -10,7 +10,7 @@ shipped (and listed in the deploy record once rolled out).
 
 - [x] 1.1 Agent self-telemetry — shipped in agent 1.4.0
 - [x] 1.2 Disk-backed send buffer — shipped in agent 1.4.0 (with server-side `sampledAt`)
-- [ ] 2.1 Threshold alerts
+- [x] 2.1 Threshold alerts — shipped server-side (Phase 5)
 - [ ] 2.2 Multi-tier retention
 - [ ] 3.1 Network throughput, disk I/O, load average
 - [ ] 3.2 Per-container CPU / memory
@@ -94,6 +94,13 @@ Validated by the review — keep these decisions, they are not gaps:
 
 ### 2.1 Threshold alerts (server-side)
 
+- **Status:** shipped (2026-10-12), spec'd as SUPERBOARD-SPEC.md Phase 5.
+  Deviations from the sketch: three nullable integer columns instead of a
+  JSON blob; constants fixed (60s debounce, 5-point hysteresis, 30-minute
+  cooldown) rather than configurable; evaluation uses receive time so a
+  backfilled backlog cannot replay old alert timelines; maintenance
+  suppresses delivery but not tracking; hysteresis band is deliberately
+  silent (no repeat can claim "88% ≥ 90%"). No agent change required.
 - **Why:** the biggest visible feature gap. Beszel's core value is exactly
   this; we deliberately ship host-down only, and maintenance windows exist but
   only gate heartbeat alerts. We now derive CPU/mem/disk/GPU server-side at

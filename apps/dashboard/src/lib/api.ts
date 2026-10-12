@@ -103,6 +103,10 @@ export interface MonitorSummary {
     interval: number;
     weight?: number;
     parent?: number | null;
+    // Server-side metric alert thresholds (Superboard Phase 5), null when disabled.
+    metricCpuThreshold?: number | null;
+    metricRamThreshold?: number | null;
+    metricDiskThreshold?: number | null;
     uptime24h: number | null;
     uptime7d: number | null;
     uptime30d: number | null;

@@ -171,6 +171,27 @@
                         "items": {
                             "type": "object"
                         }
+                    },
+                    "metricCpuThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "description": "Alert when server-derived CPU stays at or above this percent for 60s. null disables."
+                    },
+                    "metricRamThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "description": "Alert when RAM stays at or above this percent for 60s. null disables."
+                    },
+                    "metricDiskThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "description": "Alert when the fullest reported mount stays at or above this percent for 60s. null disables."
                     }
                 }
             },
@@ -231,6 +252,25 @@
                             "type": "boolean"
                         },
                         "description": "Map of notification id to enabled."
+                    },
+                    "metricCpuThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "description": "1-100, or null to disable. See the Monitor schema for alert semantics."
+                    },
+                    "metricRamThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ]
+                    },
+                    "metricDiskThreshold": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ]
                     }
                 }
             }

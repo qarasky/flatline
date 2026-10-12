@@ -6,7 +6,7 @@ glance. Built for the wall monitor, not the desk: the operator should be able
 to see from across the room why a server has high load — or just enjoy looking
 at it.
 
-Status: **shipped — Phases 1–4.** See "As built" at the end of each phase for
+Status: **shipped — Phases 1–5.** See "As built" at the end of each phase for
 the differences between this design and the code.
 
 ---
@@ -403,6 +403,75 @@ distinct from the dense table: this is the NOC wall, not the operator desk.
   snapshots, so unarchived spikes before restart cannot be reconstructed.
   `cpuPeak10m: {percent, at} | null` is additive REST/SSE sample metadata; agent
   payloads and existing metric rows are unchanged. No agent upgrade is needed.
+
+---
+
+## Phase 5 — Metric threshold alerts
+
+Server-side, evaluated at ingest from the values the server already derives
+(CPU) or receives (RAM, disk). Alert-only: no monitor status flips, no
+heartbeat rows — the existing host-down path stays the only thing that can
+take a monitor DOWN.
+
+### Configuration
+
+- Three per-monitor integer fields, 1–100, empty = disabled:
+  `metricCpuThreshold`, `metricRamThreshold`, `metricDiskThreshold`
+  (columns `metric_cpu_threshold`, `metric_ram_threshold`,
+  `metric_disk_threshold`). Set through the monitor edit form (Advanced →
+  Metric thresholds) or the REST PATCH allowlist. Group-level defaults are
+  deliberately not in v1.
+- Disk compares the fullest reported mount; the alert names it.
+
+### Semantics (locked)
+
+- Alert when the value stays at or above the threshold continuously for
+  **60 seconds** (debounce). A one-second spike never pages anyone.
+- Recovery when the value falls to **threshold − 5 points** or below
+  (hysteresis), so values hovering at the boundary do not flap.
+- While still breached, the alert repeats at most every **30 minutes**
+  (cooldown). A recovery message is sent only when an alert for that breach
+  episode actually went out; suppressed episodes stay silent.
+- Evaluation uses receive time, not `sampledAt`: a backfilled backlog
+  arriving compressed must not replay old alert timelines; outages are
+  already covered by the host-down path.
+- Maintenance windows suppress delivery (state still tracks reality), like
+  they suppress heartbeat notifications.
+- Notification text: `[name] [⚠️ Metric] CPU 94.2% ≥ threshold 90%` and
+  `[name] [✅ Metric] CPU recovered: 72.1% (threshold 90%)`, sent through
+  the monitor's linked notification list. Templates receive a
+  `heartbeatJSON` marker (`metricAlert: true`) so they can label the event.
+- State is in-memory per monitor (bounded, 512): an agent or backend restart
+  may re-send one alert after the debounce. Thresholds are for live
+  conditions; history keeps the evidence.
+
+### Where evaluation runs
+
+`server/metric-alerts.js`, called from the push route after a metrics store
+succeeds, fire-and-forget (never blocks or fails a push), and only when at
+least one threshold is configured. It reads the latest cached sample — the
+server-derived values — so it never re-derives CPU windows itself.
+
+### As built
+
+- Storage is three nullable integer columns, not a JSON blob: simpler to
+  validate (`monitor-service.normaliseMonitorPayload` clamps to 1–100,
+  anything else stores NULL = disabled), simpler to query, and the edit form
+  gets three plain number inputs.
+- Constants live in the module: `DEBOUNCE_MS` 60s, `COOLDOWN_MS` 30min,
+  `HYSTERESIS` 5 points. Not configurable in v1.
+- Hysteresis band (threshold−5 < value < threshold) is silent: the episode
+  stays open but no repeat fires, because a repeat would print
+  "88% ≥ 90%". Recovery is only declared at or below threshold−5.
+- Missing readings (an agent that stops sending one metric) never fake a
+  recovery; the episode is left untouched.
+- A recovery message is sent only when an alert for that episode actually
+  went out; fully suppressed episodes stay silent. Maintenance windows
+  suppress delivery, not tracking.
+- Telegram templates get `heartbeatJSON.metricAlert = true` and render
+  status "⚠️ Metric" instead of the misleading "⚠️ Test" fallback.
+- State map is bounded at 512 monitors, evicting oldest-first like the CPU
+  peak tracker.
 
 ---
 

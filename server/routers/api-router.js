@@ -19,6 +19,7 @@ const Database = require("../database");
 const { UptimeCalculator } = require("../uptime-calculator");
 const { Settings } = require("../settings");
 const { storeMetrics, resolveSampleTime } = require("../monitor-metrics");
+const { evaluateMetricAlerts } = require("../metric-alerts");
 
 let router = express.Router();
 
@@ -95,6 +96,9 @@ router.all("/api/push/:pushToken", async (request, response) => {
             !(await Monitor.isUnderMaintenance(monitor.id))) {
             try {
                 await storeMetrics(monitor.id, sampleTime ?? R.isoDateTimeMillis(now), request.body.metrics, { live: true });
+                // Fire-and-forget: alerts must never delay or fail an ingest.
+                void evaluateMetricAlerts(monitor).catch((e) =>
+                    log.error("metric-alerts", `Evaluation failed for monitor ${monitor.id}: ${e.message}`));
                 return response.json({ ok: true });
             } catch (e) {
                 return response.status(400).json({ ok: false, msg: `Metrics dropped: ${e.message}` });
@@ -173,6 +177,11 @@ router.all("/api/push/:pushToken", async (request, response) => {
         let metricsError = null;
         try {
             await storeMetrics(monitor.id, sampleTime ?? bean.time, request.body?.metrics, { live: telemetry });
+            if (request.body?.metrics != null) {
+                // Same fire-and-forget contract as the telemetry fast path.
+                void evaluateMetricAlerts(monitor).catch((e) =>
+                    log.error("metric-alerts", `Evaluation failed for monitor ${monitor.id}: ${e.message}`));
+            }
         } catch (e) {
             metricsError = e.message;
             log.error("router", `Dropping metrics for monitor ${monitor.id}: ${e.message}`);

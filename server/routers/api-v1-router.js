@@ -84,6 +84,9 @@ const MONITOR_WRITABLE_FIELDS = new Set([
     "upsideDown",
     "invertUpsideDown",
     "resendNotification",
+    "metricCpuThreshold",
+    "metricRamThreshold",
+    "metricDiskThreshold",
 
     // http / websocket
     "wsIgnoreSecWebsocketAcceptHeader",
@@ -351,6 +354,11 @@ async function monitorToJSON(monitor, withUptime = true) {
     // round trip per monitor. Both are non-sensitive layout metadata.
     obj.weight = monitor.weight ?? 0;
     obj.parent = monitor.parent ?? null;
+    // Metric threshold alerts (Phase 5): exposed so the edit form can
+    // prefill and API consumers can read the configuration.
+    obj.metricCpuThreshold = monitor.metric_cpu_threshold ?? null;
+    obj.metricRamThreshold = monitor.metric_ram_threshold ?? null;
+    obj.metricDiskThreshold = monitor.metric_disk_threshold ?? null;
 
     if (withUptime) {
         try {
@@ -893,7 +901,9 @@ router.get("/api/v1/monitors/:id/metrics/latest", tokenAuth("read"), async (req,
 router.get("/api/v1/monitors/:id/metrics/summary", tokenAuth("read"), async (req, res) => {
     try {
         const monitor = await loadMonitor(req, res, req.params.id);
-        if (!monitor) { return; }
+        if (!monitor) {
+            return;
+        }
         const hours = Number(req.query.hours ?? 1);
         if (!Number.isFinite(hours) || hours <= 0 || hours > 168) {
             return fail(res, 400, "bad_request", "`hours` must be positive and at most 168.");

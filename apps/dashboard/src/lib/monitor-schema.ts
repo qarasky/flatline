@@ -69,6 +69,18 @@ export const SCHEDULING_FIELDS: FieldDef[] = [
     { key: "parent", label: "Group", kind: "number", help: "Parent group monitor id.", advanced: true },
 ];
 
+/**
+ * Server-side metric alert thresholds (Superboard Phase 5). Push agents
+ * only: values arrive with metrics. Empty disables. The server alerts when
+ * the value stays at or above the threshold for 60 seconds and declares
+ * recovery 5 points below it.
+ */
+export const ALERT_THRESHOLD_FIELDS: FieldDef[] = [
+    { key: "metricCpuThreshold", label: "CPU %", kind: "number", placeholder: "90", help: "Sustained for 60s." },
+    { key: "metricRamThreshold", label: "RAM %", kind: "number", placeholder: "90", help: "Sustained for 60s." },
+    { key: "metricDiskThreshold", label: "Disk %", kind: "number", placeholder: "90", help: "Fullest mount, sustained for 60s." },
+];
+
 const HTTP_AUTH: FieldDef[] = [
     { key: "basic_auth_user", label: "Basic auth user", kind: "text", advanced: true },
     { key: "basic_auth_pass", label: "Basic auth password", kind: "password", advanced: true },

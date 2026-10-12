@@ -91,7 +91,13 @@ class NotificationProvider {
 
         let serviceStatus = "⚠️ Test";
         if (heartbeatJSON !== null) {
-            serviceStatus = heartbeatJSON["status"] === DOWN ? "🔴 Down" : "✅ Up";
+            if (heartbeatJSON.metricAlert) {
+                // Metric threshold alerts are neither up nor down: the host
+                // is reachable, one resource is breaching its threshold.
+                serviceStatus = "⚠️ Metric";
+            } else {
+                serviceStatus = heartbeatJSON["status"] === DOWN ? "🔴 Down" : "✅ Up";
+            }
         }
 
         const context = {

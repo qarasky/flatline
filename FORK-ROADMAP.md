@@ -29,6 +29,9 @@ cards surface as version text and an amber warning line; and delivery is
 disk-backed (`/var/lib/superboard/buffer`, bounded, oldest-first drain)
 with `sampledAt` so backfilled history keeps its real timestamps — backend
 outages and agent restarts become late history instead of missing history.
+Metric threshold alerts (Phase 5) evaluate server-side at ingest with
+60s debounce, 5-point hysteresis, 30-minute cooldown and explicit recovery
+messages, configured per monitor in the edit form.
 
 Still planned: private aggregate saved views, and the ranked backlog in
 [IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md) (agent self-telemetry,

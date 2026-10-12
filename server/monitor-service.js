@@ -43,6 +43,9 @@ const CAMEL_TO_SNAKE_COLUMNS = {
     ntpStratumThreshold: "ntp_stratum_threshold",
     ntpTimeOffsetThreshold: "ntp_time_offset_threshold",
     ntpRootDispersionThreshold: "ntp_root_dispersion_threshold",
+    metricCpuThreshold: "metric_cpu_threshold",
+    metricRamThreshold: "metric_ram_threshold",
+    metricDiskThreshold: "metric_disk_threshold",
 };
 
 /**
@@ -57,6 +60,16 @@ const JSON_SERIALISED_FIELDS = [
     "conditions",
     "rabbitmqNodes",
     "accepted_statuscodes_json",
+];
+
+/**
+ * Metric threshold columns (snake_case), validated as 1-100 integers.
+ * @type {string[]}
+ */
+const METRIC_THRESHOLD_COLUMNS = [
+    "metric_cpu_threshold",
+    "metric_ram_threshold",
+    "metric_disk_threshold",
 ];
 
 /**
@@ -98,6 +111,7 @@ async function updateMonitorNotification(monitorID, notificationIDList) {
  * and frontend-only keys identically.
  * @param {object} payload Raw monitor object from a form or API body
  * @returns {object} Cleaned payload, safe to copy onto a bean
+ * @throws {Error} When accepted status codes are not all strings
  */
 function normaliseMonitorPayload(payload) {
     const out = { ...payload };
@@ -142,6 +156,16 @@ function normaliseMonitorPayload(payload) {
     if (out.port !== undefined) {
         const parsed = parseInt(out.port);
         out.port = isNaN(parsed) ? null : parsed;
+    }
+
+    // Metric thresholds are integers 1-100; anything else (blank, zero,
+    // out of range, garbage) stores as NULL = disabled. An operator's typo
+    // must disable the alert, never fire it at the wrong bound.
+    for (const key of METRIC_THRESHOLD_COLUMNS) {
+        if (out[key] !== undefined) {
+            const parsed = parseInt(out[key]);
+            out[key] = Number.isFinite(parsed) && parsed >= 1 && parsed <= 100 ? parsed : null;
+        }
     }
 
     if (out.proxyId !== undefined) {
