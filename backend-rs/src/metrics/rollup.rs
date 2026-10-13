@@ -42,6 +42,17 @@ pub const HOURLY_RETENTION_DAYS: i64 = 730;
 pub const CHUNK_HOURS: usize = 6;
 /// Raw rows fetched per query, bounding memory and lock time per page.
 pub const ROWS_PER_PAGE: i64 = 5000;
+/// Hours of raw evidence the repair sweep verifies per run.
+///
+/// The sweep exists for damage the dirty markers cannot see (a pre-existing
+/// gap, a marker write that failed). It walks the raw window in windows this
+/// wide, one per run, so a full sweep costs about a day of runs instead of
+/// scanning the whole window on every run.
+pub const REPAIR_WINDOW_HOURS: i64 = 24;
+/// The newest complete hours are re-verified every run, wherever the sweep is.
+pub const REPAIR_OVERLAP_HOURS: i64 = 2;
+/// State name of the repair sweep cursor.
+const REPAIR_CURSOR: &str = "repair_cursor";
 
 #[derive(Debug, Default)]
 pub struct RollupResult {
@@ -54,6 +65,10 @@ pub struct RollupResult {
     /// Expired raw pairs kept because no bucket covers them yet: the next
     /// run folds them first.
     pub skipped_raw: u64,
+    /// Hours of raw evidence whose counts were compared with their buckets.
+    /// Bounded per run except on the first run after the state exists, which
+    /// reconciles the whole retained window once.
+    pub verified_hours: i64,
 }
 
 /// Floor epoch millis to the start of its UTC hour.
@@ -171,7 +186,134 @@ struct HourlyBucketRow {
     samples: i64,
 }
 
-/// Fold one raw row into the running accumulators.
+
+/// The stored repair cursor, or `None` when the sweep has never run.
+async fn read_repair_cursor(pool: &SqlitePool) -> sqlx::Result<Option<i64>> {
+    let value: Option<String> =
+        sqlx::query_scalar("SELECT value FROM metrics_rollup_state WHERE name = ?")
+            .bind(REPAIR_CURSOR)
+            .fetch_optional(pool)
+            .await?;
+    Ok(value
+        .as_deref()
+        .and_then(metric_time)
+        .map(hour_start))
+}
+
+/// Persist the repair cursor.
+async fn write_repair_cursor(pool: &SqlitePool, hour: i64) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO metrics_rollup_state (name, value) VALUES (?, ?)
+         ON CONFLICT (name) DO UPDATE SET value = excluded.value",
+    )
+    .bind(REPAIR_CURSOR)
+    .bind(sql_time_millis(hour))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Forget the repair sweep cursor.
+///
+/// The next run then reconciles the whole retained window once, like the
+/// first run after this state was introduced — the escape hatch when
+/// coverage is suspected to be wrong (tests, or an operator after restoring
+/// a database).
+pub async fn reset_rollup_state(pool: &SqlitePool) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM metrics_rollup_state WHERE name = ?")
+        .bind(REPAIR_CURSOR)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// The next repair window: a bounded span of complete hours, walking
+/// backwards from the newest hour and cycling over the raw window.
+///
+/// The first run after this state exists (a fresh database, or the upgrade)
+/// reconciles the whole retained window once — bounded by the 30-day raw
+/// retention, not by how long the process has been up — so a fresh import
+/// does not wait out a full sweep cycle to get its long tier.
+///
+/// `cycle_floor` is the oldest hour with any raw evidence: hours below the
+/// retention boundary may hold survivors whose bucket is missing, and those
+/// must stay reachable.
+async fn next_repair_window(
+    pool: &SqlitePool,
+    cycle_floor: i64,
+    newest_hour: i64,
+) -> sqlx::Result<(i64, i64)> {
+    let Some(cursor) = read_repair_cursor(pool).await? else {
+        write_repair_cursor(pool, newest_hour).await?;
+        return Ok((cycle_floor, newest_hour));
+    };
+
+    let start = cycle_floor.max(cursor - REPAIR_WINDOW_HOURS * 3_600_000);
+    let end = start.max(newest_hour.min(cursor));
+    let next = if start <= cycle_floor {
+        newest_hour
+    } else {
+        start
+    };
+    write_repair_cursor(pool, next).await?;
+    Ok((start, end))
+}
+
+/// Grouped raw counts per (monitor, hour) inside one window.
+async fn counts_in(
+    pool: &SqlitePool,
+    start: i64,
+    end: i64,
+) -> sqlx::Result<Vec<(i64, String, i64)>> {
+    sqlx::query_as(
+        "SELECT monitor_id, substr(replace(time, 'T', ' '), 1, 13) || ':00:00' AS hour, COUNT(*)
+         FROM metrics_raw WHERE time >= ? AND time < ?
+         GROUP BY monitor_id, hour",
+    )
+    .bind(sql_time_lower_bound(start))
+    .bind(sql_time_millis(end))
+    .fetch_all(pool)
+    .await
+}
+
+/// Mark every (monitor, hour) in grouped counts that needs a fold.
+///
+/// Shared by the repair sweep and the recency overlap: both compare the raw
+/// row count of an hour with its bucket, with the same guards as the dirty
+/// path (never downgrade a richer bucket, leave the boundary hour alone).
+fn mark_due_from_counts(
+    rows: &[(i64, String, i64)],
+    boundary_hour: i64,
+    stored: &HashMap<(i64, i64), i64>,
+    raw_counts: &mut HashMap<(i64, i64), i64>,
+    needs: &mut HashSet<(i64, i64)>,
+) {
+    for (monitor_id, hour, samples) in rows {
+        let Some(hour) = metric_time(hour).map(hour_start) else {
+            continue;
+        };
+        let key = (*monitor_id, hour);
+        raw_counts.insert(key, *samples);
+        let stored_samples = stored.get(&key).copied().unwrap_or(-1);
+        if hour <= boundary_hour && stored_samples >= 0 {
+            // The boundary hour is the one an unaligned prune could have
+            // split: a rebuild would replace a complete aggregate with the
+            // survivors. A *missing* bucket is different — the survivors are
+            // the only record left, so they are folded.
+            continue;
+        }
+        if stored_samples > *samples {
+            // The bucket covers more samples than the raw table still holds:
+            // its evidence was pruned away. A rebuild could only lose history.
+            continue;
+        }
+        if stored_samples < *samples {
+            needs.insert(key);
+        }
+    }
+}
+
+/// One raw row folded into the running accumulators.
 fn accumulate_row(
     buckets: &mut HashMap<(i64, i64), Bucket>,
     monitor_id: i64,
@@ -247,53 +389,14 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
         })
         .collect();
 
-    // Raw evidence per monitor and hour, grouped in SQL: one row per pair no
-    // matter how many samples it holds. A bucket is due when it does not
-    // exist yet or holds fewer samples than the raw rows that now exist for
-    // its hour — the case a late backfill creates and the old per-hour
-    // coverage check missed.
-    let counts: Vec<(i64, String, i64)> = sqlx::query_as(
-        "SELECT monitor_id, substr(replace(time, 'T', ' '), 1, 13) || ':00:00' AS hour, COUNT(*)
-         FROM metrics_raw WHERE time >= ? AND time < ?
-         GROUP BY monitor_id, hour",
-    )
-    .bind(&from)
-    .bind(&to_exclusive)
-    .fetch_all(pool)
-    .await?;
     let boundary_hour = raw_boundary_hour(now_ms);
     let mut raw_counts: HashMap<(i64, i64), i64> = HashMap::new();
     let mut needs: HashSet<(i64, i64)> = HashSet::new();
-    for (monitor_id, hour, samples) in &counts {
-        let Some(hour) = metric_time(hour).map(hour_start) else {
-            continue;
-        };
-        let key = (*monitor_id, hour);
-        raw_counts.insert(key, *samples);
-        let stored_samples = stored.get(&key).copied().unwrap_or(-1);
-        if hour <= boundary_hour && stored_samples >= 0 {
-            // The boundary hour is the one an unaligned prune could have
-            // split: a rebuild would replace a complete aggregate with the
-            // survivors. Keep the existing bucket; a *missing* bucket is
-            // different — the survivors are the only record left, so they
-            // are folded.
-            continue;
-        }
-        if stored_samples > *samples {
-            // The bucket covers more samples than the raw table still holds:
-            // its evidence was pruned away. A rebuild could only lose history.
-            tracing::debug!("rollup: keeping richer bucket for monitor {monitor_id} at {hour}");
-            continue;
-        }
-        if stored_samples < *samples {
-            needs.insert(key);
-        }
-    }
 
-    // Dirty markers: hours whose samples arrived after a run had already
-    // folded them. Only an hour that still has complete raw evidence can be
-    // re-folded; a marker whose raw rows were pruned is stale and just gets
-    // dropped.
+    // Dirty markers first: one indexed count per marked pair, so a late
+    // sample is folded without looking at any other hour. A marker whose raw
+    // rows were pruned, or whose hour predates the boundary, is dropped at
+    // the end of the run without touching its bucket.
     let dirty: Vec<(i64, String)> =
         sqlx::query_as("SELECT monitor_id, hour FROM metrics_rollup_dirty WHERE hour >= ? AND hour <= ?")
             .bind(&from)
@@ -301,19 +404,60 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
             .fetch_all(pool)
             .await?;
     for (monitor_id, hour) in &dirty {
-        if let Some(hour) = metric_time(hour).map(hour_start) {
-            if hour <= boundary_hour {
-                // The boundary hour may hold partial raw evidence from an
-                // unaligned prune; never rebuild it over an existing bucket.
-                continue;
-            }
-            let key = (*monitor_id, hour);
-            let stored_samples = stored.get(&key).copied().unwrap_or(-1);
-            if raw_counts.get(&key).is_some_and(|raw| stored_samples <= *raw) {
-                needs.insert(key);
-            }
+        let Some(hour) = metric_time(hour).map(hour_start) else {
+            continue;
+        };
+        if hour <= boundary_hour {
+            // The boundary hour may hold partial raw evidence from an
+            // unaligned prune; never rebuild it over an existing bucket.
+            continue;
+        }
+        let key = (*monitor_id, hour);
+        let raw_samples: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM metrics_raw WHERE monitor_id = ? AND time >= ? AND time < ?",
+        )
+        .bind(monitor_id)
+        .bind(sql_time_lower_bound(hour))
+        .bind(sql_time_millis(hour + 3_600_000))
+        .fetch_one(pool)
+        .await?;
+        raw_counts.insert(key, raw_samples);
+        // Never rebuild from a partial raw set: a dirty hour whose bucket
+        // already covers more samples than the raw table holds keeps it.
+        if raw_samples > 0 && stored.get(&key).copied().unwrap_or(-1) <= raw_samples {
+            needs.insert(key);
         }
     }
+
+    // Repair sweep: one bounded window of older hours per run, plus the
+    // newest complete hours every run, so damage without a dirty marker is
+    // still found within a cycle.
+    let cycle_floor = oldest_hour.min(boundary_hour);
+    let newest_hour = last_complete_hour + 3_600_000;
+    let (sweep_start, sweep_end) = next_repair_window(pool, cycle_floor, newest_hour).await?;
+    let sweep_rows = counts_in(pool, sweep_start, sweep_end).await?;
+    mark_due_from_counts(
+        &sweep_rows,
+        boundary_hour,
+        &stored,
+        &mut raw_counts,
+        &mut needs,
+    );
+    let mut verified_hours = (sweep_end - sweep_start) / 3_600_000;
+
+    let overlap_start =
+        boundary_hour.max(last_complete_hour - (REPAIR_OVERLAP_HOURS - 1) * 3_600_000);
+    if overlap_start < sweep_start || overlap_start >= sweep_end {
+        let overlap_rows = counts_in(pool, overlap_start, newest_hour).await?;
+        mark_due_from_counts(
+            &overlap_rows,
+            boundary_hour,
+            &stored,
+            &mut raw_counts,
+            &mut needs,
+        );
+    }
+    verified_hours += REPAIR_OVERLAP_HOURS;
 
     // Process the due pairs in time order. Chunks are bounded in elapsed
     // time (a gap splits them) and each chunk is folded page by page, so no
@@ -409,6 +553,7 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
     let raw = prune_raw(pool, now_ms, crate::metrics::METRICS_RETENTION_DAYS).await?;
     result.pruned_raw = raw.deleted;
     result.skipped_raw = raw.skipped;
+    result.verified_hours = verified_hours;
 
     result.pruned = prune_hourly(pool, now_ms).await?;
     Ok(result)
@@ -716,7 +861,12 @@ mod tests {
         assert_eq!(idle.rolled_up, 0);
         assert_eq!(idle.chunks, 0);
 
-        // A late backfill into an already-folded hour is re-folded.
+        // A late backfill into an already-folded hour is re-folded. It is
+        // inserted without an ingest marker (as if the marker write had
+        // failed): the repair sweep's count comparison catches it, and the
+        // sweep is bounded per run, so force the full reconciliation the
+        // first run after the upgrade does.
+        reset_rollup_state(&pool).await.unwrap();
         insert(monitor_ids[0], hour(0) + 50 * 60_000, 90.0).await;
         let late = rollup_metrics(&pool, now).await.unwrap();
         assert_eq!(late.rolled_up, 1, "only the affected pair re-rolls");
@@ -732,7 +882,9 @@ mod tests {
         assert_eq!(row.1, (10.0 + monitor_ids[0] as f64 + 90.0) / 2.0);
         assert_eq!(row.2, 90.0);
 
-        // A missing bucket is rebuilt from the raw evidence.
+        // A missing bucket is rebuilt from the raw evidence (again, by the
+        // reconciliation the sweep performs once per cycle).
+        reset_rollup_state(&pool).await.unwrap();
         sqlx::query("DELETE FROM metrics_hourly WHERE monitor_id = ? AND time = ?")
             .bind(monitor_ids[1])
             .bind(sql_time_millis(hour(3)))
@@ -1014,6 +1166,151 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(dirty, 0, "marker consumed");
+    }
+
+    #[tokio::test]
+    async fn work_selection_is_bounded_per_run() {
+        // The follow-up finding: every run grouped the whole retained raw
+        // window (about 550-750ms at ten hosts) to find the few hours needing
+        // work. Normal runs process the dirty hours plus a bounded window;
+        // the whole-window comparison happens once.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let pool = crate::db::connect(&path).await.unwrap();
+
+        let (monitor_id,): (i64,) =
+            sqlx::query_as("INSERT INTO monitors (name, type) VALUES ('m', 'push') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let now = crate::metrics::metric_time("2026-10-10 12:30:00").unwrap();
+        sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, '{}')")
+            .bind(monitor_id)
+            .bind(sql_time_millis(now - 3_600_000 + 60_000))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        reset_rollup_state(&pool).await.unwrap();
+        let full = rollup_metrics(&pool, now).await.unwrap();
+        assert!(
+            full.verified_hours >= 24 * 29,
+            "the first run reconciles the window, got {}h",
+            full.verified_hours
+        );
+
+        let bounded = rollup_metrics(&pool, now).await.unwrap();
+        assert!(
+            bounded.verified_hours <= REPAIR_WINDOW_HOURS + REPAIR_OVERLAP_HOURS,
+            "later runs verify one window plus the overlap, got {}h",
+            bounded.verified_hours
+        );
+    }
+
+    #[tokio::test]
+    async fn dirty_hour_folds_without_the_sweep() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let pool = crate::db::connect(&path).await.unwrap();
+
+        let (monitor_id,): (i64,) =
+            sqlx::query_as("INSERT INTO monitors (name, type) VALUES ('m', 'push') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let now = crate::metrics::metric_time("2026-10-10 12:30:00").unwrap();
+        let hour = hour_start(now) - 6 * 3_600_000;
+        for (offset, cpu) in [(60_000_i64, 11.0), (25 * 60_000, 12.0)] {
+            sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
+                .bind(monitor_id)
+                .bind(sql_time_millis(hour + offset))
+                .bind(json!({ "cpu": { "percent": cpu } }).to_string())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO metrics_rollup_dirty (monitor_id, hour) VALUES (?, ?)")
+            .bind(monitor_id)
+            .bind(sql_time_millis(hour))
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Prime the sweep cursor so this is a normal run, not the one-time
+        // reconciliation a first run performs.
+        write_repair_cursor(&pool, hour_start(now)).await.unwrap();
+
+        let result = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(result.rolled_up, 1, "the marked pair folds");
+        assert!(
+            result.verified_hours <= REPAIR_WINDOW_HOURS + REPAIR_OVERLAP_HOURS,
+            "without a window-wide scan"
+        );
+        let samples: i64 = sqlx::query_scalar(
+            "SELECT samples FROM metrics_hourly WHERE monitor_id = ? AND time = ?",
+        )
+        .bind(monitor_id)
+        .bind(sql_time_millis(hour))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(samples, 2);
+    }
+
+    #[tokio::test]
+    async fn missing_bucket_is_repaired_within_a_sweep_cycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let pool = crate::db::connect(&path).await.unwrap();
+
+        let (monitor_id,): (i64,) =
+            sqlx::query_as("INSERT INTO monitors (name, type) VALUES ('m', 'push') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let now = crate::metrics::metric_time("2026-10-10 12:30:00").unwrap();
+        let hour = hour_start(now) - 20 * 24 * 3_600_000;
+        sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
+            .bind(monitor_id)
+            .bind(sql_time_millis(hour + 60_000))
+            .bind(json!({ "cpu": { "percent": 33.0 } }).to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // A normal run verifies one bounded window, not the whole retention.
+        write_repair_cursor(&pool, hour_start(now)).await.unwrap();
+        let next = rollup_metrics(&pool, now).await.unwrap();
+        assert!(next.verified_hours <= REPAIR_WINDOW_HOURS + REPAIR_OVERLAP_HOURS);
+        let buckets = |pool: &SqlitePool| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM metrics_hourly WHERE monitor_id = ?",
+                )
+                .bind(monitor_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        assert_eq!(buckets(&pool).await, 0, "the old hour is not folded yet");
+
+        // Walking the cycle reaches it: 30 days of window, 24 hours per run.
+        for _ in 0..31 {
+            if buckets(&pool).await > 0 {
+                break;
+            }
+            rollup_metrics(&pool, now).await.unwrap();
+        }
+        let avg: f64 = sqlx::query_scalar(
+            "SELECT cpu_avg FROM metrics_hourly WHERE monitor_id = ? AND time = ?",
+        )
+        .bind(monitor_id)
+        .bind(sql_time_millis(hour))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(avg, 33.0, "the sweep repaired the missing bucket");
     }
 
     #[tokio::test]

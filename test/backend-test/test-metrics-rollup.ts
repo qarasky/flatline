@@ -150,7 +150,12 @@ test("rollup coverage is per monitor and hour", async (t) => {
     });
 
     await t.test("late backfill into an old folded hour is re-folded", async () => {
-        // Older than any recency overlap: the count comparison must catch it.
+        // Older than any recency overlap, and inserted without an ingest
+        // marker (as if the marker write had failed): the repair sweep's
+        // count comparison must catch it. The sweep is bounded per run, so
+        // force the full reconciliation the first run after the upgrade does.
+        const { resetRollupState } = require("../../server/metrics-rollup");
+        await resetRollupState();
         await insertRaw(monitors[0], hour(0) + 50 * 60_000, 90);
         const result = await rollupMetrics(now);
         assert.strictEqual(result.rolledUp, 1, "only the affected pair re-rolls");
@@ -163,6 +168,8 @@ test("rollup coverage is per monitor and hour", async (t) => {
     });
 
     await t.test("missing buckets are repaired from raw evidence", async () => {
+        const { resetRollupState } = require("../../server/metrics-rollup");
+        await resetRollupState();
         await R.exec("DELETE FROM monitor_metric_hourly WHERE monitor_id = ? AND time = ?", [ monitors[1], sql(hour(3)) ]);
         const result = await rollupMetrics(now);
         assert.strictEqual(result.rolledUp, 1, "the deleted bucket is rebuilt");
@@ -386,7 +393,7 @@ test("rollup work is bounded in elapsed time and rows", async (t) => {
 
 test("bucket integrity across the raw prune", async (t) => {
     const { R } = require("redbean-node");
-    const { rollupMetrics, markRollupDirty, rawBoundaryHour, hourStart } = require("../../server/metrics-rollup");
+    const { rollupMetrics, markRollupDirty, rawBoundaryHour, resetRollupState, hourStart } = require("../../server/metrics-rollup");
     let monitorID = 0;
 
     t.before(async () => {
@@ -431,6 +438,9 @@ test("bucket integrity across the raw prune", async (t) => {
         // The cutoff lands inside an hour; that hour must survive intact so
         // its aggregate can never be rebuilt from a partial raw set. The
         // older hour is folded by the same run and only then pruned.
+        // A reconciliation run: the aged-out hour is below the sweep's
+        // normal windows until a cycle reaches it.
+        await resetRollupState();
         const boundary = rawBoundaryHour(Date.now());
         await insertRaw(monitorID, boundary + 60_000, 10);
         await insertRaw(monitorID, boundary + 30 * 60_000, 20);
@@ -446,6 +456,7 @@ test("bucket integrity across the raw prune", async (t) => {
     });
 
     await t.test("expired raw rows stay until their hour is folded", async () => {
+        await resetRollupState();
         // The repair-before-prune guarantee: the prune is part of the same
         // maintenance run as the fold and only deletes pairs a bucket
         // provably covers. An unfolded old hour keeps its evidence, even
@@ -472,6 +483,7 @@ test("bucket integrity across the raw prune", async (t) => {
         // the retention window that was never folded keeps its raw rows
         // (they are the only record) until a run folds it.
         const now = Date.parse("2026-10-14T12:30:00Z");
+        await resetRollupState();
         const hour = rawBoundaryHour(now) - 5 * HOUR;
         await insertRaw(monitorID, hour + 5 * 60_000, 5);
 
@@ -480,14 +492,14 @@ test("bucket integrity across the raw prune", async (t) => {
         assert.strictEqual(outcome.deleted, 0, "nothing was deleted");
         assert.ok(outcome.skipped >= 1, "the unfolded pair was skipped");
         assert.strictEqual(
-            await R.getCell("SELECT COUNT(*) FROM monitor_metric WHERE monitor_id = ? AND time < ?", [ monitorID, sql(hour + HOUR) ]),
+            await R.getCell("SELECT COUNT(*) FROM monitor_metric WHERE monitor_id = ? AND time >= ? AND time < ?", [ monitorID, sql(hour), sql(hour + HOUR) ]),
             1, "its raw row survives");
 
         // The next maintenance run folds it, and the same run prunes it.
         const folded = await rollupMetrics(now);
         assert.ok(folded.prunedRaw >= 1, "folded, then pruned");
         assert.strictEqual(
-            await R.getCell("SELECT COUNT(*) FROM monitor_metric WHERE monitor_id = ? AND time < ?", [ monitorID, sql(hour + HOUR) ]),
+            await R.getCell("SELECT COUNT(*) FROM monitor_metric WHERE monitor_id = ? AND time >= ? AND time < ?", [ monitorID, sql(hour), sql(hour + HOUR) ]),
             0, "now prunable");
     });
 
@@ -497,6 +509,7 @@ test("bucket integrity across the raw prune", async (t) => {
         // the rebuild replaced the complete bucket with a partial aggregate
         // (peak 100 -> 0, mean 50 -> 0).
         const now = Date.parse("2026-10-14T12:30:00Z");
+        await resetRollupState();
         // The hour the retention cutoff falls in: the only hour an unaligned
         // prune could have split, and where a valid late sample can still land.
         const hour = rawBoundaryHour(now);
@@ -524,12 +537,62 @@ test("bucket integrity across the raw prune", async (t) => {
         // one must still be built: those raw rows would otherwise never be
         // folded and never prunable.
         const now = Date.parse("2026-10-14T12:30:00Z");
+        await resetRollupState();
         const hour = hourStart(now) - 31 * 24 * HOUR;
         await insertRaw(monitorID, hour + 5 * 60_000, 42);
 
         const result = await rollupMetrics(now);
         assert.ok(result.rolledUp >= 1, "the orphan hour folds");
         assert.strictEqual((await bucket(hour)).cpu_avg, 42);
+    });
+
+    await t.test("work selection is bounded per run, with one full reconciliation", async () => {
+        // The follow-up finding: every run grouped the whole retained raw
+        // window (about 750ms of blocking SQLite work at ten hosts) to find
+        // the few hours needing work. Normal runs process the dirty hours
+        // plus a bounded window; the whole-window comparison happens once.
+        const now = Date.parse("2026-10-14T12:30:00Z");
+        await resetRollupState();
+        const full = await rollupMetrics(now);
+        assert.ok(full.verifiedHours >= 24 * 29, `the first run reconciles the window (${full.verifiedHours}h)`);
+
+        const bounded = await rollupMetrics(now);
+        assert.ok(
+            bounded.verifiedHours <= 24 + 2,
+            `later runs verify one window plus the overlap, got ${bounded.verifiedHours}h`);
+    });
+
+    await t.test("a dirty hour folds without waiting for the sweep", async () => {
+        const now = Date.parse("2026-10-14T12:30:00Z");
+        const hour = hourStart(now) - 6 * HOUR;
+        await insertRaw(monitorID, hour + 5 * 60_000, 11);
+        await insertRaw(monitorID, hour + 25 * 60_000, 12);
+        await markRollupDirty(monitorID, sql(hour + 25 * 60_000));
+
+        const result = await rollupMetrics(now);
+        assert.strictEqual(result.rolledUp, 1, "the marked pair folds");
+        assert.strictEqual((await bucket(hour)).samples, 2);
+        assert.ok(result.verifiedHours <= 24 + 2, "without a window-wide scan");
+    });
+
+    await t.test("a bucket missing in an old hour is repaired within a sweep cycle", async () => {
+        const now = Date.parse("2026-10-14T12:30:00Z");
+        const hour = hourStart(now) - 20 * 24 * HOUR;
+        await insertRaw(monitorID, hour + 5 * 60_000, 33);
+        const bucketCount = () => R.getCell("SELECT COUNT(*) FROM monitor_metric_hourly WHERE monitor_id = ?", [ monitorID ]);
+        const before = Number(await bucketCount());
+
+        // The next run verifies one bounded window, not the whole retention.
+        const next = await rollupMetrics(now);
+        assert.ok(next.verifiedHours <= 24 + 2, "bounded");
+        assert.strictEqual(Number(await bucketCount()), before, "the old hour is not folded yet");
+
+        // Walking the cycle reaches it: 30 days of window, 24 hours per run.
+        for (let run = 0; run < 31 && Number(await bucketCount()) === before; run++) {
+            await rollupMetrics(now);
+        }
+        assert.strictEqual(Number(await bucketCount()), before + 1, "the sweep repaired the missing bucket");
+        assert.strictEqual((await bucket(hour)).cpu_avg, 33);
     });
 });
 

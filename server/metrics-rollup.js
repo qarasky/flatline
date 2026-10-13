@@ -78,6 +78,22 @@ const CHUNK_HOURS = 6;
 /** Raw rows fetched per query, bounding memory and lock time per page. */
 const ROWS_PER_PAGE = 5000;
 
+/**
+ * Hours of raw evidence the repair sweep verifies per run.
+ *
+ * The sweep exists for damage the dirty markers cannot see (a pre-existing
+ * gap, a marker write that failed). It walks the raw window in windows this
+ * wide, one per run, so a full sweep costs about a day of runs instead of
+ * scanning the whole window on every run.
+ */
+const REPAIR_WINDOW_HOURS = 24;
+
+/** The newest complete hours are re-verified every run, wherever the sweep is. */
+const REPAIR_OVERLAP_HOURS = 2;
+
+/** State name of the repair sweep cursor. */
+const REPAIR_CURSOR = "repair_cursor";
+
 const FIELDS = [ "cpu", "ram", "gpu", "vram" ];
 
 /** Prevents overlapping runs if a backfill takes longer than the interval. */
@@ -285,13 +301,126 @@ async function markRollupDirty(monitorID, time) {
 }
 
 /**
+ * The stored repair cursor, or null when the sweep has never run.
+ * @returns {Promise<?number>} Exclusive upper bound of the verified region
+ */
+async function readRepairCursor() {
+    const value = await R.getCell(
+        "SELECT value FROM monitor_metric_rollup_state WHERE name = ?", [ REPAIR_CURSOR ]);
+    if (!value) {
+        return null;
+    }
+    const hour = hourStart(timestamp(value));
+    return Number.isFinite(hour) ? hour : null;
+}
+
+/**
+ * Persist the repair cursor.
+ * @param {number} hour Next exclusive upper bound of the verified region
+ * @returns {Promise<void>} Resolves when stored
+ */
+async function writeRepairCursor(hour) {
+    await R.knex("monitor_metric_rollup_state")
+        .insert({ name: REPAIR_CURSOR, value: sqlTime(hour) })
+        .onConflict([ "name" ])
+        .merge();
+}
+
+/**
+ * Forget the repair sweep cursor. The next run then reconciles the whole
+ * retained window once, like the first run after this state was introduced —
+ * the escape hatch when coverage is suspected to be wrong (tests, or an
+ * operator after restoring a database).
+ * @returns {Promise<void>} Resolves when cleared
+ */
+async function resetRollupState() {
+    await R.exec("DELETE FROM monitor_metric_rollup_state WHERE name = ?", [ REPAIR_CURSOR ]);
+}
+
+/**
+ * The next repair window: a bounded span of complete hours, walking backwards
+ * from the newest hour and cycling over the raw window.
+ *
+ * The first run after this state exists (a fresh database, or the upgrade)
+ * reconciles the whole retained window once — bounded by the 30-day raw
+ * retention, not by how long the process has been up — so a fresh import does
+ * not wait out a full sweep cycle to get its long tier.
+ * @param {number} oldestHour Oldest hour with any raw evidence (the cycle
+ * floor; hours below the retention boundary may hold survivors whose bucket
+ * is missing, and those must stay reachable)
+ * @param {number} newestHour Exclusive upper bound of complete hours
+ * @returns {Promise<{start: number, end: number, firstRun: boolean}>} Window
+ */
+async function nextRepairWindow(oldestHour, newestHour) {
+    const cursor = await readRepairCursor();
+    if (cursor === null) {
+        await writeRepairCursor(newestHour);
+        return { start: oldestHour, end: newestHour, firstRun: true };
+    }
+
+    const start = Math.max(oldestHour, cursor - REPAIR_WINDOW_HOURS * 3600_000);
+    const end = Math.max(start, Math.min(newestHour, cursor));
+    const next = start <= oldestHour ? newestHour : start;
+    await writeRepairCursor(next);
+    return { start, end, firstRun: false };
+}
+
+/**
+ * Mark every (monitor, hour) in a grouped count row set that needs a fold.
+ *
+ * Shared by the repair sweep and the recency overlap: both compare the raw
+ * row count of an hour with its bucket, with the same guards as the dirty
+ * path (never downgrade a richer bucket, leave the boundary hour alone).
+ * @param {object[]} rows Grouped count rows
+ * @param {number} boundaryHour Oldest hour with complete raw evidence
+ * @param {Map<string, number>} stored Bucket sample counts by pair key
+ * @param {Map<string, number>} rawCounts Raw counts by pair key (updated)
+ * @param {Set<string>} needs Pairs to fold (updated)
+ * @returns {void}
+ */
+function markDueFromCounts(rows, boundaryHour, stored, rawCounts, needs) {
+    for (const row of rows) {
+        const hour = hourStart(timestamp(row.hour));
+        if (!Number.isFinite(hour)) {
+            continue;
+        }
+        const key = `${row.monitor_id}|${hour}`;
+        const rawSamples = Number(row.samples);
+        rawCounts.set(key, rawSamples);
+        const storedSamples = stored.get(key) ?? -1;
+        if (hour <= boundaryHour && storedSamples >= 0) {
+            // The boundary hour is the one an unaligned prune could have
+            // split: a rebuild would replace a complete aggregate with the
+            // survivors. A *missing* bucket is different — the survivors are
+            // the only record left, so they are folded.
+            continue;
+        }
+        if (storedSamples > rawSamples) {
+            // The bucket covers more samples than the raw table still holds:
+            // its evidence was pruned away. A rebuild could only lose history.
+            log.debug("rollupMetrics", `Keeping richer bucket for ${key}: ${storedSamples} stored > ${rawSamples} raw`);
+            continue;
+        }
+        if (storedSamples < rawSamples) {
+            needs.add(key);
+        }
+    }
+}
+
+/**
  * Roll raw samples up into complete hours, then prune expired rollups.
  *
  * Idempotent: buckets are upserted and coverage is judged from the data, so
  * a crash or restart mid-backfill resumes rather than duplicating or losing
  * hours. Exported for the job and for tests, which pass a fixed `now`.
+ *
+ * Work selection is bounded per run: dirty hours (resolved with one indexed
+ * count per pair), the newest complete hours, and one repair window. The
+ * whole-window count comparison that used to run every hour — 864k raw rows
+ * at ten hosts, ~750ms of blocking SQLite work in Node — only happens once,
+ * on the first run after this state exists.
  * @param {number} now Current epoch millis
- * @returns {Promise<{rolledUp: number, chunks: number, pruned: number}>} Run summary
+ * @returns {Promise<object>} Run summary
  */
 async function rollupMetrics(now = Date.now()) {
     const lastCompleteHour = hourStart(now) - 3600_000;
@@ -327,72 +456,55 @@ async function rollupMetrics(now = Date.now()) {
         }
     }
 
-    // Raw evidence per monitor and hour, grouped in SQL: one row per pair no
-    // matter how many samples it holds. A bucket is due when it does not
-    // exist yet or holds fewer samples than the raw rows that now exist for
-    // its hour — the case a late backfill creates and the old per-hour
-    // coverage check missed.
-    const counts = await R.getAll(
+    const rawCounts = new Map();
+    const needs = new Set();
+    const rawCountOf = async (monitorID, hour) => {
+        const count = Number(await R.getCell(
+            "SELECT COUNT(*) FROM monitor_metric WHERE monitor_id = ? AND time >= ? AND time < ?",
+            [ monitorID, sqlTimeLowerBound(hour), sqlTime(hour + 3600_000) ]));
+        return Number.isFinite(count) ? count : 0;
+    };
+    const countsIn = (start, end) => R.getAll(
         `SELECT monitor_id, ${hourKeyExpression()} AS hour, COUNT(*) AS samples
          FROM monitor_metric WHERE time >= ? AND time < ?
          GROUP BY monitor_id, hour`,
-        [ from, toExclusive ]);
-    const rawCounts = new Map();
-    const needs = new Set();
-    for (const row of counts) {
-        const hour = hourStart(timestamp(row.hour));
-        if (!Number.isFinite(hour)) {
-            continue;
-        }
-        const key = `${row.monitor_id}|${hour}`;
-        const rawSamples = Number(row.samples);
-        rawCounts.set(key, rawSamples);
-        const storedSamples = stored.get(key) ?? -1;
-        if (hour <= boundaryHour && storedSamples >= 0) {
-            // The boundary hour is the one an unaligned prune could have
-            // split: a rebuild would replace a complete aggregate with the
-            // survivors. Keep the existing bucket; a *missing* bucket is
-            // different — the survivors are the only record left, so they
-            // are folded.
-            continue;
-        }
-        if (storedSamples > rawSamples) {
-            // The bucket covers more samples than the raw table still holds:
-            // its evidence was pruned away. A rebuild could only lose history.
-            log.debug("rollupMetrics", `Keeping richer bucket for ${key}: ${storedSamples} stored > ${rawSamples} raw`);
-            continue;
-        }
-        if (storedSamples < rawSamples) {
-            needs.add(key);
-        }
-    }
+        [ sqlTimeLowerBound(start), sqlTime(end) ]);
 
-    // Dirty markers: hours whose samples arrived after a run had already
-    // folded them. Only an hour that still has complete raw evidence can be
-    // re-folded; a marker whose raw rows were pruned is stale and just gets
-    // dropped.
+    // Dirty markers first: one indexed count per marked pair, so a late
+    // sample is folded without looking at any other hour. A marker whose raw
+    // rows were pruned, or whose hour predates the boundary, is dropped at
+    // the end of the run without touching its bucket.
     for (const row of await R.getAll(
         "SELECT monitor_id, hour FROM monitor_metric_rollup_dirty WHERE hour >= ? AND hour <= ?",
         [ from, to ])) {
         const hour = hourStart(timestamp(row.hour));
-        if (!Number.isFinite(hour)) {
-            continue;
-        }
-        if (hour < boundaryHour) {
+        if (!Number.isFinite(hour) || hour <= boundaryHour) {
             continue;
         }
         const key = `${row.monitor_id}|${hour}`;
-        if (hour <= boundaryHour) {
-            // The boundary hour may hold partial raw evidence from an
-            // unaligned prune; never rebuild it over an existing bucket.
-            continue;
-        }
-        const rawSamples = rawCounts.get(key);
+        const rawSamples = await rawCountOf(Number(row.monitor_id), hour);
+        rawCounts.set(key, rawSamples);
         // Never rebuild from a partial raw set: a dirty hour whose bucket
         // already covers more samples than the raw table holds keeps it.
-        if (rawSamples !== undefined && (stored.get(key) ?? -1) <= rawSamples) {
+        if (rawSamples > 0 && (stored.get(key) ?? -1) <= rawSamples) {
             needs.add(key);
         }
+    }
+
+    // Repair sweep: one bounded window of older hours per run, plus the
+    // newest complete hours every run, so damage without a dirty marker is
+    // still found within a cycle.
+    const sweep = await nextRepairWindow(Math.min(oldestHour, boundaryHour), lastCompleteHour + 3600_000);
+    const overlapStart = Math.max(boundaryHour, lastCompleteHour - (REPAIR_OVERLAP_HOURS - 1) * 3600_000);
+    const repairRows = await countsIn(sweep.start, sweep.end);
+    markDueFromCounts(repairRows, boundaryHour, stored, rawCounts, needs);
+    let verifiedHours = (sweep.end - sweep.start) / 3600_000;
+    if (overlapStart < sweep.start || overlapStart >= sweep.end) {
+        const overlapRows = await countsIn(overlapStart, lastCompleteHour + 3600_000);
+        markDueFromCounts(overlapRows, boundaryHour, stored, rawCounts, needs);
+        verifiedHours += REPAIR_OVERLAP_HOURS;
+    } else {
+        verifiedHours += REPAIR_OVERLAP_HOURS;
     }
 
     // Process the due pairs in time order. Chunks are bounded in elapsed
@@ -454,7 +566,14 @@ async function rollupMetrics(now = Date.now()) {
     // assumes the fold succeeded.
     const raw = await pruneRawSamples(now);
     const pruned = await pruneHourly(now);
-    return { rolledUp, chunks, pruned, prunedRaw: raw.deleted, skippedRaw: raw.skipped };
+    return {
+        rolledUp,
+        chunks,
+        verifiedHours,
+        pruned,
+        prunedRaw: raw.deleted,
+        skippedRaw: raw.skipped,
+    };
 }
 
 /**
@@ -572,6 +691,7 @@ module.exports = {
     rollupMetrics,
     rollupMetricsJob,
     pruneRawSamples,
+    resetRollupState,
     markRollupDirty,
     aggregateChunk,
     accumulateRow,

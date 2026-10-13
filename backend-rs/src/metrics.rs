@@ -155,10 +155,11 @@ impl Metrics {
                             || result.skipped_raw > 0 =>
                     {
                         tracing::info!(
-                            "rollup: {} hour buckets ({} chunks), pruned {} expired buckets, \
-                             pruned {} folded raw hours, kept {} unfolded",
+                            "rollup: {} hour buckets ({} chunks, {} hours verified), pruned {} expired \
+                             buckets, pruned {} folded raw hours, kept {} unfolded",
                             result.rolled_up,
                             result.chunks,
+                            result.verified_hours,
                             result.pruned,
                             result.pruned_raw,
                             result.skipped_raw
