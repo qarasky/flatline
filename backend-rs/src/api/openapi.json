@@ -798,6 +798,46 @@
                 }
             }
         },
+        "/api/v1/monitors/{id}/push-failures/clear": {
+            "post": {
+                "summary": "Clear push failures",
+                "description": "Requires the `write` scope. Acknowledges the agent's current `agent.failedPushes` counter: the board shows `failedPushes - pushFailuresAck`. The ack is dropped automatically when the agent restarts and the counter moves backwards, so new failures are never masked.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The acknowledged value",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "id": {
+                                            "type": "integer"
+                                        },
+                                        "pushFailuresAck": {
+                                            "type": "integer"
+                                        },
+                                        "reported": {
+                                            "type": [
+                                                "integer",
+                                                "null"
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/notifications": {
             "get": {
                 "summary": "List notification configs",

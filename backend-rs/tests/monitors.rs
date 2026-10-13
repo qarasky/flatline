@@ -325,3 +325,86 @@ async fn auth_compat_accepts_the_token_as_password() {
     assert_eq!(body["user"]["name"], "Operator");
     assert_eq!(body["scopes"], json!(["read", "write"]));
 }
+
+#[tokio::test]
+async fn push_failures_clear_acknowledges_and_resets_on_restart() {
+    let h = harness().await;
+    let monitor = create_push(&h, "cmn").await;
+    let id = monitor["id"].as_i64().unwrap();
+    let push_token = monitor["pushToken"].as_str().unwrap().to_string();
+    assert_eq!(monitor["pushFailuresAck"], 0);
+
+    // No samples yet: clearing acknowledges zero rather than failing.
+    let (status, body) = send(
+        &h.app,
+        request(
+            "POST",
+            &format!("/api/v1/monitors/{id}/push-failures/clear"),
+            Some(&h.token),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "clear failed: {body}");
+    assert_eq!(body["pushFailuresAck"], 0);
+    assert_eq!(body["reported"], Value::Null);
+
+    // A sample reports three failures; the monitor JSON carries the ack.
+    let sample = |failed: u64| {
+        json!({
+            "metrics": {
+                "host": { "hostname": "cmn" },
+                "cpu": { "percent": 5.0, "cores": 2 },
+                "mem": { "percent": 20.0, "total": 100, "used": 20 },
+                "agent": { "version": "1.5.0", "uptime": 60, "failedPushes": failed },
+            }
+        })
+    };
+    let (status, _) = send(
+        &h.app,
+        request(
+            "POST",
+            &format!("/api/push/{push_token}"),
+            None,
+            Some(sample(3)),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = send(
+        &h.app,
+        request(
+            "POST",
+            &format!("/api/v1/monitors/{id}/push-failures/clear"),
+            Some(&h.token),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["pushFailuresAck"], 3);
+    assert_eq!(body["reported"], 3);
+
+    let (status, body) = get_json(&h.app, &format!("/api/v1/monitors/{id}"), &h.token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["monitor"]["pushFailuresAck"], 3);
+
+    // The agent restarts: its counter moves backwards, so the stale ack is
+    // dropped instead of hiding the next failures.
+    let (status, _) = send(
+        &h.app,
+        request(
+            "POST",
+            &format!("/api/push/{push_token}"),
+            None,
+            Some(sample(1)),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = get_json(&h.app, &format!("/api/v1/monitors/{id}"), &h.token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["monitor"]["pushFailuresAck"], 0);
+}

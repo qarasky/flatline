@@ -3,6 +3,7 @@ import {
     ApiError,
     deleteMonitor,
     fetchAllMonitors,
+    updateMonitor,
     watchLive,
     getToken,
     pauseMonitor,
@@ -13,7 +14,8 @@ import {
 } from "@/lib/api";
 import { MonitorForm } from "@/components/MonitorForm";
 import { MonitorDetail } from "@/components/MonitorDetail";
-import { RenameDialog, ServerMenu, type MenuAnchor } from "@/components/ServerMenu";
+import { DeleteGroupDialog, MoveDialog, RenameDialog, ServerMenu, type MenuAnchor, type MenuItem } from "@/components/ServerMenu";
+import { directChildren, groupOptions, groupPath, subtreeMonitorCount } from "@/lib/groups";
 import { AgentPanel } from "@/components/AgentPanel";
 import { UsersPanel } from "@/components/UsersPanel";
 import { TokenGate } from "@/components/TokenGate";
@@ -146,6 +148,8 @@ interface GroupNode {
     weight: number;
     groups: GroupNode[];
     monitors: MonitorSummary[];
+    /** The group monitor itself, for menus and dialogs. */
+    group: MonitorSummary;
 }
 
 /**
@@ -159,7 +163,7 @@ interface GroupNode {
 function groupTree(monitors: MonitorSummary[]): { roots: GroupNode[]; ungrouped: MonitorSummary[] } {
     const groups = monitors.filter((m) => m.type === "group");
     const nodes = new Map<number, GroupNode>(
-        groups.map((group) => [ group.id, { id: group.id, name: group.name, weight: group.weight ?? 0, groups: [], monitors: [] } ])
+        groups.map((group) => [ group.id, { id: group.id, name: group.name, weight: group.weight ?? 0, groups: [], monitors: [], group } ])
     );
 
     const roots: GroupNode[] = [];
@@ -312,6 +316,19 @@ function MonitorRow({
                 {ageOf(monitor.lastCheck)} ago
             </td>
             <td className="py-2 pr-4 pl-3 text-xs whitespace-nowrap text-quiet">{monitor.type}</td>
+            <td className="py-2 pr-4 pl-3 text-right">
+                {onContextMenu ? (
+                    <button
+                        type="button"
+                        aria-label={`Actions for ${monitor.name}`}
+                        title="Actions"
+                        className="rounded px-1.5 py-0.5 text-quiet hover:bg-surface hover:text-primary"
+                        onClick={(event) => onContextMenu(monitor, event.clientX, event.clientY)}
+                    >
+                        ⋯
+                    </button>
+                ) : null}
+            </td>
         </tr>
     );
 }
@@ -330,6 +347,7 @@ function MonitorColgroup() {
             <col className="w-20" />
             <col className="w-24" />
             <col className="w-24" />
+            <col className="w-10" />
         </colgroup>
     );
 }
@@ -349,6 +367,7 @@ function MonitorHead() {
                 <th className="w-20 py-2 pl-3 text-right font-medium whitespace-nowrap">Ping</th>
                 <th className="w-24 py-2 pl-3 text-right font-medium whitespace-nowrap">Checked</th>
                 <th className="w-24 py-2 pr-4 pl-3 font-medium whitespace-nowrap">Type</th>
+                <th className="w-10 py-2 pr-4 pl-3 font-medium" />
             </tr>
         </thead>
     );
@@ -410,6 +429,7 @@ function GroupedTable({
     onToggle,
     onEdit,
     onContextMenu,
+    onGroupMenu,
 }: {
     roots: GroupNode[];
     ungrouped: MonitorSummary[];
@@ -417,6 +437,7 @@ function GroupedTable({
     onToggle: (id: number) => void;
     onEdit: (id: number) => void;
     onContextMenu?: (monitor: MonitorSummary, x: number, y: number) => void;
+    onGroupMenu?: (group: MonitorSummary, x: number, y: number) => void;
 }) {
     const [collapsed, setCollapsed] = useState<Set<number>>(() => {
         try {
@@ -448,9 +469,18 @@ function GroupedTable({
     function nodeHeader(node: GroupNode, depth: number, totals: { count: number; down: number }) {
         const isCollapsed = collapsed.has(node.id);
         return (
-            <tr className="border-b border-border bg-surface/60">
+            <tr
+                className="border-b border-border bg-surface/60"
+                onContextMenu={(event) => {
+                    if (!onGroupMenu) {
+                        return;
+                    }
+                    event.preventDefault();
+                    onGroupMenu(node.group, event.clientX, event.clientY);
+                }}
+            >
                 <td
-                    colSpan={8}
+                    colSpan={9}
                     className="py-1.5 pr-4 pl-4"
                     style={{ paddingLeft: `${16 + depth * 18}px` }}
                 >
@@ -473,6 +503,17 @@ function GroupedTable({
                             <span className="ml-1">· all up</span>
                         )}
                     </span>
+                    {onGroupMenu ? (
+                        <button
+                            type="button"
+                            aria-label={`Actions for group ${node.name}`}
+                            title="Group actions"
+                            className="ml-2 rounded px-1.5 py-0.5 text-xs text-quiet hover:bg-card hover:text-primary"
+                            onClick={(event) => onGroupMenu(node.group, event.clientX, event.clientY)}
+                        >
+                            ⋯
+                        </button>
+                    ) : null}
                 </td>
             </tr>
         );
@@ -515,7 +556,7 @@ function GroupedTable({
             {ungrouped.length > 0 ? (
                 <tbody key="ungrouped">
                     <tr className="border-b border-border bg-surface/60">
-                        <td colSpan={8} className="py-1.5 pr-4 pl-4">
+                        <td colSpan={9} className="py-1.5 pr-4 pl-4">
                             <span className="inline-flex items-center gap-2 text-xs font-semibold tracking-wide text-quiet uppercase">
                                 <span className="inline-block w-3" />
                                 Ungrouped
@@ -563,10 +604,12 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
     const [query, setQuery] = useState("");
     const [menu, setMenu] = useState<MenuAnchor | null>(null);
     const [renaming, setRenaming] = useState<MonitorSummary | null>(null);
+    const [moving, setMoving] = useState<MonitorSummary | null>(null);
+    const [deletingGroup, setDeletingGroup] = useState<{ group: MonitorSummary; rows: number; children: number } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [formState, setFormState] = useState<
-        | { mode: "create" }
+        | { mode: "create"; initial?: Partial<MonitorSummary> & Record<string, unknown> }
         | { mode: "edit"; monitor: MonitorSummary & Record<string, unknown> }
         | null
     >(null);
@@ -682,6 +725,80 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
         }
     }
 
+    // Group options for the form's Group picker. A group being edited cannot
+    // move inside itself, so its own subtree is excluded from the choices.
+    const groupChoices = useMemo(
+        () => groupOptions(monitors, formState?.mode === "edit" && formState.monitor.type === "group" ? formState.monitor.id : null),
+        [ monitors, formState ]
+    );
+
+    // Right-click/⋯ menu contents: groups manage the tree, monitors move
+    // through it. Built per anchor so it always sees the current roster.
+    const menuItems: MenuItem[] = useMemo(() => {
+        if (!menu) {
+            return [];
+        }
+        const monitor = menu.monitor;
+        if (monitor.type === "group") {
+            return [
+                {
+                    label: "New subgroup…",
+                    onSelect: () => {
+                        setFormState({ mode: "create", initial: { type: "group", parent: monitor.id } });
+                        setMenu(null);
+                    },
+                },
+                { label: "Rename group…", onSelect: () => { setRenaming(monitor); setMenu(null); } },
+                { label: "Move group…", onSelect: () => { setMoving(monitor); setMenu(null); } },
+                {
+                    label: "Delete group…",
+                    danger: true,
+                    onSelect: () => {
+                        setDeletingGroup({
+                            group: monitor,
+                            rows: subtreeMonitorCount(monitors, monitor.id),
+                            children: directChildren(monitors, monitor.id).length,
+                        });
+                        setMenu(null);
+                    },
+                },
+            ];
+        }
+        return [
+            { label: "Rename…", onSelect: () => { setRenaming(monitor); setMenu(null); } },
+            { label: "Move to group…", onSelect: () => { setMoving(monitor); setMenu(null); } },
+        ];
+    }, [ menu, monitors ]);
+
+    /**
+     * Delete a group. "keep" re-parents its direct children to the group's
+     * parent first, so the tree never orphans a monitor; "purge" deletes the
+     * whole subtree in one request.
+     */
+    async function deleteGroup(mode: "keep" | "purge") {
+        const target = deletingGroup;
+        if (!target) {
+            return;
+        }
+        setBusy(true);
+        try {
+            if (mode === "purge") {
+                await deleteMonitor(target.group.id, true);
+            } else {
+                const children = directChildren(monitors, target.group.id);
+                await Promise.all(children.map((child) => updateMonitor(child.id, { parent: target.group.parent ?? null })));
+                await deleteMonitor(target.group.id);
+            }
+            setDeletingGroup(null);
+            await load();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Delete failed.");
+            setDeletingGroup(null);
+        } finally {
+            setBusy(false);
+        }
+    }
+
     if (!authed) {
         return <TokenGate inviteToken={inviteToken} onSaved={() => setAuthed(true)} />;
     }
@@ -729,6 +846,9 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
                         }}
                     >
                         Agents
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setFormState({ mode: "create", initial: { type: "group" } })}>
+                        New group
                     </Button>
                     <Button size="sm" onClick={() => setFormState({ mode: "create" })}>
                         New monitor
@@ -857,16 +977,14 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
                         setDetailId(id);
                     }}
                     onContextMenu={(monitor, x, y) => setMenu({ x, y, monitor })}
+                    onGroupMenu={(group, x, y) => setMenu({ x, y, monitor: group })}
                 />
             )}
 
             {menu ? (
                 <ServerMenu
                     anchor={menu}
-                    onRename={() => {
-                        setRenaming(menu.monitor);
-                        setMenu(null);
-                    }}
+                    items={menuItems}
                     onClose={() => setMenu(null)}
                 />
             ) : null}
@@ -875,6 +993,24 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
                     monitor={renaming}
                     currentName={renaming.name}
                     onClose={() => setRenaming(null)}
+                />
+            ) : null}
+            {moving ? (
+                <MoveDialog
+                    monitor={moving}
+                    options={groupOptions(monitors, moving.type === "group" ? moving.id : null)}
+                    currentParent={moving.parent ?? null}
+                    onClose={() => setMoving(null)}
+                />
+            ) : null}
+            {deletingGroup ? (
+                <DeleteGroupDialog
+                    group={deletingGroup.group}
+                    rows={deletingGroup.rows}
+                    children={deletingGroup.children}
+                    parentName={groupPath(monitors, deletingGroup.group.parent)}
+                    onDelete={(mode) => deleteGroup(mode)}
+                    onClose={() => setDeletingGroup(null)}
                 />
             ) : null}
 
@@ -888,10 +1024,13 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
                         onClick={(e) => e.stopPropagation()}
                     >
                         <h2 className="mb-4 text-base font-semibold">
-                            {formState.mode === "create" ? "New monitor" : `Edit ${formState.monitor.name}`}
+                            {formState.mode === "create"
+                                ? formState.initial?.type === "group" ? "New group" : "New monitor"
+                                : `Edit ${formState.monitor.name}`}
                         </h2>
                         <MonitorForm
-                            initial={formState.mode === "edit" ? formState.monitor : null}
+                            initial={formState.mode === "edit" ? formState.monitor : (formState.initial ?? null)}
+                            groupChoices={groupChoices}
                             onSaved={() => {
                                 setFormState(null);
                                 void load();

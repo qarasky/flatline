@@ -47,7 +47,7 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
     const updates = updatesStatus(metrics.updates);
     const updatesTone = updates?.tone === "ok" ? "text-ok" : updates?.tone === "warn" ? "text-warn" : updates?.tone === "bad" ? "text-bad" : "text-critical";
     const agent = metrics.agent;
-    const warning = agentWarnings(agent);
+    const warning = agentWarnings(agent, monitor.pushFailuresAck ?? 0);
     const agentTip = agent
         ? `Agent ${agent.version ?? "unknown"}${Number.isFinite(agent.uptime) ? ` · running ${formatDuration(agent.uptime) ?? "0s"}` : ""}`
         : undefined;

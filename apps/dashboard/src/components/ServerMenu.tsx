@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, updateMonitor, type MonitorSummary } from "@/lib/api";
 import { clampMenuPosition, cleanMonitorName } from "@/lib/fleet-presentation";
+import type { GroupOption } from "@/lib/groups";
 
 export interface MenuAnchor {
     x: number;
@@ -8,16 +9,24 @@ export interface MenuAnchor {
     monitor: MonitorSummary;
 }
 
+export interface MenuItem {
+    label: string;
+    onSelect: () => void;
+    /** Destructive actions read red. */
+    danger?: boolean;
+}
+
 /**
- * Custom right-click menu for a server card. One item today (Rename);
- * this is the extension point if the wall ever needs more card actions.
+ * Custom right-click/⋯ menu for cards, monitor rows and group headers. The
+ * caller supplies the items; the menu only handles anchoring, dismissal and
+ * keyboard focus.
  *
  * Closes on Escape, outside pointer, scroll or resize. Focus lands on the
- * item when the menu opens so keyboard operators are not stranded.
+ * first item when the menu opens so keyboard operators are not stranded.
  */
-export function ServerMenu({ anchor, onRename, onClose }: {
+export function ServerMenu({ anchor, items, onClose }: {
     anchor: MenuAnchor;
-    onRename: () => void;
+    items: MenuItem[];
     onClose: () => void;
 }) {
     const ref = useRef<HTMLDivElement>(null);
@@ -62,14 +71,217 @@ export function ServerMenu({ anchor, onRename, onClose }: {
             style={{ left: pos.x, top: pos.y }}
             onContextMenu={(e) => e.preventDefault()}
         >
-            <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm hover:bg-surface hover:text-primary"
-                onClick={onRename}
+            {items.map((item) => (
+                <button
+                    key={item.label}
+                    type="button"
+                    role="menuitem"
+                    className={`flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm hover:bg-surface ${
+                        item.danger ? "text-destructive hover:text-destructive" : "hover:text-primary"
+                    }`}
+                    onClick={() => item.onSelect()}
+                >
+                    {item.label}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+/**
+ * Move a monitor (or group) into another group, or back to the top level.
+ * PATCHing `parent` broadcasts an invalidate, so every open board and the
+ * table resnapshot on their own.
+ */
+export function MoveDialog({ monitor, options, currentParent, onClose }: {
+    monitor: MonitorSummary;
+    options: GroupOption[];
+    currentParent: number | null;
+    onClose: () => void;
+}) {
+    const [parent, setParent] = useState(currentParent != null ? String(currentParent) : "");
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    async function save(e?: { preventDefault: () => void }) {
+        e?.preventDefault();
+        setSaving(true);
+        setError(null);
+        try {
+            await updateMonitor(monitor.id, { parent: parent ? Number(parent) : null });
+            onClose();
+        } catch (err) {
+            setError(err instanceof ApiError && err.status === 403
+                ? "This board token can't move monitors (needs write scope)."
+                : err instanceof Error ? err.message : "Move failed.");
+            setSaving(false);
+        }
+    }
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                onClose();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [onClose]);
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onPointerDown={(e) => {
+                if (e.target === e.currentTarget) {
+                    onClose();
+                }
+            }}
+        >
+            <form
+                role="dialog"
+                aria-modal="true"
+                aria-label={`Move ${monitor.name}`}
+                className="w-full max-w-sm rounded-lg border border-border bg-card p-5"
+                onSubmit={(e) => void save(e)}
             >
-                Rename…
-            </button>
+                <h2 className="mb-1 text-base font-semibold">Move to group</h2>
+                <p className="mb-3 text-xs text-quiet">Where should “{monitor.name}” live in the tree?</p>
+                <label className="mb-1 block text-xs text-quiet" htmlFor="monitor-move-select">Group</label>
+                <select
+                    id="monitor-move-select"
+                    value={parent}
+                    disabled={saving}
+                    autoFocus
+                    onChange={(e) => setParent(e.target.value)}
+                    className="mb-3 h-9 w-full rounded-md border border-input bg-surface px-2 text-sm"
+                >
+                    <option value="">— none (top level)</option>
+                    {options.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                </select>
+                {error ? <p className="mb-3 text-xs text-bad" role="alert">{error}</p> : null}
+                <div className="flex justify-end gap-2">
+                    <button
+                        type="button"
+                        disabled={saving}
+                        onClick={onClose}
+                        className="rounded-md px-3 py-1.5 text-sm text-quiet hover:text-primary"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="submit"
+                        disabled={saving}
+                        className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+                    >
+                        {saving ? "Moving…" : "Move"}
+                    </button>
+                </div>
+            </form>
+        </div>
+    );
+}
+
+/**
+ * Delete a group. Two modes: keep the contents (children move up to the
+ * group's parent, so the tree never orphans anything) or purge the whole
+ * subtree in one request. The counts come from the caller's roster.
+ */
+export function DeleteGroupDialog({ group, rows, children, parentName, onDelete, onClose }: {
+    group: MonitorSummary;
+    /** Non-group monitors in the whole subtree. */
+    rows: number;
+    /** Direct children (groups and monitors). */
+    children: number;
+    /** Where kept children land, for the explanation. */
+    parentName: string | null;
+    onDelete: (mode: "keep" | "purge") => void | Promise<void>;
+    onClose: () => void;
+}) {
+    const [purge, setPurge] = useState(false);
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                onClose();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [onClose]);
+
+    async function submit(e?: { preventDefault: () => void }) {
+        e?.preventDefault();
+        setBusy(true);
+        try {
+            await onDelete(purge ? "purge" : "keep");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onPointerDown={(e) => {
+                if (e.target === e.currentTarget) {
+                    onClose();
+                }
+            }}
+        >
+            <form
+                role="dialog"
+                aria-modal="true"
+                aria-label={`Delete group ${group.name}`}
+                className="w-full max-w-md rounded-lg border border-border bg-card p-5"
+                onSubmit={(e) => void submit(e)}
+            >
+                <h2 className="mb-1 text-base font-semibold">Delete group “{group.name}”</h2>
+                <p className="mb-3 text-xs text-quiet">
+                    {children} direct {children === 1 ? "child" : "children"} · {rows}{" "}
+                    {rows === 1 ? "monitor" : "monitors"} inside the whole subtree.
+                </p>
+                <label className="mb-3 flex items-start gap-2 text-sm">
+                    <input
+                        type="checkbox"
+                        checked={purge}
+                        disabled={busy}
+                        onChange={(e) => setPurge(e.target.checked)}
+                        className="mt-0.5 size-3.5 accent-[var(--primary)]"
+                    />
+                    <span>
+                        Also delete everything inside
+                        <span className="block text-[11px] text-quiet">
+                            Unchecked, the {children} direct {children === 1 ? "child moves" : "children move"} up to{" "}
+                            {parentName ?? "the top level"} and nothing is lost.
+                        </span>
+                    </span>
+                </label>
+                {purge && rows > 0 ? (
+                    <p className="mb-3 rounded-md bg-destructive/10 px-2.5 py-2 text-xs text-destructive" role="alert">
+                        {rows} {rows === 1 ? "monitor" : "monitors"} will be deleted with their history. This cannot be undone.
+                    </p>
+                ) : null}
+                <div className="flex justify-end gap-2">
+                    <button
+                        type="button"
+                        disabled={busy}
+                        onClick={onClose}
+                        className="rounded-md px-3 py-1.5 text-sm text-quiet hover:text-primary"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="submit"
+                        disabled={busy}
+                        className="rounded-md bg-destructive px-3 py-1.5 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+                    >
+                        {busy ? "Deleting…" : purge ? `Delete group + ${rows}` : "Delete group"}
+                    </button>
+                </div>
+            </form>
         </div>
     );
 }

@@ -126,6 +126,35 @@ pending, down names the children — ported into the Rust engine), ping rows
 show their ICMP hostname instead of a junk `https://` url, and right-click
 → Rename works on monitor-list rows as well as Superboard cards.
 
+### Group management, alert format, failure clearing — 2026-10-13 (second release)
+
+Operator feedback: "no obvious way to manage groups", alerts should name
+the group path/type/target, and push failures needed a way to clear.
+
+- **Group management in the dashboard.** A `New group` button in the
+  header; every group header and monitor row carries a `⋯` menu (right-
+  click works too). Groups: New subgroup / Rename group / Move group /
+  Delete group (delete offers "children move up" vs "delete everything").
+  Monitors: Rename / Move to group. The form's raw parent-id input became
+  a Group picker over real group paths ("work / MEKS"). The API needed no
+  changes — create/PATCH/DELETE already validate parents and cycles; the
+  "children move up" mode re-parents before deleting so nothing is
+  orphaned.
+- **Telegram alert shape** (operator-specified):
+  `[🔴 DOWN] [work / MEKS] [modernization-meks]` / `[push]
+  [modernization-meks]` / `[No heartbeat in the time window]` /
+  `[CPU 12% · RAM 43% · Disk / 71% · Load 0.42]`. The last line exists for
+  push monitors only (newest archived sample); metric alerts use the same
+  two-line shape with a `[⚠️ METRIC]`/`[✅ METRIC]` tag. Group paths come
+  from the monitor tree; ungrouped monitors read `[Ungrouped]`.
+- **Clear push failures.** `agent.failedPushes` is the agent's cumulative
+  counter; the server now stores `monitors.push_failures_ack` (migration
+  0006) and `POST /api/v1/monitors/{id}/push-failures/clear` acknowledges
+  the current value. The board shows `failedPushes - ack` and the
+  Superboard card menu offers "Clear push failures (N)" only while the
+  counter is ahead. Ingest drops the ack whenever a newest sample reports a
+  lower counter, so an agent restart can never leave new failures hidden.
+
 ### Superseded: pending Node rollout — 2026-10-12
 
 Kept for reference; not deployed (the Rust cutover replaced it).

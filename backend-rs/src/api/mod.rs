@@ -151,6 +151,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/monitors/{id}/heartbeats",
             get(monitors::heartbeats),
         )
+        .route(
+            "/api/v1/monitors/{id}/push-failures/clear",
+            post(monitors::clear_push_failures),
+        )
         .route("/api/v1/monitors/metrics/latest", get(metrics::latest_bulk))
         .route(
             "/api/v1/monitors/{id}/metrics/latest",

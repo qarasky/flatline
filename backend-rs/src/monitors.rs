@@ -75,6 +75,9 @@ pub struct Monitor {
     pub metric_cpu_threshold: Option<i64>,
     pub metric_ram_threshold: Option<i64>,
     pub metric_disk_threshold: Option<i64>,
+    /// Agent `failedPushes` value the operator last acknowledged; the board
+    /// shows the difference. Reset by ingest when the agent restarts.
+    pub push_failures_ack: i64,
     pub created_at: String,
 }
 
@@ -109,6 +112,7 @@ impl Monitor {
             metric_cpu_threshold: None,
             metric_ram_threshold: None,
             metric_disk_threshold: None,
+            push_failures_ack: 0,
             created_at: String::new(),
         }
     }
@@ -150,6 +154,9 @@ pub fn monitor_json(m: &Monitor, beat: Option<&Beat>, uptime: &UptimeWindows) ->
         "metricCpuThreshold": m.metric_cpu_threshold,
         "metricRamThreshold": m.metric_ram_threshold,
         "metricDiskThreshold": m.metric_disk_threshold,
+        // The agent's failedPushes counter value the operator acknowledged;
+        // the board shows reported - ack (never below zero).
+        "pushFailuresAck": m.push_failures_ack,
         "description": m.description,
         "method": m.method,
         "accepted_statuscodes": status_codes,

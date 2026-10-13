@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ApiError,
+    clearPushFailures,
     fetchLatestMetricsBulk,
     fetchAllMonitors,
     watchLive,
@@ -11,7 +12,7 @@ import {
 import { navigate } from "@/lib/router";
 import { TokenGate } from "@/components/TokenGate";
 import { FleetCard, type FleetServer } from "@/components/FleetCard";
-import { RenameDialog, ServerMenu, type MenuAnchor } from "@/components/ServerMenu";
+import { RenameDialog, ServerMenu, type MenuAnchor, type MenuItem } from "@/components/ServerMenu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fleetAttention, matchGroups } from "@/lib/fleet-presentation";
@@ -122,6 +123,43 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
         e.preventDefault();
         setMenu({ x: e.clientX, y: e.clientY, monitor });
     }, []);
+
+    // Menu contents for the current anchor. "Clear push failures" only
+    // appears while the agent's counter is ahead of the acknowledged value,
+    // so a clean card carries no noise. Clearing acknowledges on the server
+    // (the agent has no control channel) and the invalidate resnapshots.
+    const menuItems: MenuItem[] = useMemo(() => {
+        if (!menu) {
+            return [];
+        }
+        const server = servers.find((s) => s.monitor.id === menu.monitor.id);
+        const items: MenuItem[] = [
+            {
+                label: "Rename…",
+                onSelect: () => {
+                    const name = server ? server.monitor.name || server.metrics.host?.hostname || "Unnamed server" : menu.monitor.name;
+                    setRenaming({ monitor: menu.monitor, name });
+                    setMenu(null);
+                },
+            },
+        ];
+
+        const reported = server?.metrics.agent?.failedPushes ?? 0;
+        const ack = server?.monitor.pushFailuresAck ?? menu.monitor.pushFailuresAck ?? 0;
+        if (menu.monitor.type === "push" && reported > ack) {
+            const pending = reported - ack;
+            items.push({
+                label: `Clear push failures (${pending})`,
+                onSelect: () => {
+                    setMenu(null);
+                    void clearPushFailures(menu.monitor.id).catch((failure) => {
+                        setError(failure instanceof Error ? failure.message : "Clear failed.");
+                    });
+                },
+            });
+        }
+        return items;
+    }, [ menu, servers ]);
     // Resolved scope names for the wall header; raw filter when unresolvable.
     const [scopeNames, setScopeNames] = useState<string[]>([]);
     const scopeTitle = scopeNames.length > 0 ? scopeNames.join(", ") : filter;
@@ -409,12 +447,7 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
             {menu ? (
                 <ServerMenu
                     anchor={menu}
-                    onRename={() => {
-                        const server = servers.find((s) => s.monitor.id === menu.monitor.id);
-                        const name = server ? server.monitor.name || server.metrics.host?.hostname || "Unnamed server" : menu.monitor.name;
-                        setRenaming({ monitor: menu.monitor, name });
-                        setMenu(null);
-                    }}
+                    items={menuItems}
                     onClose={() => setMenu(null)}
                 />
             ) : null}

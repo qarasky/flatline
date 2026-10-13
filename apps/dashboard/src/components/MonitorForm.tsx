@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { SyntheticEvent } from "react";
 import { ApiError, createMonitor, fetchMonitorTypes, updateMonitor, type MonitorSummary } from "@/lib/api";
 import { ALERT_THRESHOLD_FIELDS, COMMON_FIELDS, SCHEDULING_FIELDS, TYPE_SCHEMAS, defaultsFor, fieldsFor, schemaFor, type FieldDef } from "@/lib/monitor-schema";
+import type { GroupOption } from "@/lib/groups";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -111,13 +112,19 @@ function FieldInput({
 /**
  * Compact monitor form: type picker + universal basics + type basics.
  * Advanced lives behind a toggle and on a separate view by design.
+ *
+ * `groupChoices` turns the raw "parent" id field into a Group picker by
+ * name; the caller passes the roster-derived options (already excluding the
+ * edited group's own subtree, so a group can never move into itself).
  */
 export function MonitorForm({
     initial,
+    groupChoices,
     onSaved,
     onCancel,
 }: {
-    initial?: (MonitorSummary & Record<string, unknown>) | null;
+    initial?: (Partial<MonitorSummary> & Record<string, unknown>) | null;
+    groupChoices?: GroupOption[];
     onSaved: () => void;
     onCancel: () => void;
 }) {
@@ -160,6 +167,17 @@ export function MonitorForm({
 
     function set(key: string, value: unknown) {
         setValues((prev) => ({ ...prev, [key]: value }));
+    }
+
+    /** Field writes go through here so the Group select stores an id. */
+    function setField(field: FieldDef, value: unknown) {
+        if (field.key === "parent") {
+            // Clearing the picker must send null (leave the group), not
+            // omit the key — a partial PATCH would keep the old parent.
+            set("parent", value === "" || value == null ? null : Number(value));
+            return;
+        }
+        set(field.key, value);
     }
 
     async function submit(event: SyntheticEvent) {
@@ -206,6 +224,19 @@ export function MonitorForm({
     const advanced = fieldsFor(type).filter((f) => f.advanced);
     const typeOptions = serverTypes ?? Object.keys(TYPE_SCHEMAS).sort();
 
+    // The Group field is a picker over real group names when the caller
+    // supplies the roster; without it the raw id input stays (API clients).
+    const scheduling: FieldDef[] = SCHEDULING_FIELDS.map((field) =>
+        field.key === "parent" && groupChoices
+            ? {
+                ...field,
+                kind: "select" as const,
+                help: "Parent group. Pick a name, not an id.",
+                options: [ { value: "", label: "— none (top level)" }, ...groupChoices ],
+            }
+            : field
+    );
+
     return (
         <form onSubmit={submit} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
@@ -229,14 +260,14 @@ export function MonitorForm({
 
             <div className="grid grid-cols-2 gap-3">
                 {COMMON_FIELDS.map((f) => (
-                    <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => set(f.key, v)} />
+                    <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => setField(f, v)} />
                 ))}
             </div>
 
             {basics.length > 0 ? (
                 <div className="grid grid-cols-1 gap-3">
                     {basics.map((f) => (
-                        <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => set(f.key, v)} />
+                        <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => setField(f, v)} />
                     ))}
                 </div>
             ) : null}
@@ -248,10 +279,10 @@ export function MonitorForm({
                 {showAdvanced ? (
                     <div className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 md:grid-cols-2">
                         {advanced.map((f) => (
-                            <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => set(f.key, v)} />
+                            <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => setField(f, v)} />
                         ))}
-                        {SCHEDULING_FIELDS.filter((f) => !advanced.some((a) => a.key === f.key)).map((f) => (
-                            <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => set(f.key, v)} />
+                        {scheduling.filter((f) => !advanced.some((a) => a.key === f.key)).map((f) => (
+                            <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => setField(f, v)} />
                         ))}
                         {advanced.length === 0 ? (
                             <p className="text-xs text-quiet md:col-span-2">Scheduling and group options. Defaults are usually right.</p>

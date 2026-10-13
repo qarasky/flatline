@@ -460,7 +460,10 @@ async fn threshold_alerts_debounce_page_and_recover() {
         .filter_map(|body| body["text"].as_str().map(str::to_string))
         .collect();
     assert_eq!(messages.len(), 1, "one alert after the debounce");
-    assert_eq!(messages[0], "[hot-box] [⚠️ Metric] CPU 95% ≥ threshold 90%");
+    assert_eq!(
+        messages[0],
+        "[⚠️ METRIC] [Ungrouped] [hot-box]\n[cpu] [CPU 95% ≥ threshold 90%]"
+    );
 
     // Recovery below threshold - hysteresis.
     push(
@@ -484,7 +487,7 @@ async fn threshold_alerts_debounce_page_and_recover() {
     assert_eq!(messages.len(), 2);
     assert_eq!(
         messages[1],
-        "[hot-box] [✅ Metric] CPU recovered: 80% (threshold 90%)"
+        "[✅ METRIC] [Ungrouped] [hot-box]\n[cpu] [CPU recovered: 80% (threshold 90%)]"
     );
 }
 

@@ -416,8 +416,7 @@ impl Engine {
     fn dispatch_notification(self: &Arc<Self>, monitor: &Monitor, beat: &Beat) {
         let pool = self.pool.clone();
         let client = self.notify_client.clone();
-        let monitor_id = monitor.id;
-        let monitor_name = monitor.name.clone();
+        let monitor = monitor.clone();
         let status = beat.status;
         let msg = beat
             .msg
@@ -426,8 +425,10 @@ impl Engine {
             .unwrap_or_else(|| "N/A".to_string());
 
         tokio::spawn(async move {
-            let message = notify::heartbeat_message(&monitor_name, status, &msg);
-            notify::dispatch_message(&pool, &client, monitor_id, message).await;
+            // The builder reads the group chain and, for push monitors, the
+            // last telemetry sample — done here, off the check loop.
+            let message = notify::build_heartbeat_message(&pool, &monitor, status, &msg).await;
+            notify::dispatch_message(&pool, &client, monitor.id, message).await;
         });
     }
 

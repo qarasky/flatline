@@ -109,6 +109,8 @@ export interface MonitorSummary {
     metricCpuThreshold?: number | null;
     metricRamThreshold?: number | null;
     metricDiskThreshold?: number | null;
+    /** Agent `failedPushes` value the operator last acknowledged. */
+    pushFailuresAck?: number;
     uptime24h: number | null;
     uptime7d: number | null;
     uptime30d: number | null;
@@ -362,6 +364,22 @@ export function updateMonitor(
 export function deleteMonitor(id: number, deleteChildren = false): Promise<{ ok: true; deleted: number[]; count: number }> {
     const suffix = deleteChildren ? "?deleteChildren=true" : "";
     return request(`/api/v1/monitors/${id}${suffix}`, { method: "DELETE" });
+}
+
+/**
+ * Acknowledge a push monitor's current `failedPushes` counter.
+ *
+ * The agent owns the counter; the server stores the acknowledged value and
+ * the board shows the difference. The ack is dropped automatically when the
+ * agent restarts and its counter moves backwards.
+ */
+export function clearPushFailures(id: number): Promise<{
+    ok: true;
+    id: number;
+    pushFailuresAck: number;
+    reported: number | null;
+}> {
+    return request(`/api/v1/monitors/${id}/push-failures/clear`, { method: "POST" });
 }
 
 /**

@@ -505,10 +505,43 @@ async fn down_transition_sends_telegram_alert() {
     .await;
     let push_token = push_token.unwrap();
 
-    // First beat is UP: silent.
+    // Nest the monitor under a group so the alert carries the path.
+    let (group_id, _) = create_monitor(
+        &h,
+        json!({ "name": "work", "type": "group", "interval": 20 }),
+    )
+    .await;
+    let (status, body) = send(
+        &h.app,
+        request(
+            "PATCH",
+            &format!("/api/v1/monitors/{id}"),
+            Some(&h.token),
+            Some(json!({ "parent": group_id })),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "reparent failed: {body}");
+
+    // First beat is UP and carries one telemetry sample: silent, but the
+    // sample is what a later alert quotes as "last metrics".
     let (status, _) = send(
         &h.app,
-        request("GET", &format!("/api/push/{push_token}"), None, None),
+        request(
+            "POST",
+            &format!("/api/push/{push_token}"),
+            None,
+            Some(json!({
+                "metrics": {
+                    "host": { "hostname": "cmn" },
+                    "cpu": { "percent": 12.3, "cores": 4 },
+                    "mem": { "percent": 43.0, "total": 1000, "used": 430 },
+                    "disk": [ { "mount": "/", "total": 100, "used": 71, "percent": 71.0 } ],
+                    "load": { "avg1": 0.42 },
+                    "agent": { "version": "1.5.0", "uptime": 10, "failedPushes": 2 },
+                }
+            })),
+        ),
     )
     .await;
     assert_eq!(status, 200);
@@ -543,7 +576,13 @@ async fn down_transition_sends_telegram_alert() {
     let alert = alert.expect("a down transition must send a Telegram message");
     assert_eq!(alert["chat_id"], "-100123");
     let text = alert["text"].as_str().unwrap_or_default();
-    assert_eq!(text, "[cmn] [🔴 Down] power cut");
+    assert_eq!(
+        text,
+        "[🔴 DOWN] [work] [cmn]\n\
+         [push] [cmn]\n\
+         [power cut]\n\
+         [CPU 12% · RAM 43% · Disk / 71% · Load 0.42]"
+    );
     assert_eq!(alert["link_preview_options"]["is_disabled"], true);
 
     // The link arrived through the API's notificationIDList handling.

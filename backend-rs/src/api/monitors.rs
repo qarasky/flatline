@@ -467,6 +467,51 @@ pub async fn patch(
     })))
 }
 
+/// POST /api/v1/monitors/{id}/push-failures/clear
+///
+/// Acknowledge the agent's current `failedPushes` counter. The board shows
+/// `failedPushes - pushFailuresAck`, so this clears the visible failures
+/// without touching the agent (there is no server-to-agent channel). The
+/// counter resets when the agent restarts; ingest drops the ack when it
+/// sees the counter move backwards, so new failures are never masked.
+pub async fn clear_push_failures(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, ApiError> {
+    let _monitor = load(&state.pool, id).await?;
+
+    // The latest sample from the live cache, else the newest archived row.
+    let mut reported = state.metrics.latest_json(id).and_then(|sample| {
+        sample
+            .pointer("/metrics/agent/failedPushes")
+            .and_then(Value::as_u64)
+    });
+    if reported.is_none()
+        && let Some((_, sample)) = crate::metrics::ingest::load_latest(&state.pool, id).await
+    {
+        reported = sample
+            .pointer("/agent/failedPushes")
+            .and_then(Value::as_u64);
+    }
+
+    let ack = reported.unwrap_or(0).min(i64::MAX as u64) as i64;
+    sqlx::query("UPDATE monitors SET push_failures_ack = ? WHERE id = ?")
+        .bind(ack)
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .map_err(internal)?;
+
+    state.events.invalidate();
+
+    Ok(Json(json!({
+        "ok": true,
+        "id": id,
+        "pushFailuresAck": ack,
+        "reported": reported,
+    })))
+}
+
 /// DELETE /api/v1/monitors/{id}
 pub async fn delete(
     State(state): State<AppState>,

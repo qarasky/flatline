@@ -305,6 +305,23 @@ impl Metrics {
             );
         }
 
+        // A restarted agent resets its counters. A stale ack would then hide
+        // the first `ack` new failures, so drop it whenever the newest sample
+        // reports a lower value than the stored one. Buffered older samples
+        // never get here (only the latest sample reaches this point).
+        if let Some(reported) = sample_metrics
+            .pointer("/agent/failedPushes")
+            .and_then(Value::as_u64)
+        {
+            let _ = sqlx::query(
+                "UPDATE monitors SET push_failures_ack = 0 WHERE id = ? AND push_failures_ack > ?",
+            )
+            .bind(monitor_id)
+            .bind(reported as i64)
+            .execute(&self.pool)
+            .await;
+        }
+
         self.events.publish(json!({
             "type": "metrics",
             "monitorId": monitor_id,

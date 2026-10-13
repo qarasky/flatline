@@ -139,9 +139,14 @@ pub fn step_metric(
     (now_ms - state.last_notified >= COOLDOWN_MS).then_some(Action::Alert)
 }
 
-/// `[name] [⚠️ Metric] CPU 94.2% ≥ threshold 90%`, mirroring the heartbeat
-/// alerts' `[name] [🔴 Down]` shape.
+/// Metric alert in the same bracketed shape as the heartbeat alerts:
+///
+/// ```text
+/// [⚠️ METRIC] [work / MEKS] [modernization-meks]
+/// [cpu] [94.2% ≥ threshold 90%]
+/// ```
 pub fn format_metric_message(
+    group: Option<&str>,
     monitor_name: &str,
     metric: &str,
     mount: Option<&str>,
@@ -149,27 +154,33 @@ pub fn format_metric_message(
     threshold: i64,
     action: Action,
 ) -> String {
-    let label = match metric {
-        "cpu" => "CPU",
-        "ram" => "RAM",
-        _ => "Disk",
-    };
+    let group = group.unwrap_or("Ungrouped");
     let target = if metric == "disk" {
         match mount {
             Some(mount) => format!("Disk {mount}"),
-            None => label.to_string(),
+            None => "Disk".to_string(),
         }
     } else {
-        label.to_string()
+        match metric {
+            "cpu" => "CPU".to_string(),
+            "ram" => "RAM".to_string(),
+            other => other.to_string(),
+        }
     };
     let rounded = (value * 10.0).round() / 10.0;
 
-    if action == Action::Recover {
-        return format!(
-            "[{monitor_name}] [✅ Metric] {target} recovered: {rounded}% (threshold {threshold}%)"
-        );
-    }
-    format!("[{monitor_name}] [⚠️ Metric] {target} {rounded}% ≥ threshold {threshold}%")
+    let (tag, detail) = if action == Action::Recover {
+        (
+            "✅ METRIC",
+            format!("{target} recovered: {rounded}% (threshold {threshold}%)"),
+        )
+    } else {
+        (
+            "⚠️ METRIC",
+            format!("{target} {rounded}% ≥ threshold {threshold}%"),
+        )
+    };
+    format!("[{tag}] [{group}] [{monitor_name}]\n[{metric}] [{detail}]")
 }
 
 /// Evaluate one monitor's latest sample against its thresholds.
@@ -218,7 +229,9 @@ pub(crate) async fn evaluate(metrics: &Metrics, monitor: &Monitor, now_ms: i64) 
             slot.last_notified = now_ms;
         }
 
+        let group = notify::group_path(&metrics.pool, monitor.parent).await;
         let message = format_metric_message(
+            group.as_deref(),
             &monitor.name,
             metric,
             disk_mount.as_deref(),
@@ -318,14 +331,30 @@ mod tests {
     }
 
     #[test]
-    fn messages_match_the_node_shape() {
+    fn messages_use_the_bracketed_alert_shape() {
         assert_eq!(
-            format_metric_message("cmn", "cpu", None, 94.2, 90, Action::Alert),
-            "[cmn] [⚠️ Metric] CPU 94.2% ≥ threshold 90%"
+            format_metric_message(
+                Some("work / MEKS"),
+                "cmn",
+                "cpu",
+                None,
+                94.2,
+                90,
+                Action::Alert
+            ),
+            "[⚠️ METRIC] [work / MEKS] [cmn]\n[cpu] [CPU 94.2% ≥ threshold 90%]"
         );
         assert_eq!(
-            format_metric_message("cmn", "disk", Some("/data"), 91.0, 90, Action::Recover),
-            "[cmn] [✅ Metric] Disk /data recovered: 91% (threshold 90%)"
+            format_metric_message(
+                None,
+                "cmn",
+                "disk",
+                Some("/data"),
+                91.0,
+                90,
+                Action::Recover
+            ),
+            "[✅ METRIC] [Ungrouped] [cmn]\n[disk] [Disk /data recovered: 91% (threshold 90%)]"
         );
     }
 }

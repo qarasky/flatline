@@ -176,13 +176,18 @@ export interface AgentWarning {
  * card helps nobody. Counts are cumulative since the agent started, so a
  * warning means "has had trouble", not necessarily "failing right now";
  * the title carries the detail needed to check journald.
+ *
+ * `pushFailuresAck` is the counter value the operator cleared: only
+ * failures since then are news. The server drops a stale ack when the
+ * agent restarts, so this subtraction can never hide a new failure.
  */
-export function agentWarnings(agent: AgentMetrics | undefined): AgentWarning | null {
+export function agentWarnings(agent: AgentMetrics | undefined, pushFailuresAck = 0): AgentWarning | null {
     if (!agent) { return null; }
 
     const collectorErrors = Object.entries(agent.collectorErrors ?? {})
         .filter(([name, count]) => name !== "docker" && Number.isFinite(count) && count > 0);
-    const failedPushes = Number.isFinite(agent.failedPushes) ? agent.failedPushes as number : 0;
+    const reported = Number.isFinite(agent.failedPushes) ? agent.failedPushes as number : 0;
+    const failedPushes = Math.max(0, reported - Math.max(0, pushFailuresAck));
     const samplesDropped = Number.isFinite(agent.samplesDropped) ? agent.samplesDropped as number : 0;
 
     const parts: string[] = [];
