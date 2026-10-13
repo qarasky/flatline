@@ -325,6 +325,9 @@ pub async fn create(
     if matches!(monitor.kind.as_str(), "http" | "https") && monitor.url.is_none() {
         return Err(ApiError::bad("`url` is required for http monitors."));
     }
+    if monitor.kind == "ping" && monitor.hostname.is_none() {
+        return Err(ApiError::bad("`hostname` is required for ping monitors."));
+    }
 
     validate_parent(&state.pool, None, monitor.parent).await?;
 
@@ -333,8 +336,9 @@ pub async fn create(
             name, type, active, description, interval, retry_interval, maxretries,
             timeout, resend_interval, upside_down, parent, weight, url, method,
             accepted_statuscodes, ignore_tls, maxredirects, push_token,
+            hostname, packet_size, ping_count, ping_numeric, ping_per_request_timeout,
             metric_cpu_threshold, metric_ram_threshold, metric_disk_threshold
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *",
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *",
     )
     .bind(&monitor.name)
     .bind(&monitor.kind)
@@ -354,6 +358,11 @@ pub async fn create(
     .bind(monitor.ignore_tls)
     .bind(monitor.maxredirects)
     .bind(&monitor.push_token)
+    .bind(&monitor.hostname)
+    .bind(monitor.packet_size)
+    .bind(monitor.ping_count)
+    .bind(monitor.ping_numeric)
+    .bind(monitor.ping_per_request_timeout)
     .bind(monitor.metric_cpu_threshold)
     .bind(monitor.metric_ram_threshold)
     .bind(monitor.metric_disk_threshold)
@@ -403,7 +412,8 @@ pub async fn patch(
             name = ?, active = ?, description = ?, interval = ?, retry_interval = ?,
             maxretries = ?, timeout = ?, resend_interval = ?, upside_down = ?, parent = ?,
             weight = ?, url = ?, method = ?, accepted_statuscodes = ?, ignore_tls = ?,
-            maxredirects = ?, push_token = ?, metric_cpu_threshold = ?,
+            maxredirects = ?, push_token = ?, hostname = ?, packet_size = ?, ping_count = ?,
+            ping_numeric = ?, ping_per_request_timeout = ?, metric_cpu_threshold = ?,
             metric_ram_threshold = ?, metric_disk_threshold = ?
          WHERE id = ? RETURNING *",
     )
@@ -424,6 +434,11 @@ pub async fn patch(
     .bind(monitor.ignore_tls)
     .bind(monitor.maxredirects)
     .bind(&monitor.push_token)
+    .bind(&monitor.hostname)
+    .bind(monitor.packet_size)
+    .bind(monitor.ping_count)
+    .bind(monitor.ping_numeric)
+    .bind(monitor.ping_per_request_timeout)
     .bind(monitor.metric_cpu_threshold)
     .bind(monitor.metric_ram_threshold)
     .bind(monitor.metric_disk_threshold)

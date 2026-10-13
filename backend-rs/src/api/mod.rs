@@ -264,6 +264,7 @@ async fn monitor_types() -> impl IntoResponse {
         "http": { "name": "HTTP", "supportsConditions": false, "allowCustomStatus": false },
         "https": { "name": "HTTPS", "supportsConditions": false, "allowCustomStatus": false },
         "push": { "name": "Push", "supportsConditions": false, "allowCustomStatus": false },
+        "ping": { "name": "Ping", "supportsConditions": false, "allowCustomStatus": false },
         "group": { "name": "Group", "supportsConditions": false, "allowCustomStatus": false },
     });
 

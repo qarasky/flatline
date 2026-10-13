@@ -15,7 +15,7 @@ use crate::auth::mint_token;
 use crate::heartbeats::{Beat, UptimeWindows};
 
 /// Monitor types this backend understands.
-pub const TYPES: &[&str] = &["http", "https", "push", "group"];
+pub const TYPES: &[&str] = &["http", "https", "push", "ping", "group"];
 
 /// Fields a create/patch payload may set. Anything else is ignored.
 pub const WRITABLE_FIELDS: &[&str] = &[
@@ -35,6 +35,11 @@ pub const WRITABLE_FIELDS: &[&str] = &[
     "ignoreTls",
     "maxredirects",
     "pushToken",
+    "hostname",
+    "packetSize",
+    "pingCount",
+    "pingNumeric",
+    "pingPerRequestTimeout",
     "metricCpuThreshold",
     "metricRamThreshold",
     "metricDiskThreshold",
@@ -62,6 +67,11 @@ pub struct Monitor {
     pub ignore_tls: i64,
     pub maxredirects: i64,
     pub push_token: Option<String>,
+    pub hostname: Option<String>,
+    pub packet_size: i64,
+    pub ping_count: i64,
+    pub ping_numeric: i64,
+    pub ping_per_request_timeout: i64,
     pub metric_cpu_threshold: Option<i64>,
     pub metric_ram_threshold: Option<i64>,
     pub metric_disk_threshold: Option<i64>,
@@ -91,6 +101,11 @@ impl Monitor {
             ignore_tls: 0,
             maxredirects: 10,
             push_token: None,
+            hostname: None,
+            packet_size: 56,
+            ping_count: 1,
+            ping_numeric: 1,
+            ping_per_request_timeout: 2,
             metric_cpu_threshold: None,
             metric_ram_threshold: None,
             metric_disk_threshold: None,
@@ -146,6 +161,11 @@ pub fn monitor_json(m: &Monitor, beat: Option<&Beat>, uptime: &UptimeWindows) ->
         "ignoreTls": m.ignore_tls != 0,
         "maxredirects": m.maxredirects,
         "pushToken": m.push_token,
+        "hostname": m.hostname,
+        "packetSize": m.packet_size,
+        "pingCount": m.ping_count,
+        "pingNumeric": m.ping_numeric != 0,
+        "pingPerRequestTimeout": m.ping_per_request_timeout,
         "createdDate": m.created_at,
     })
 }
@@ -198,6 +218,14 @@ pub fn apply_payload(
             "ignoreTls" => monitor.ignore_tls = bool_int(value, "ignoreTls")?,
             "maxredirects" => monitor.maxredirects = bounded_int(value, "maxredirects", 0, 100)?,
             "pushToken" => monitor.push_token = optional_string(value),
+            "hostname" => monitor.hostname = optional_string(value),
+            "packetSize" => monitor.packet_size = bounded_int(value, "packetSize", 1, 65_500)?,
+            "pingCount" => monitor.ping_count = bounded_int(value, "pingCount", 1, 100)?,
+            "pingNumeric" => monitor.ping_numeric = bool_int(value, "pingNumeric")?,
+            "pingPerRequestTimeout" => {
+                monitor.ping_per_request_timeout =
+                    bounded_int(value, "pingPerRequestTimeout", 1, 60)?
+            }
             "metricCpuThreshold" => monitor.metric_cpu_threshold = threshold(value),
             "metricRamThreshold" => monitor.metric_ram_threshold = threshold(value),
             "metricDiskThreshold" => monitor.metric_disk_threshold = threshold(value),

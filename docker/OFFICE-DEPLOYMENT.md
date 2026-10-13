@@ -73,8 +73,9 @@ Committed but **not yet deployed** anywhere:
 - **Rust backend rewrite (M0–M5):** a full replacement backend is prepared
   under `backend-rs/`, with the importer and cutover runbook in
   `docker/RUST-CUTOVER.md`. Not deployed; the Node stack below keeps
-  running until that runbook is walked. Note: three `ping` monitors are
-  outside the rewrite's locked scope and would be skipped at cutover.
+  running until that runbook is walked. The rewrite covers push, HTTP(S),
+  ping and group monitors — the full fleet, including the three ICMP
+  monitors.
 
 - v2 consolidation: the single image serves the API and the web app. On
   deploy, load the new image, update `compose.yaml` (one service, no

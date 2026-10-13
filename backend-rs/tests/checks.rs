@@ -308,6 +308,78 @@ async fn push_watcher_pends_then_downs_after_the_window() {
 }
 
 #[tokio::test]
+async fn ping_engine_checks_icmp_when_available() {
+    // The checker shells out to the system `ping`; CI images without it
+    // skip rather than fail.
+    let available = std::process::Command::new("ping")
+        .arg("-V")
+        .output()
+        .map(|output| output.status.success() || !output.stdout.is_empty())
+        .unwrap_or(false);
+    if !available {
+        eprintln!("skipping: no `ping` binary on PATH");
+        return;
+    }
+
+    let h = harness().await;
+    let (up_id, _) = create_monitor(
+        &h,
+        json!({
+            "name": "localhost", "type": "ping", "hostname": "127.0.0.1",
+            "interval": 20, "timeout": 5, "pingCount": 1, "pingPerRequestTimeout": 2
+        }),
+    )
+    .await;
+
+    // A .invalid hostname never resolves: the failure path with the raw
+    // ping output as the message, like the Node wrapper.
+    let (down_id, _) = create_monitor(
+        &h,
+        json!({
+            "name": "nowhere", "type": "ping", "hostname": "definitely-not-a-host.invalid",
+            "interval": 20, "timeout": 5, "pingCount": 1, "pingPerRequestTimeout": 2
+        }),
+    )
+    .await;
+
+    h.state.engine.start_all().await;
+
+    let mut up_seen = false;
+    for _ in 0..100 {
+        if let Some(beat) = heartbeats::latest(&h.pool, up_id).await.unwrap()
+            && beat.status == UP
+        {
+            assert_eq!(beat.msg.as_deref(), Some(""));
+            assert!(beat.ping.unwrap_or(-1.0) >= 0.0);
+            up_seen = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(up_seen, "the ping check must record an UP heartbeat");
+
+    let mut down_seen = false;
+    for _ in 0..200 {
+        if let Some(beat) = heartbeats::latest(&h.pool, down_id).await.unwrap()
+            && beat.status == DOWN
+        {
+            let message = beat.msg.unwrap_or_default();
+            assert!(!message.is_empty(), "the failure reports ping's output");
+            down_seen = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        down_seen,
+        "an unresolvable host must record a DOWN heartbeat"
+    );
+
+    h.state.engine.stop(up_id);
+    h.state.engine.stop(down_id);
+}
+
+#[tokio::test]
 async fn down_transition_sends_telegram_alert() {
     let h = harness().await;
 

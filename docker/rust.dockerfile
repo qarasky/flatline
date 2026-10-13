@@ -42,11 +42,12 @@ COPY backend-rs/src src
 COPY backend-rs/migrations migrations
 RUN touch src/main.rs src/lib.rs && cargo build --release
 
-# Runtime: glibc base matching the build image, curl for the healthcheck.
+# Runtime: glibc base matching the build image, curl for the healthcheck,
+# iputils-ping for the ICMP checker.
 FROM debian:trixie-slim AS release
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl \
+    && apt-get install --yes --no-install-recommends ca-certificates curl iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

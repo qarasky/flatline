@@ -26,6 +26,13 @@ use crate::notify;
 /// monitor list and the SSE patch cheap.
 const UPTIME_TTL: Duration = Duration::from_secs(30);
 
+/// Which check a loop runs.
+#[derive(Clone, Copy)]
+enum Check {
+    Http,
+    Ping,
+}
+
 pub struct Engine {
     pool: SqlitePool,
     events: Arc<Events>,
@@ -109,7 +116,10 @@ impl Engine {
 
         let engine = Arc::clone(self);
         let handle = match monitor.kind.as_str() {
-            "http" | "https" => tokio::spawn(async move { engine.http_loop(monitor).await }),
+            "http" | "https" => {
+                tokio::spawn(async move { engine.check_loop(monitor, Check::Http).await })
+            }
+            "ping" => tokio::spawn(async move { engine.check_loop(monitor, Check::Ping).await }),
             "push" => tokio::spawn(async move { engine.push_loop(monitor).await }),
             _ => return,
         };
@@ -159,11 +169,16 @@ impl Engine {
         windows
     }
 
-    /// The HTTP check loop: check immediately (like the Node backend), then
-    /// every interval — or every retry interval while the walk is PENDING.
-    async fn http_loop(self: Arc<Self>, monitor: Monitor) {
+    /// The HTTP and ping check loops: check immediately (like the Node
+    /// backend), then every interval — or every retry interval while the
+    /// walk is PENDING.
+    async fn check_loop(self: Arc<Self>, monitor: Monitor, check: Check) {
         loop {
-            let (requested, ping, msg) = match self.http_check(&monitor).await {
+            let outcome = match check {
+                Check::Http => self.http_check(&monitor).await,
+                Check::Ping => self.ping_check(&monitor).await,
+            };
+            let (requested, ping, msg) = match outcome {
                 Ok((ping, msg)) => (UP, Some(ping), msg),
                 Err(message) => (DOWN, None, message),
             };
@@ -368,6 +383,85 @@ impl Engine {
         }
     }
 
+    /// One ICMP check through the system `ping` binary.
+    ///
+    /// Same contract as the Node wrapper: count, packet size, per-request
+    /// timeout and a global deadline; the first reply time is the reading.
+    /// A failure reports the raw ping output, exactly like Node.
+    async fn ping_check(&self, monitor: &Monitor) -> Result<(f64, String), String> {
+        let hostname = monitor
+            .hostname
+            .as_deref()
+            .filter(|hostname| !hostname.is_empty())
+            .ok_or_else(|| "No hostname configured".to_string())?;
+
+        let count = monitor.ping_count.max(1);
+        let size = monitor.packet_size.max(1);
+        let deadline = if monitor.timeout > 0 {
+            monitor.timeout
+        } else {
+            10
+        };
+        let per_request = monitor.ping_per_request_timeout.max(1);
+
+        let mut args: Vec<String> = Vec::new();
+        if monitor.ping_numeric != 0 {
+            args.push("-n".to_string());
+        }
+        if cfg!(target_os = "macos") {
+            // macOS: -t is the global deadline in seconds, -W is the
+            // per-reply wait in milliseconds.
+            args.extend([
+                "-c".to_string(),
+                count.to_string(),
+                "-t".to_string(),
+                deadline.to_string(),
+                "-W".to_string(),
+                (per_request * 1000).to_string(),
+                "-s".to_string(),
+                size.to_string(),
+            ]);
+        } else {
+            // iputils (Linux): -W is the per-reply wait in seconds, -w the
+            // global deadline.
+            args.extend([
+                "-W".to_string(),
+                per_request.to_string(),
+                "-w".to_string(),
+                deadline.to_string(),
+                "-c".to_string(),
+                count.to_string(),
+                "-s".to_string(),
+                size.to_string(),
+            ]);
+        }
+        args.push(hostname.to_string());
+
+        let mut command = tokio::process::Command::new("ping");
+        command.args(&args).kill_on_drop(true);
+        let output =
+            tokio::time::timeout(Duration::from_secs((deadline + 5) as u64), command.output())
+                .await
+                .map_err(|_| format!("ping timed out after {deadline}s"))?
+                .map_err(|error| format!("ping failed to start: {error}"))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        if let Some(ping) = parse_reply_ms(&stdout) {
+            return Ok((ping, String::new()));
+        }
+
+        let message = if !stdout.trim().is_empty() {
+            stdout.trim().to_string()
+        } else if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else {
+            format!("ping exited with {}", output.status)
+        };
+        Err(message)
+    }
+
     /// Clients are cached by the two knobs that differ per monitor.
     fn client_for(&self, ignore_tls: bool, maxredirects: i64) -> reqwest::Client {
         let key = (ignore_tls, maxredirects);
@@ -413,6 +507,28 @@ fn accepted_status(accepted: &str, status: u16) -> bool {
     })
 }
 
+/// First reply time from `ping` output: `time=0.042 ms` or `time<1 ms`.
+/// Mirrors the npm parser's "first successful reply" contract.
+fn parse_reply_ms(output: &str) -> Option<f64> {
+    for line in output.lines() {
+        let rest = if let Some(index) = line.find("time=") {
+            &line[index + 5..]
+        } else if let Some(index) = line.find("time<") {
+            &line[index + 5..]
+        } else {
+            continue;
+        };
+        let number: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        if let Ok(value) = number.parse::<f64>() {
+            return Some(value);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,5 +543,27 @@ mod tests {
         // A malformed list falls back to the default range.
         assert!(accepted_status("not json", 204));
         assert!(!accepted_status("not json", 404));
+    }
+
+    #[test]
+    fn ping_reply_times_parse_from_real_output() {
+        let linux = "PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.\n\
+                     64 bytes from 1.1.1.1: icmp_seq=1 ttl=57 time=12.4 ms\n\
+                     \n--- 1.1.1.1 ping statistics ---\n\
+                     1 packets transmitted, 1 received, 0% packet loss, time 0ms\n";
+        assert_eq!(parse_reply_ms(linux), Some(12.4));
+
+        let mac = "PING 127.0.0.1 (127.0.0.1): 56 data bytes\n\
+                   64 bytes from 127.0.0.1: icmp_seq=0 ttl=64 time=0.042 ms\n";
+        assert_eq!(parse_reply_ms(mac), Some(0.042));
+
+        // Sub-millisecond replies on some builds.
+        let fast = "64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time<1 ms\n";
+        assert_eq!(parse_reply_ms(fast), Some(1.0));
+
+        let dead = "PING 203.0.113.1 (203.0.113.1) 56(84) bytes of data.\n\
+                    \n--- 203.0.113.1 ping statistics ---\n\
+                    1 packets transmitted, 0 received, 100% packet loss, time 0ms\n";
+        assert_eq!(parse_reply_ms(dead), None);
     }
 }

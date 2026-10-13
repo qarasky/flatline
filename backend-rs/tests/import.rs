@@ -26,6 +26,8 @@ async fn old_database(path: &Path) -> SqlitePool {
             timeout DOUBLE, resend_interval INTEGER, upside_down BOOLEAN, parent INTEGER,
             weight INTEGER, url TEXT, method TEXT, accepted_statuscodes TEXT,
             ignore_tls BOOLEAN, maxredirects INTEGER, push_token VARCHAR(255),
+            hostname VARCHAR(255), packet_size INTEGER, ping_count INTEGER,
+            ping_numeric BOOLEAN, ping_per_request_timeout INTEGER,
             metric_cpu_threshold INTEGER, metric_ram_threshold INTEGER,
             metric_disk_threshold INTEGER, created_date DATETIME )",
         "CREATE TABLE heartbeat (
@@ -86,7 +88,7 @@ async fn old_database(path: &Path) -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO monitor (id, name, type, active, interval, timeout, parent) VALUES (12, 'bes.media server', 'ping', 1, 60, 48, 18)")
+    sqlx::query("INSERT INTO monitor (id, name, type, active, interval, timeout, parent, hostname, ping_count, packet_size, ping_numeric, ping_per_request_timeout) VALUES (12, 'bes.media server', 'ping', 1, 60, 10, 18, '46.62.149.85', 3, 56, 1, 2)")
         .execute(&pool)
         .await
         .unwrap();
@@ -179,33 +181,26 @@ async fn imports_the_production_shape() {
     let data_dir = dir.path().join("data");
     let report = import::run(&old_path, &data_dir, false).await.unwrap();
 
-    assert_eq!(report.monitors, 3, "http + push + group");
-    assert_eq!(report.skipped_monitors.len(), 1);
-    assert_eq!(
-        report.skipped_monitors[0],
-        ("bes.media server".to_string(), "ping".to_string())
+    assert_eq!(report.monitors, 4, "http + push + group + ping");
+    assert!(
+        report.skipped_monitors.is_empty(),
+        "{:?}",
+        report.skipped_monitors
     );
-    assert_eq!(report.heartbeats, 2, "the ping monitor's beat is orphaned");
-    assert_eq!(report.orphan_heartbeats, 1);
+    assert_eq!(report.heartbeats, 3);
+    assert_eq!(report.orphan_heartbeats, 0);
     assert_eq!(report.metrics_raw, 1);
     assert_eq!(report.metrics_hourly, 1);
     assert_eq!(report.tokens, 1);
     assert_eq!(report.notifications, 1);
-    assert_eq!(report.monitor_notifications, 1);
+    assert_eq!(report.monitor_notifications, 2);
     assert_eq!(report.status_pages, 1);
     assert_eq!(report.status_page_groups, 1);
-    assert_eq!(report.status_page_monitors, 1);
+    assert_eq!(report.status_page_monitors, 2);
     assert_eq!(report.status_page_incidents, 1);
     assert_eq!(report.status_page_cnames, 1);
     assert!(report.admin_token.starts_with("flatline_"));
-    assert!(
-        report
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("monitor 12")),
-        "the skipped link is reported: {:?}",
-        report.warnings
-    );
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
 
     let new = flatline_backend::db::connect(&data_dir).await.unwrap();
 
@@ -215,6 +210,13 @@ async fn imports_the_production_shape() {
         .await
         .unwrap();
     assert_eq!(parent, Some(18));
+    let (hostname, ping_count): (Option<String>, i64) =
+        sqlx::query_as("SELECT hostname, ping_count FROM monitors WHERE id = 12")
+            .fetch_one(&new)
+            .await
+            .unwrap();
+    assert_eq!(hostname.as_deref(), Some("46.62.149.85"));
+    assert_eq!(ping_count, 3);
     let push_token: String = sqlx::query_scalar("SELECT push_token FROM monitors WHERE id = 46")
         .fetch_one(&new)
         .await
@@ -251,12 +253,12 @@ async fn imports_the_production_shape() {
     // Re-running without --force refuses; --force wipes and re-imports.
     assert!(import::run(&old_path, &data_dir, false).await.is_err());
     let second = import::run(&old_path, &data_dir, true).await.unwrap();
-    assert_eq!(second.monitors, 3);
+    assert_eq!(second.monitors, 4);
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM monitors")
         .fetch_one(&new)
         .await
         .unwrap();
-    assert_eq!(count, 3, "no duplicates after --force");
+    assert_eq!(count, 4, "no duplicates after --force");
 
     // The old database was opened read-only and never modified.
     let old_again = SqlitePoolOptions::new()

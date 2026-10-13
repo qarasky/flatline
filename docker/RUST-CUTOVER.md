@@ -11,13 +11,13 @@ status-page reads, OpenAPI and the SPA. The Go agent needs no change.
 
 ## 0. Known deltas (read before cutover)
 
-- **Ping monitors are not implemented** (locked scope: push/http/group).
-  The importer reports them and skips their heartbeats and status-page
-  links. On the current fleet that is three monitors: `bes.media server`,
-  `zhasalash server`, `Main server`. Decide before cutover: add a ping
-  checker to the Rust backend, convert them to HTTP checks, or accept
-  their loss (they are also the ones that keep the "server" rows on the
-  status pages).
+- **Ping monitors are supported** (added after the M5 import validation):
+  the checker runs the system `ping` binary, the image installs
+  `iputils-ping`, and the importer carries the fleet's three ICMP
+  monitors (`bes.media server`, `zhasalash server`, `Main server`) over
+  with their heartbeats and status-page links. ICMP requires the container
+  to be allowed to send raw sockets — Docker's default is fine, but a
+  hardened runtime (no NET_RAW) would need adjusting.
 - Maintenance windows, tags and status-page authoring do not exist in v1.
   Imported pages are read-only; incidents/maintenance are not editable
   through the API yet.
@@ -135,7 +135,6 @@ stays under `data-rust/` for inspection.
 
 - Delete `data/kuma-pre-rust.db` once satisfied (it is a full copy of
   production).
-- Re-check the three skipped ping monitors (section 0).
 - The Rust backend prunes raw metrics at 30 days and rolls up hourly
   buckets at :12; no cron or external scheduler is needed.
 - Logs: `sudo docker logs -f flatline-rust-flatline-1` (the Rust project

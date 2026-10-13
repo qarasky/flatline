@@ -21,8 +21,8 @@ use crate::auth;
 use crate::db;
 
 /// Monitor types this backend understands; anything else is reported and
-/// skipped (the locked scope is push/http/group).
-const SUPPORTED_TYPES: [&str; 4] = ["http", "https", "push", "group"];
+/// skipped (the locked scope plus ping, added after the import validation).
+const SUPPORTED_TYPES: [&str; 5] = ["http", "https", "push", "ping", "group"];
 
 #[derive(Debug, Default)]
 pub struct ImportReport {
@@ -300,8 +300,9 @@ async fn import_monitors(
                  id, name, type, active, description, interval, retry_interval, maxretries,
                  timeout, resend_interval, upside_down, parent, weight, url, method,
                  accepted_statuscodes, ignore_tls, maxredirects, push_token,
+                 hostname, packet_size, ping_count, ping_numeric, ping_per_request_timeout,
                  metric_cpu_threshold, metric_ram_threshold, metric_disk_threshold, created_at
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(id)
         .bind(name)
@@ -322,6 +323,11 @@ async fn import_monitors(
         .bind(int_or(row, &cols, "ignore_tls", 0))
         .bind(int_or(row, &cols, "maxredirects", 10))
         .bind(text(row, &cols, "push_token"))
+        .bind(text(row, &cols, "hostname"))
+        .bind(int_or(row, &cols, "packet_size", 56))
+        .bind(int_or(row, &cols, "ping_count", 1))
+        .bind(int_or(row, &cols, "ping_numeric", 1))
+        .bind(int_or(row, &cols, "ping_per_request_timeout", 2))
         .bind(int(row, &cols, "metric_cpu_threshold"))
         .bind(int(row, &cols, "metric_ram_threshold"))
         .bind(int(row, &cols, "metric_disk_threshold"))
