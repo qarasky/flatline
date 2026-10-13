@@ -322,6 +322,26 @@ func collectDocker() ([]Container, error) {
 	return nil, fmt.Errorf("no docker access (%s)", strings.Join(errs, "; "))
 }
 
+// containerDisplayName labels one list entry as well as the entry allows.
+//
+// The daemon is allowed to return an entry with an empty name list (the
+// audit fixture returned Names: []) and ids are allowed to be shorter than
+// the 12-character prefix Docker usually sends. Indexing or slicing blind
+// panicked this collector, which runs in a goroutine, so one incomplete
+// entry terminated the whole agent and every host's telemetry with it.
+func containerDisplayName(item dockerListItem) string {
+	if len(item.Names) > 0 && item.Names[0] != "" {
+		return strings.TrimPrefix(item.Names[0], "/")
+	}
+	if len(item.ID) >= 12 {
+		return item.ID[:12]
+	}
+	if item.ID != "" {
+		return item.ID
+	}
+	return "unknown"
+}
+
 func collectDockerSocket(socketPath string) ([]Container, error) {
 	client := newDockerClient(socketPath)
 	defer client.http.CloseIdleConnections()
@@ -334,10 +354,7 @@ func collectDockerSocket(socketPath string) ([]Container, error) {
 	out := make([]Container, 0, len(list))
 	seen := make(map[string]bool, len(list))
 	for _, item := range list {
-		name := strings.TrimPrefix(item.Names[0], "/")
-		if len(item.Names) == 0 {
-			name = item.ID[:12]
-		}
+		name := containerDisplayName(item)
 		seen[item.ID] = true
 
 		c := Container{

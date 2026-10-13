@@ -39,8 +39,25 @@ type liveCollector struct {
 	smart *SMART
 }
 
-func refreshLoop(ctx context.Context, interval time.Duration, collect func()) {
+// runCollector runs one collector pass, turning a panic into a logged error.
+//
+// Collectors parse data from outside the process (daemon responses, sysfs,
+// helper binaries). A malformed response must degrade that collector — the
+// audit's empty `Names` list panicked the Docker collector, and a goroutine
+// panic terminates the whole agent, stopping all host telemetry — never
+// take the process down.
+func runCollector(name string, collect func()) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("%s: collector panic: %v", name, recovered)
+			stats.recordCollectorError(name)
+		}
+	}()
 	collect()
+}
+
+func refreshLoop(ctx context.Context, interval time.Duration, name string, collect func()) {
+	runCollector(name, collect)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -48,7 +65,7 @@ func refreshLoop(ctx context.Context, interval time.Duration, collect func()) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			collect()
+			runCollector(name, collect)
 		}
 	}
 }
@@ -65,7 +82,7 @@ func cpuRefreshLoop(ctx context.Context, interval time.Duration, collect func())
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			collect()
+			runCollector("cpu", collect)
 		}
 	}
 }
@@ -97,7 +114,7 @@ func newLiveCollector(ctx context.Context) (*liveCollector, error) {
 		log.Printf("warning: initial cpu sample unavailable: %v", err)
 	}
 	go cpuRefreshLoop(ctx, cpuSampleInterval, c.refreshCPU)
-	go refreshLoop(ctx, 30*time.Second, func() {
+	go refreshLoop(ctx, 30*time.Second, "disk", func() {
 		disks, err := collectDisk()
 		if err != nil {
 			log.Printf("disk: %v", err)
@@ -107,19 +124,19 @@ func newLiveCollector(ctx context.Context) (*liveCollector, error) {
 		c.disk = disks
 		c.mu.Unlock()
 	})
-	go refreshLoop(ctx, 30*time.Second, func() {
+	go refreshLoop(ctx, 30*time.Second, "temp", func() {
 		cpuTemp, memTemp := collectTemp(cpuSensorKeys), collectTemp(memSensorKeys)
 		c.mu.Lock()
 		c.cpuTemp, c.memTemp = cpuTemp, memTemp
 		c.mu.Unlock()
 	})
-	go refreshLoop(ctx, 5*time.Second, func() {
+	go refreshLoop(ctx, 5*time.Second, "gpu", func() {
 		gpu := collectGPU()
 		c.mu.Lock()
 		c.gpu = gpu
 		c.mu.Unlock()
 	})
-	go refreshLoop(ctx, 10*time.Second, func() {
+	go refreshLoop(ctx, 10*time.Second, "docker", func() {
 		containers, err := collectDocker()
 		errorText := ""
 		if err != nil {
@@ -130,7 +147,7 @@ func newLiveCollector(ctx context.Context) (*liveCollector, error) {
 		c.docker, c.dockerError = containers, errorText
 		c.mu.Unlock()
 	})
-	go refreshLoop(ctx, updatesInterval, func() {
+	go refreshLoop(ctx, updatesInterval, "updates", func() {
 		updates, err := collectUpdates()
 		if err != nil {
 			logUpdatesWarning(err)
@@ -140,7 +157,7 @@ func newLiveCollector(ctx context.Context) (*liveCollector, error) {
 		c.updates = updates
 		c.mu.Unlock()
 	})
-	go refreshLoop(ctx, smartRefreshInterval, func() {
+	go refreshLoop(ctx, smartRefreshInterval, "smart", func() {
 		smart := collectSMART()
 		c.mu.Lock()
 		c.smart = smart
