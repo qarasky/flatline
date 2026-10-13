@@ -169,6 +169,58 @@ function applyDerivedCPU(metrics, derived) {
 }
 
 /**
+ * Per-monitor ingest serialization.
+ *
+ * The archive gate, the counter windows for derived CPU/IO values and the
+ * latest-cache update are read-modify-write sequences separated by awaits
+ * (storage, peak warming). Concurrent pushes for one monitor used to
+ * interleave them: ten concurrent live samples all saw the same stale
+ * archive clock and produced ten archive rows instead of one, duplicating
+ * history and weighting those timestamps repeatedly, and the counter
+ * windows could derive from an obsolete previous sample.
+ *
+ * Each monitor's ingests run in arrival order; different monitors stay
+ * concurrent. The chain entry is dropped when it drains.
+ * @type {Map<number, Promise<void>>}
+ */
+const ingestChains = new Map();
+
+/**
+ * Run one task after the monitor's previous ingest settled.
+ * @param {number} monitorID Monitor id
+ * @param {() => Promise<*>} task Ingest work to serialize
+ * @returns {Promise<*>} The task's result
+ */
+function serializeIngest(monitorID, task) {
+    const key = Number(monitorID);
+    const previous = ingestChains.get(key) ?? Promise.resolve();
+    const result = previous.then(task);
+    // The chain never rejects: a failed ingest must not poison later ones.
+    const tail = result.then(() => undefined, () => undefined);
+    ingestChains.set(key, tail);
+    void tail.then(() => {
+        if (ingestChains.get(key) === tail) {
+            ingestChains.delete(key);
+        }
+    });
+    return result;
+}
+
+/**
+ * Store one metrics sample, serialized per monitor (see serializeIngest).
+ * @param {number} monitorID Owning monitor
+ * @param {string} time Timestamp, same clock as the heartbeat it rode in on
+ * @param {unknown} payload Validated payload, or null/undefined to skip
+ * @param {object} options Storage policy
+ * @param {boolean} options.live Downsample durable history for live telemetry
+ * @returns {Promise<boolean>} True if the sample was accepted
+ */
+async function storeMetrics(monitorID, time, payload, options = {}) {
+    monitorID = Number(monitorID);
+    return serializeIngest(monitorID, () => storeMetricsNow(monitorID, time, payload, options));
+}
+
+/**
  * Store one metrics sample.
  * @param {number} monitorID Owning monitor
  * @param {string} time Timestamp, same clock as the heartbeat it rode in on
@@ -177,7 +229,7 @@ function applyDerivedCPU(metrics, derived) {
  * @param {boolean} options.live Downsample durable history for live telemetry
  * @returns {Promise<boolean>} True if the sample was accepted
  */
-async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
+async function storeMetricsNow(monitorID, time, payload, { live = false } = {}) {
     if (payload === undefined || payload === null) {
         return false;
     }

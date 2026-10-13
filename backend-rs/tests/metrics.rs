@@ -154,6 +154,44 @@ async fn live_telemetry_updates_latest_without_archiving_every_sample() {
 }
 
 #[tokio::test]
+async fn concurrent_live_samples_archive_once() {
+    // The audit's reproduction: ten concurrent samples for one monitor all
+    // read the same stale archive clock before awaiting storage, so every
+    // request archived a row. Ingest is serialized per monitor now; the
+    // gate holds however the requests interleave.
+    let h = harness().await;
+    let (id, token) = create_push_monitor(&h, json!({})).await;
+
+    let mut set = tokio::task::JoinSet::new();
+    for i in 0..10 {
+        let app = h.app.clone();
+        let token = token.clone();
+        set.spawn(async move {
+            common::send(
+                &app,
+                common::request(
+                    "POST",
+                    &format!("/api/push/{token}?telemetry=1"),
+                    None,
+                    Some(json!({ "metrics": { "cpu": { "percent": i as f64 } } })),
+                ),
+            )
+            .await
+        });
+    }
+    while let Some(joined) = set.join_next().await {
+        let (status, body) = joined.unwrap();
+        assert_eq!(status, 200, "push failed: {body}");
+    }
+
+    assert_eq!(
+        raw_count(&h.pool, id).await,
+        1,
+        "concurrent live samples must archive exactly once"
+    );
+}
+
+#[tokio::test]
 async fn sampled_at_backfill_archives_at_sample_time() {
     let h = harness().await;
     let (id, token) = create_push_monitor(&h, json!({})).await;

@@ -14,6 +14,7 @@ pub mod io_rates;
 pub mod peak;
 pub mod rollup;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -42,6 +43,12 @@ pub struct Metrics {
     pub(crate) latest: Mutex<ingest::LatestCache>,
     pub(crate) peak: Mutex<peak::PeakState>,
     pub(crate) alert_state: Mutex<alerts::AlertState>,
+    /// One async lock per monitor: the ingest path reads the archive gate,
+    /// counter windows and latest cache, awaits storage, then updates them —
+    /// concurrent pushes for one monitor must not interleave those steps
+    /// (duplicate archive rows, counter windows derived from an obsolete
+    /// previous sample).
+    pub(crate) ingest_locks: Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Metrics {
@@ -56,7 +63,21 @@ impl Metrics {
             latest: Mutex::new(ingest::LatestCache::default()),
             peak: Mutex::new(peak::PeakState::default()),
             alert_state: Mutex::new(alerts::AlertState::default()),
+            ingest_locks: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Acquire the monitor's ingest lock, creating it on first use.
+    pub(crate) async fn ingest_guard(&self, monitor_id: i64) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self.ingest_locks.lock().unwrap();
+            Arc::clone(
+                locks
+                    .entry(monitor_id)
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+            )
+        };
+        lock.lock_owned().await
     }
 
     /// Drop every cached trace of a monitor (deletion).
@@ -64,6 +85,7 @@ impl Metrics {
         self.latest.lock().unwrap().remove(monitor_id);
         self.peak.lock().unwrap().forget(monitor_id);
         self.alert_state.lock().unwrap().forget(monitor_id);
+        self.ingest_locks.lock().unwrap().remove(&monitor_id);
     }
 
     /// The cached sample, API-shaped: `{time, metrics, cpuPeak10m}`.

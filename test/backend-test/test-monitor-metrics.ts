@@ -191,6 +191,45 @@ test("monitor metrics ingest", async (t) => {
         assert.strictEqual(getLatestMetrics(monitor.id).metrics.cpu.percent, 9);
     });
 
+    await t.test("concurrent live samples archive once, not once per request", async (st) => {
+        // The audit's reproduction with delayed persistence: every request
+        // read the same stale archive clock before awaiting storage, so ten
+        // concurrent samples produced ten archive rows. Ingestion is now
+        // serialized per monitor, so the gate holds however requests
+        // interleave.
+        const { R } = require("redbean-node");
+        const { storeMetrics, getLatestMetrics, resetMetricsCache } = require("../../server/monitor-metrics");
+        const owner = await R.findOne("better_auth_user", " email = ? ", [ "admin@noreply.uptime-kuma.internal" ]);
+        const monitor = R.dispense("monitor");
+        monitor.user_id = owner.id;
+        monitor.name = "Concurrent Host";
+        monitor.type = "push";
+        monitor.interval = 180;
+        monitor.retryInterval = 180;
+        monitor.timeout = 144;
+        monitor.active = 1;
+        await R.store(monitor);
+        resetMetricsCache();
+
+        // Delay storage to widen the interleaving window the audit used.
+        const originalStore = R.store;
+        st.mock.method(R, "store", async (...args: unknown[]) => {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            return originalStore.apply(R, args);
+        });
+
+        const time = new Date().toISOString().replace("T", " ").replace("Z", "");
+        await Promise.all(Array.from({ length: 10 }, (_, i) =>
+            storeMetrics(monitor.id, time, { v: 1, cpu: { percent: i }, mem: { percent: 20 } }, { live: true })));
+
+        const rows = await R.getAll("SELECT id, time, payload FROM monitor_metric WHERE monitor_id = ?", [ monitor.id ]);
+        assert.strictEqual(rows.length, 1, `expected one archive row, got ${rows.length}`);
+        // The latest cache still reflects the committed sample.
+        assert.ok(getLatestMetrics(monitor.id), "latest sample cached");
+
+        await R.exec("DELETE FROM monitor_metric WHERE monitor_id = ?", [ monitor.id ]);
+    });
+
     await t.test("resolveSampleTime accepts sane agent times and rejects the rest", async () => {
         const { resolveSampleTime } = require("../../server/monitor-metrics");
         const now = Date.parse("2026-10-12T12:00:00Z");

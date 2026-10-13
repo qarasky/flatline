@@ -80,10 +80,29 @@ impl LatestCache {
 }
 
 impl Metrics {
+    /// Store one metrics sample, serialized per monitor.
+    ///
+    /// The archive gate, the counter windows and the latest-cache update are
+    /// read-modify-write sequences separated by awaits; concurrent pushes
+    /// for one monitor used to interleave them (ten concurrent live samples
+    /// produced ten archive rows instead of one, and counter windows could
+    /// derive from an obsolete previous sample). One guard per monitor keeps
+    /// them in arrival order; different monitors stay concurrent.
+    pub async fn store(
+        &self,
+        monitor_id: i64,
+        time: &str,
+        payload: &Value,
+        live: bool,
+    ) -> Result<(), String> {
+        let _guard = self.ingest_guard(monitor_id).await;
+        self.store_locked(monitor_id, time, payload, live).await
+    }
+
     /// Store one metrics sample. `Err` carries the message the push route
     /// reports as "metrics dropped" — validation and storage failures
     /// alike, exactly like the Node function throwing.
-    pub async fn store(
+    async fn store_locked(
         &self,
         monitor_id: i64,
         time: &str,
