@@ -1,7 +1,7 @@
 const { R } = require("redbean-node");
 const { log } = require("../src/util");
 const dayjs = require("dayjs");
-const { readingsFromPayload } = require("./metrics-history");
+const { readingsFromPayload, timestamp } = require("./metrics-history");
 
 /**
  * Hourly rollups: the long tier of metrics history.
@@ -13,16 +13,25 @@ const { readingsFromPayload } = require("./metrics-history");
  * data would blow the row cap anyway.
  *
  * Design notes:
- * - Coverage is decided by inspecting existing buckets, not a watermark: a
- *   crash mid-backfill leaves a gap the next run simply fills. Buckets are
- *   upserted on (monitor_id, time), so re-runs are idempotent.
+ * - Coverage is decided per monitor and hour by comparing the raw sample
+ *   count with the stored bucket's sample count. Durable buckets are keyed
+ *   by (monitor_id, time), so a bucket is (re)built exactly when raw
+ *   evidence exists that it does not represent yet — no hour is ever
+ *   considered covered on another monitor's behalf, and a crash mid-backfill
+ *   leaves a gap the next run simply fills. Buckets are upserted on
+ *   (monitor_id, time), so re-runs are idempotent.
+ * - Late samples also leave a dirty-hour marker at ingest. Buffered agents
+ *   can deliver a sample more than two hours after it was taken, when no
+ *   recency window would re-fold the hour; the marker forces it and is
+ *   cleared once a run has looked at it. Markers for hours whose raw rows
+ *   were already pruned are dropped without touching the bucket.
  * - Work is chunked by time; each chunk reads only its window of raw rows.
  *   A first run backfills the full raw retention (30 days) without loading
  *   everything at once.
  * - Only complete hours roll up: the current hour is still accumulating.
- * - Runs before the daily raw prune keeps the ordering safe; the last two
- *   complete hours are re-rolled every run so late/backfilled samples land
- *   in an already-folded hour.
+ * - The job runs hourly and the raw prune daily, so a repair pass always has
+ *   the raw evidence it needs; repairing missing/incomplete buckets happens
+ *   before the prune of that same evidence.
  */
 
 /** How long hourly rollups are kept. Raw stays at METRICS_RETENTION_DAYS. */
@@ -55,6 +64,23 @@ function sqlTime(ms) {
 }
 
 /**
+ * SQL expression that maps a stored sample time to its hour-key string.
+ *
+ * The rollup scan groups raw samples by hour in SQL so only one row per
+ * monitor and hour crosses the wire, however many samples the hour holds.
+ * SQLite and MySQL spell the formatting differently; pick by the connected
+ * client.
+ * @returns {string} SQL expression producing a "YYYY-MM-DD HH:00:00" string
+ */
+function hourKeyExpression() {
+    const client = R.knex.client.config.client;
+    if (client === "mysql2" || client === "mysql") {
+        return "DATE_FORMAT(time, '%Y-%m-%d %H:00:00')";
+    }
+    return "strftime('%Y-%m-%d %H:00:00', replace(time, 'T', ' '))";
+}
+
+/**
  * Fold one chunk of raw rows into per-monitor, per-hour aggregates.
  *
  * Pure and exported for tests: takes rows in any order and returns a map of
@@ -65,7 +91,7 @@ function sqlTime(ms) {
 function aggregateChunk(rows) {
     const buckets = new Map();
     for (const row of rows) {
-        const time = Date.parse(String(row.time).replace(" ", "T") + "Z");
+        const time = timestamp(row.time);
         if (!Number.isFinite(time)) {
             continue;
         }
@@ -138,11 +164,33 @@ async function storeBucket(row) {
 }
 
 /**
+ * Record that one hour's bucket may be stale.
+ *
+ * Called when a raw sample is stored. A buffered agent can deliver a sample
+ * into an hour that was already folded, and the count comparison alone would
+ * only catch it when it changes the raw count of that hour; the marker is
+ * the explicit "re-fold this hour" signal the next run acts on.
+ * @param {number} monitorID Owning monitor
+ * @param {string} time Stored sample time
+ * @returns {Promise<void>} Resolves when recorded (duplicates are ignored)
+ */
+async function markRollupDirty(monitorID, time) {
+    const ms = timestamp(time);
+    if (!Number.isFinite(ms)) {
+        return;
+    }
+    await R.knex("monitor_metric_rollup_dirty")
+        .insert({ monitor_id: Number(monitorID), hour: sqlTime(hourStart(ms)) })
+        .onConflict([ "monitor_id", "hour" ])
+        .ignore();
+}
+
+/**
  * Roll raw samples up into complete hours, then prune expired rollups.
  *
- * Idempotent: covered hours are skipped, so a crash or restart mid-backfill
- * resumes rather than duplicating or losing hours. Exported for the job and
- * for tests, which pass a fixed `now`.
+ * Idempotent: buckets are upserted and coverage is judged from the data, so
+ * a crash or restart mid-backfill resumes rather than duplicating or losing
+ * hours. Exported for the job and for tests, which pass a fixed `now`.
  * @param {number} now Current epoch millis
  * @returns {Promise<{rolledUp: number, chunks: number, pruned: number}>} Run summary
  */
@@ -155,52 +203,101 @@ async function rollupMetrics(now = Date.now()) {
         const pruned = await pruneHourly(now);
         return { rolledUp: 0, chunks: 0, pruned };
     }
-    const oldestHour = hourStart(Date.parse(String(oldest).replace(" ", "T") + "Z"));
+    const oldestHour = hourStart(timestamp(oldest));
     if (!Number.isFinite(oldestHour) || oldestHour > lastCompleteHour) {
         const pruned = await pruneHourly(now);
         return { rolledUp: 0, chunks: 0, pruned };
     }
 
-    // Covered hours: buckets that already exist. Hours without raw data
-    // anywhere (whole fleet silent) have no bucket and get re-checked, which
-    // is one cheap indexed range query per chunk. The last two complete
-    // hours are always re-rolled: buffered agents can deliver late samples
-    // into an hour that a previous run already folded, and an upsert merge
-    // is cheaper than a wrong history.
-    const coveredRows = await R.getAll("SELECT DISTINCT time FROM monitor_metric_hourly");
-    const covered = new Set(coveredRows.map((row) => hourStart(Date.parse(String(row.time).replace(" ", "T") + "Z"))));
-    const overlap = new Set([ lastCompleteHour, lastCompleteHour - 3600_000 ]);
+    const from = sqlTime(oldestHour);
+    const to = sqlTime(lastCompleteHour);
+    // Raw rows are stamped inside their hour, so the window ends at the next
+    // hour start; bucket keys are stamped at the hour start itself.
+    const toExclusive = sqlTime(lastCompleteHour + 3600_000);
 
-    const missing = [];
-    for (let hour = oldestHour; hour <= lastCompleteHour; hour += 3600_000) {
-        if (!covered.has(hour) || overlap.has(hour)) {
-            missing.push(hour);
+    // Stored buckets inside the raw window: coverage is judged per monitor
+    // and hour, because the durable bucket key is (monitor_id, time).
+    const stored = new Map();
+    for (const row of await R.getAll(
+        "SELECT monitor_id, time, samples FROM monitor_metric_hourly WHERE time >= ? AND time < ?",
+        [ from, toExclusive ])) {
+        const hour = hourStart(timestamp(row.time));
+        if (Number.isFinite(hour)) {
+            stored.set(`${row.monitor_id}|${hour}`, Number(row.samples) || 0);
         }
     }
 
+    // Raw evidence per monitor and hour, grouped in SQL: one row per pair no
+    // matter how many samples it holds. A bucket is due when it does not
+    // exist yet or holds fewer samples than the raw rows that now exist for
+    // its hour — the case a late backfill creates and the old per-hour
+    // coverage check missed.
+    const counts = await R.getAll(
+        `SELECT monitor_id, ${hourKeyExpression()} AS hour, COUNT(*) AS samples
+         FROM monitor_metric WHERE time >= ? AND time < ?
+         GROUP BY monitor_id, hour`,
+        [ from, toExclusive ]);
+    const evidence = new Set();
+    const needs = new Set();
+    for (const row of counts) {
+        const hour = hourStart(timestamp(row.hour));
+        if (!Number.isFinite(hour)) {
+            continue;
+        }
+        const key = `${row.monitor_id}|${hour}`;
+        evidence.add(key);
+        if ((stored.get(key) ?? -1) < Number(row.samples)) {
+            needs.add(key);
+        }
+    }
+
+    // Dirty markers: hours whose samples arrived after a run had already
+    // folded them. Only an hour that still has raw evidence can be re-folded;
+    // a marker whose raw rows were pruned is stale and just gets dropped.
+    for (const row of await R.getAll(
+        "SELECT monitor_id, hour FROM monitor_metric_rollup_dirty WHERE hour >= ? AND hour <= ?",
+        [ from, to ])) {
+        const hour = hourStart(timestamp(row.hour));
+        if (!Number.isFinite(hour)) {
+            continue;
+        }
+        const key = `${row.monitor_id}|${hour}`;
+        if (evidence.has(key)) {
+            needs.add(key);
+        }
+    }
+
+    // Process the due pairs in time order; each chunk reads only the raw rows
+    // of the hours it holds. Buckets outside the due set are merged over by
+    // the next chunk that needs them, never rewritten from partial evidence.
+    const hours = [ ...new Set([ ...needs ].map((key) => Number(key.split("|")[1]))) ].sort((a, b) => a - b);
     let rolledUp = 0;
     let chunks = 0;
-    for (let i = 0; i < missing.length; i += CHUNK_HOURS) {
-        const windowStart = missing[i];
-        // The chunk may span covered hours (a gap in the middle); widen to
-        // the last missing hour in this group and skip covered buckets when
-        // storing. One extra range scan beats one query per hour.
-        const windowEnd = Math.min(missing[Math.min(i + CHUNK_HOURS, missing.length) - 1] + 3600_000, lastCompleteHour + 3600_000);
+    for (let i = 0; i < hours.length; i += CHUNK_HOURS) {
+        const group = hours.slice(i, i + CHUNK_HOURS);
+        const windowStart = group[0];
+        const windowEnd = group[group.length - 1] + 3600_000;
         const rows = await R.getAll(
             "SELECT monitor_id, time, payload FROM monitor_metric WHERE time >= ? AND time < ?",
-            [ sqlTime(windowStart), sqlTime(windowEnd) ]
-        );
+            [ sqlTime(windowStart), sqlTime(windowEnd) ]);
         chunks++;
-        const buckets = aggregateChunk(rows);
-        for (const bucket of buckets.values()) {
-            if (covered.has(bucket.hour) && !overlap.has(bucket.hour)) {
+        for (const bucket of aggregateChunk(rows).values()) {
+            const key = `${bucket.monitorID}|${bucket.hour}`;
+            if (!needs.has(key)) {
                 continue;
             }
             await storeBucket(bucketRow(bucket));
-            covered.add(bucket.hour);
+            needs.delete(key);
             rolledUp++;
         }
     }
+
+    // Every marker inside the processed range has been considered: re-folded
+    // or dropped as evidence-free. A marker written while this run was
+    // working is safe either way: if its raw row landed before the count
+    // query it was folded, and if it landed after, the next run's count
+    // comparison sees the new row.
+    await R.exec("DELETE FROM monitor_metric_rollup_dirty WHERE hour <= ?", [ to ]);
 
     const pruned = await pruneHourly(now);
     return { rolledUp, chunks, pruned };
@@ -248,9 +345,11 @@ async function rollupMetricsJob() {
 module.exports = {
     rollupMetrics,
     rollupMetricsJob,
+    markRollupDirty,
     aggregateChunk,
     bucketRow,
     hourStart,
+    hourKeyExpression,
     HOURLY_RETENTION_DAYS,
     CHUNK_HOURS,
 };

@@ -74,6 +74,123 @@ test("rollup helpers", async (t) => {
     });
 });
 
+test("rollup coverage is per monitor and hour", async (t) => {
+    const { R } = require("redbean-node");
+    const { rollupMetrics, markRollupDirty } = require("../../server/metrics-rollup");
+    const monitors: number[] = [];
+
+    t.before(async () => {
+        await testDb.create();
+        const { auth } = require("../../server/better-auth");
+        await auth();
+        await auth().api.createUser({
+            body: {
+                name: "admin", email: "admin@noreply.uptime-kuma.internal",
+                password: "Kuma-Test-8f4Q2xR9p", role: "admin", data: { username: "admin" },
+            },
+        });
+        const owner = await R.findOne("better_auth_user", " email = ? ", [ "admin@noreply.uptime-kuma.internal" ]);
+        for (const name of [ "A", "B", "C" ]) {
+            const monitor = R.dispense("monitor");
+            monitor.user_id = owner.id;
+            monitor.name = `Coverage ${name}`;
+            monitor.type = "push";
+            monitor.interval = 60;
+            monitor.retryInterval = 60;
+            monitor.timeout = 48;
+            monitor.active = 1;
+            await R.store(monitor);
+            monitors.push(monitor.id);
+        }
+    });
+
+    t.after(async () => {
+        await testDb.destroy();
+    });
+
+    // A fixed "now": the two complete hours are 10:00 and 11:00, the four
+    // hours 08:00-11:00 are all old enough that only real work re-folds them.
+    const now = Date.parse("2026-10-10T12:30:00Z");
+    const hour = (offset: number) => Date.parse("2026-10-10T08:00:00Z") + offset * HOUR;
+
+    const insertRaw = async (monitorID: number, time: number, cpu: number) => {
+        const bean = R.dispense("monitor_metric");
+        bean.monitor_id = monitorID;
+        bean.time = sql(time);
+        bean.payload = JSON.stringify({ cpu: { percent: cpu }, mem: { percent: 50 } });
+        await R.store(bean);
+    };
+
+    const bucketsFor = async (monitorID: number) => R.getAll(
+        "SELECT * FROM monitor_metric_hourly WHERE monitor_id = ? ORDER BY time", [ monitorID ]);
+
+    await t.test("one hour folds every monitor, not just the first one seen", async () => {
+        // Three monitors in the same four-hour-old window: 08:00 and 11:00.
+        for (const monitorID of monitors) {
+            await insertRaw(monitorID, hour(0) + 5 * 60_000, 10 + monitorID);
+            await insertRaw(monitorID, hour(3) + 5 * 60_000, 20 + monitorID);
+        }
+
+        const result = await rollupMetrics(now);
+        assert.strictEqual(result.rolledUp, 6, "two hours for each of three monitors");
+
+        for (const monitorID of monitors) {
+            const rows = await bucketsFor(monitorID);
+            assert.strictEqual(rows.length, 2, `monitor ${monitorID} has both hours`);
+            assert.strictEqual(rows[0].time, sql(hour(0)));
+            assert.strictEqual(rows[1].time, sql(hour(3)));
+            assert.strictEqual(rows[0].cpu_avg, 10 + monitorID);
+        }
+    });
+
+    await t.test("a run with no new evidence is a no-op", async () => {
+        const result = await rollupMetrics(now);
+        assert.strictEqual(result.rolledUp, 0, "covered pairs are not re-rolled");
+        assert.strictEqual(result.chunks, 0, "no raw window is read");
+    });
+
+    await t.test("late backfill into an old folded hour is re-folded", async () => {
+        // Older than any recency overlap: the count comparison must catch it.
+        await insertRaw(monitors[0], hour(0) + 50 * 60_000, 90);
+        const result = await rollupMetrics(now);
+        assert.strictEqual(result.rolledUp, 1, "only the affected pair re-rolls");
+
+        const rows = await bucketsFor(monitors[0]);
+        assert.strictEqual(rows[0].samples, 2);
+        assert.strictEqual(rows[0].cpu_avg, (10 + monitors[0] + 90) / 2);
+        assert.strictEqual(rows[0].cpu_max, 90);
+        assert.strictEqual((await bucketsFor(monitors[1])).length, 2, "other monitors untouched");
+    });
+
+    await t.test("missing buckets are repaired from raw evidence", async () => {
+        await R.exec("DELETE FROM monitor_metric_hourly WHERE monitor_id = ? AND time = ?", [ monitors[1], sql(hour(3)) ]);
+        const result = await rollupMetrics(now);
+        assert.strictEqual(result.rolledUp, 1, "the deleted bucket is rebuilt");
+        assert.strictEqual((await bucketsFor(monitors[1]))[1].samples, 1);
+    });
+
+    await t.test("dirty markers force a re-fold even when counts agree, then clear", async () => {
+        await markRollupDirty(monitors[2], sql(hour(0) + 10 * 60_000));
+        const dirty = await R.getAll("SELECT * FROM monitor_metric_rollup_dirty");
+        assert.strictEqual(dirty.length, 1, "ingest-side marker recorded");
+
+        const result = await rollupMetrics(now);
+        assert.strictEqual(result.rolledUp, 1, "the marked hour re-folds");
+        assert.strictEqual((await R.getAll("SELECT * FROM monitor_metric_rollup_dirty")).length, 0, "marker consumed");
+
+        const again = await rollupMetrics(now);
+        assert.strictEqual(again.rolledUp, 0, "no marker, no re-fold");
+    });
+
+    await t.test("markers whose raw rows are gone are dropped, buckets stay", async () => {
+        await markRollupDirty(monitors[0], sql(hour(2))); // 09:00 has no raw rows at all
+        const result = await rollupMetrics(now);
+        assert.strictEqual(result.rolledUp, 0, "nothing to re-fold without evidence");
+        assert.strictEqual((await R.getAll("SELECT * FROM monitor_metric_rollup_dirty")).length, 0, "stale marker dropped");
+        assert.strictEqual((await bucketsFor(monitors[0])).length, 2, "existing buckets survive");
+    });
+});
+
 test("rollup job folds raw samples into hourly buckets", async (t) => {
     const { R } = require("redbean-node");
     let monitorID = 0;

@@ -250,6 +250,22 @@ impl Metrics {
                 .execute(&self.pool)
                 .await
                 .map_err(|error| error.to_string())?;
+            // The hour this raw row belongs to may already have been folded:
+            // buffered agents backfill arbitrary ages, so mark the hour dirty
+            // and let the next rollup run re-fold it from the raw evidence.
+            // A marker that fails to land is repaired by the rollup's own
+            // count comparison, so it must never fail the ingest.
+            let marker_hour = crate::metrics::rollup::hour_start(incoming_time.unwrap_or(now));
+            if let Err(error) = sqlx::query(
+                "INSERT OR IGNORE INTO metrics_rollup_dirty (monitor_id, hour) VALUES (?, ?)",
+            )
+            .bind(monitor_id)
+            .bind(crate::metrics::sql_time_millis(marker_hour))
+            .execute(&self.pool)
+            .await
+            {
+                tracing::debug!("rollup dirty marker failed for monitor {monitor_id}: {error}");
+            }
             persisted_at = now;
             if let Some(incoming) = incoming_time {
                 persisted_sample_time = Some(incoming);

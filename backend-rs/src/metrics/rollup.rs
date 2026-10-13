@@ -5,13 +5,23 @@
 //! plus the number of raw readings — and keeps those for two years.
 //!
 //! Design notes (same as the Node job):
-//! - Coverage is decided by inspecting existing buckets, not a watermark: a
-//!   crash mid-backfill leaves a gap the next run simply fills. Buckets are
+//! - Coverage is decided per monitor and hour by comparing the raw sample
+//!   count with the stored bucket's sample count. Durable buckets are keyed
+//!   by (monitor_id, time), so a bucket is (re)built exactly when raw
+//!   evidence exists that it does not represent yet — no hour is ever
+//!   considered covered on another monitor's behalf, and a crash
+//!   mid-backfill leaves a gap the next run simply fills. Buckets are
 //!   upserted on (monitor_id, time), so re-runs are idempotent.
+//! - Late samples also leave a dirty-hour marker at ingest. Buffered agents
+//!   can deliver a sample more than two hours after it was taken; the marker
+//!   forces the hour to be re-folded and is cleared once a run looked at it.
+//!   Markers for hours whose raw rows were pruned are dropped without
+//!   touching the bucket.
 //! - Work is chunked by time; a first run backfills the full raw retention
 //!   without loading everything at once.
-//! - Only complete hours roll up; the last two complete hours are re-rolled
-//!   every run so late/backfilled samples land in an already-folded hour.
+//! - Only complete hours roll up: the current hour is still accumulating.
+//! - The rollup runs hourly and the raw prune daily, so the repair pass
+//!   always has the raw evidence it needs before the prune removes it.
 
 use std::collections::{HashMap, HashSet};
 
@@ -137,8 +147,9 @@ fn aggregate_chunk(rows: &[(i64, String, String)]) -> HashMap<(i64, i64), Bucket
 
 /// Roll raw samples up into complete hours, then prune expired rollups.
 ///
-/// Idempotent: covered hours are skipped, so a crash or restart mid-backfill
-/// resumes rather than duplicating or losing hours.
+/// Idempotent: buckets are upserted and coverage is judged from the data, so
+/// a crash or restart mid-backfill resumes rather than duplicating or losing
+/// hours.
 pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<RollupResult> {
     let last_complete_hour = hour_start(now_ms) - 3_600_000;
 
@@ -162,35 +173,84 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
         });
     }
 
-    // Covered hours: buckets that already exist. The last two complete
-    // hours are always re-rolled: buffered agents can deliver late samples
-    // into an hour a previous run already folded.
-    let covered_rows: Vec<String> = sqlx::query_scalar("SELECT DISTINCT time FROM metrics_hourly")
-        .fetch_all(pool)
-        .await?;
-    let mut covered: HashSet<i64> = covered_rows
+    // Raw rows are stamped inside their hour, so the window ends at the next
+    // hour start; bucket keys are stamped at the hour start itself.
+    let from = sql_time_millis(oldest_hour);
+    let to_exclusive = sql_time_millis(last_complete_hour + 3_600_000);
+
+    // Stored buckets inside the raw window: coverage is judged per monitor
+    // and hour, because the durable bucket key is (monitor_id, time).
+    let stored_rows: Vec<(i64, String, i64)> = sqlx::query_as(
+        "SELECT monitor_id, time, samples FROM metrics_hourly WHERE time >= ? AND time < ?",
+    )
+    .bind(&from)
+    .bind(&to_exclusive)
+    .fetch_all(pool)
+    .await?;
+    let stored: HashMap<(i64, i64), i64> = stored_rows
         .iter()
-        .filter_map(|time| metric_time(time).map(hour_start))
-        .collect();
-    let overlap: HashSet<i64> = [last_complete_hour, last_complete_hour - 3_600_000]
-        .into_iter()
+        .filter_map(|(monitor_id, time, samples)| {
+            metric_time(time).map(|ms| ((*monitor_id, hour_start(ms)), *samples))
+        })
         .collect();
 
-    let mut missing = Vec::new();
-    let mut hour = oldest_hour;
-    while hour <= last_complete_hour {
-        if !covered.contains(&hour) || overlap.contains(&hour) {
-            missing.push(hour);
+    // Raw evidence per monitor and hour, grouped in SQL: one row per pair no
+    // matter how many samples it holds. A bucket is due when it does not
+    // exist yet or holds fewer samples than the raw rows that now exist for
+    // its hour — the case a late backfill creates and the old per-hour
+    // coverage check missed.
+    let counts: Vec<(i64, String, i64)> = sqlx::query_as(
+        "SELECT monitor_id, substr(replace(time, 'T', ' '), 1, 13) || ':00:00' AS hour, COUNT(*)
+         FROM metrics_raw WHERE time >= ? AND time < ?
+         GROUP BY monitor_id, hour",
+    )
+    .bind(&from)
+    .bind(&to_exclusive)
+    .fetch_all(pool)
+    .await?;
+    let mut evidence: HashSet<(i64, i64)> = HashSet::new();
+    let mut needs: HashSet<(i64, i64)> = HashSet::new();
+    for (monitor_id, hour, samples) in &counts {
+        let Some(hour) = metric_time(hour).map(hour_start) else {
+            continue;
+        };
+        let key = (*monitor_id, hour);
+        evidence.insert(key);
+        if stored.get(&key).copied().unwrap_or(-1) < *samples {
+            needs.insert(key);
         }
-        hour += 3_600_000;
     }
+
+    // Dirty markers: hours whose samples arrived after a run had already
+    // folded them. Only an hour that still has raw evidence can be
+    // re-folded; a marker whose raw rows were pruned is stale and just gets
+    // dropped.
+    let dirty: Vec<(i64, String)> =
+        sqlx::query_as("SELECT monitor_id, hour FROM metrics_rollup_dirty WHERE hour >= ? AND hour <= ?")
+            .bind(&from)
+            .bind(sql_time_millis(last_complete_hour))
+            .fetch_all(pool)
+            .await?;
+    for (monitor_id, hour) in &dirty {
+        if let Some(hour) = metric_time(hour).map(hour_start)
+            && evidence.contains(&(*monitor_id, hour))
+        {
+            needs.insert((*monitor_id, hour));
+        }
+    }
+
+    // Process the due pairs in time order; each chunk reads only the raw rows
+    // of the hours it holds. Buckets outside the due set are never rewritten
+    // from partial evidence.
+    let mut hours: Vec<i64> = needs.iter().map(|(_, hour)| *hour).collect::<HashSet<_>>().into_iter().collect();
+    hours.sort_unstable();
 
     let mut result = RollupResult::default();
     let mut index = 0;
-    while index < missing.len() {
-        let window_start = missing[index];
-        let end_index = (index + CHUNK_HOURS).min(missing.len()) - 1;
-        let window_end = (missing[end_index] + 3_600_000).min(last_complete_hour + 3_600_000);
+    while index < hours.len() {
+        let end_index = (index + CHUNK_HOURS).min(hours.len()) - 1;
+        let window_start = hours[index];
+        let window_end = hours[end_index] + 3_600_000;
 
         let rows: Vec<(i64, String, String)> = sqlx::query_as(
             "SELECT monitor_id, time, payload FROM metrics_raw WHERE time >= ? AND time < ?",
@@ -202,16 +262,26 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
         result.chunks += 1;
 
         for bucket in aggregate_chunk(&rows).into_values() {
-            if covered.contains(&bucket.hour) && !overlap.contains(&bucket.hour) {
+            let key = (bucket.monitor_id, bucket.hour);
+            if !needs.remove(&key) {
                 continue;
             }
             store_bucket(pool, &bucket.row()).await?;
-            covered.insert(bucket.hour);
             result.rolled_up += 1;
         }
 
         index += CHUNK_HOURS;
     }
+
+    // Every marker inside the processed range has been considered: re-folded
+    // or dropped as evidence-free. A marker written while this run was
+    // working is safe either way: if its raw row landed before the count
+    // query it was folded, and if it landed after, the next run's count
+    // comparison sees the new row.
+    sqlx::query("DELETE FROM metrics_rollup_dirty WHERE hour <= ?")
+        .bind(sql_time_millis(last_complete_hour))
+        .execute(pool)
+        .await?;
 
     result.pruned = prune_hourly(pool, now_ms).await?;
     Ok(result)
@@ -357,10 +427,11 @@ mod tests {
         assert_eq!(row.2, Some(20.0));
         assert_eq!(row.3, 3);
 
-        // A re-run re-rolls only the overlap hours and upserts the same
-        // bucket rather than duplicating it.
+        // A re-run has no new evidence: nothing re-folds and no bucket is
+        // duplicated.
         let second = rollup_metrics(&pool, now).await.unwrap();
-        assert_eq!(second.rolled_up, 1);
+        assert_eq!(second.rolled_up, 0);
+        assert_eq!(second.chunks, 0);
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metrics_hourly")
             .fetch_one(&pool)
             .await
@@ -378,6 +449,133 @@ mod tests {
             .unwrap();
         let third = rollup_metrics(&pool, now).await.unwrap();
         assert_eq!(third.pruned, 1);
+    }
+
+    #[tokio::test]
+    async fn rollup_covers_every_monitor_and_repairs_gaps() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let pool = crate::db::connect(&path).await.unwrap();
+
+        let mut monitor_ids = Vec::new();
+        for name in ["a", "b", "c"] {
+            let (id,): (i64,) = sqlx::query_as(
+                "INSERT INTO monitors (name, type) VALUES (?, 'push') RETURNING id",
+            )
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            monitor_ids.push(id);
+        }
+
+        let now = crate::metrics::metric_time("2026-10-10 12:30:00").unwrap();
+        let hour = |offset: i64| hour_start(now) - 4 * 3_600_000 + offset * 3_600_000;
+        let insert = |monitor_id: i64, ms: i64, cpu: f64| {
+            let time = sql_time_millis(ms);
+            let payload = json!({ "cpu": { "percent": cpu }, "mem": { "percent": 50.0 } }).to_string();
+            let pool = pool.clone();
+            async move {
+                sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
+                    .bind(monitor_id)
+                    .bind(time)
+                    .bind(payload)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+
+        // Three monitors in the same old window: 08:05 and 11:05.
+        for monitor_id in &monitor_ids {
+            insert(*monitor_id, hour(0) + 5 * 60_000, 10.0 + *monitor_id as f64).await;
+            insert(*monitor_id, hour(3) + 5 * 60_000, 20.0 + *monitor_id as f64).await;
+        }
+
+        let first = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(first.rolled_up, 6, "two hours for each of three monitors");
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metrics_hourly")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(total, 6);
+
+        // No new evidence: nothing re-folds.
+        let idle = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(idle.rolled_up, 0);
+        assert_eq!(idle.chunks, 0);
+
+        // A late backfill into an already-folded hour is re-folded.
+        insert(monitor_ids[0], hour(0) + 50 * 60_000, 90.0).await;
+        let late = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(late.rolled_up, 1, "only the affected pair re-rolls");
+        let row: (i64, f64, f64) = sqlx::query_as(
+            "SELECT samples, cpu_avg, cpu_max FROM metrics_hourly WHERE monitor_id = ? AND time = ?",
+        )
+        .bind(monitor_ids[0])
+        .bind(sql_time_millis(hour(0)))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0, 2);
+        assert_eq!(row.1, (10.0 + monitor_ids[0] as f64 + 90.0) / 2.0);
+        assert_eq!(row.2, 90.0);
+
+        // A missing bucket is rebuilt from the raw evidence.
+        sqlx::query("DELETE FROM metrics_hourly WHERE monitor_id = ? AND time = ?")
+            .bind(monitor_ids[1])
+            .bind(sql_time_millis(hour(3)))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let repaired = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(repaired.rolled_up, 1, "the deleted bucket is rebuilt");
+        let samples: i64 = sqlx::query_scalar(
+            "SELECT samples FROM metrics_hourly WHERE monitor_id = ? AND time = ?",
+        )
+        .bind(monitor_ids[1])
+        .bind(sql_time_millis(hour(3)))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(samples, 1);
+
+        // A dirty marker forces a re-fold even when the counts agree, and is
+        // consumed by the run.
+        sqlx::query("INSERT INTO metrics_rollup_dirty (monitor_id, hour) VALUES (?, ?)")
+            .bind(monitor_ids[2])
+            .bind(sql_time_millis(hour(0)))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let marked = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(marked.rolled_up, 1);
+        let dirty_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metrics_rollup_dirty")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(dirty_left, 0);
+
+        // A marker whose raw rows are gone is dropped without touching the
+        // buckets it names.
+        sqlx::query("INSERT INTO metrics_rollup_dirty (monitor_id, hour) VALUES (?, ?)")
+            .bind(monitor_ids[0])
+            .bind(sql_time_millis(hour(2)))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let stale = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(stale.rolled_up, 0);
+        let dirty_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metrics_rollup_dirty")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(dirty_left, 0);
+        let buckets: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metrics_hourly")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(buckets, 6, "existing buckets survive");
     }
 
     #[tokio::test]

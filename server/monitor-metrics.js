@@ -8,6 +8,7 @@ const HISTORY_INTERVAL_MS = 30_000;
 const { recordCPU, currentPeak, forgetCPU, resetCPU } = require("./cpu-peak");
 const { asCounters, transformCounters } = require("./cpu-counters");
 const { netSnapshot, diskSnapshot, netRates, diskRates } = require("./io-rates");
+const { markRollupDirty } = require("./metrics-rollup");
 
 /**
  * Parse a stored timestamp (SQL or ISO) into epoch millis.
@@ -287,6 +288,10 @@ async function storeMetrics(monitorID, time, payload, { live = false } = {}) {
         bean.time = time;
         bean.payload = rowEncoded;
         await R.store(bean);
+        // The hour this raw row belongs to may already have been folded:
+        // buffered agents backfill arbitrary ages, so mark the hour dirty and
+        // let the next rollup run re-fold it from the raw evidence.
+        await markRollupDirty(monitorID, bean.time);
         persistedAt = now;
         if (Number.isFinite(incomingTime)) {
             persistedSampleTime = incomingTime;
