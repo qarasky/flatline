@@ -12,12 +12,19 @@ const Monitor = require("./model/monitor");
  * machine decides when to speak:
  *
  * - debounce: the value must stay at or above the threshold for 60 seconds;
- *   a one-second spike never pages anyone.
- * - hysteresis: recovery is declared at threshold - 5 points, so values
- *   hovering at the boundary do not flap.
+ *   a one-second spike never pages anyone. Before the first alert of an
+ *   episode, a reading below the threshold restarts the debounce — time in
+ *   the hysteresis band is not "sustained breach" — and an observation gap
+ *   longer than the tolerance (three monitor intervals, at least three
+ *   minutes) breaks continuity too: a value that reappears after silence
+ *   starts a new episode.
+ * - hysteresis: once an alert is active, recovery is declared at
+ *   threshold - 5 points, so values hovering at the boundary do not flap.
  * - cooldown: while still breached, at most one repeat per 30 minutes.
  * - a recovery message is sent only when an alert for that breach actually
  *   went out; fully suppressed episodes stay silent.
+ * - a missing reading never invents a recovery; gaps are handled by the
+ *   continuity rule above, at the next observed value.
  *
  * State is in-memory and bounded: an agent or backend restart may re-send
  * one alert after the debounce. Thresholds are for live conditions; history
@@ -28,12 +35,21 @@ const Monitor = require("./model/monitor");
 const DEBOUNCE_MS = 60_000;
 const COOLDOWN_MS = 30 * 60_000;
 const HYSTERESIS = 5;
+
+/**
+ * Base observation-gap tolerance: with no monitor interval to scale it, a
+ * breach must have been observed within this window to still count as
+ * continuous.
+ */
+const GAP_TOLERANCE_MS = 3 * 60_000;
 const MAX_STATE = 512;
 
 /**
  * Per-monitor state: one entry per metric.
  * `breachedSince` is when the current breach episode began, `alerted`
- * whether an alert went out for it, `lastNotified` the last alert send.
+ * whether an alert went out for it, `lastNotified` the last alert send and
+ * `lastAboveAt` when an at-or-above-threshold reading was last observed
+ * (the continuity anchor).
  */
 const state = new Map();
 
@@ -87,12 +103,15 @@ function readingsFrom(metrics) {
  * @param {?number} value Current reading, or null when absent
  * @param {number} threshold Configured threshold, 1-100
  * @param {number} now Current wall-clock ms
+ * @param {number} gapToleranceMs Longest observation gap that keeps a
+ * pre-alert episode continuous
  * @returns {"alert"|"recover"|null} Action due
  */
-function stepMetric(metricState, value, threshold, now) {
+function stepMetric(metricState, value, threshold, now, gapToleranceMs = GAP_TOLERANCE_MS) {
     if (value === null) {
-        // No reading (agent omitted the metric): leave the episode alone
-        // rather than inventing a recovery.
+        // No reading (agent omitted the metric): never invent a recovery.
+        // A long gap is caught by the continuity check below, at the next
+        // reading that actually arrives.
         return null;
     }
 
@@ -100,18 +119,37 @@ function stepMetric(metricState, value, threshold, now) {
     if (value <= recoverAt) {
         const wasAlerted = metricState.alerted;
         metricState.breachedSince = null;
+        metricState.lastAboveAt = null;
         metricState.alerted = false;
         return wasAlerted ? "recover" : null;
     }
 
     if (value < threshold) {
-        // Hysteresis band: above recovery, below the alert line. The episode
-        // stays open but stays silent — a repeat here would claim "88% ≥ 90%".
-        // Recovery is only declared at threshold - HYSTERESIS.
+        // Below the alert line. Once an alert is active this is the
+        // hysteresis band: the episode stays open but stays silent — a
+        // repeat here would claim "88% ≥ 90%". Before any alert, sub-
+        // threshold time is not a sustained breach: the debounce restarts,
+        // so two spikes separated by a dip cannot add up to one 60s breach,
+        // and the "60 seconds sustained" promise holds.
+        if (metricState.alerted) {
+            return null;
+        }
+        metricState.breachedSince = null;
+        metricState.lastAboveAt = null;
         return null;
     }
 
     // At or above the threshold.
+    if (!metricState.alerted &&
+        metricState.lastAboveAt !== null &&
+        now - metricState.lastAboveAt > gapToleranceMs) {
+        // The breach was not observed for most of the window (a silent
+        // agent, dropped samples, a restarted collector): this reading
+        // starts a new episode rather than completing the old one.
+        metricState.breachedSince = null;
+    }
+    metricState.lastAboveAt = now;
+
     if (metricState.breachedSince === null) {
         metricState.breachedSince = now;
         return null;
@@ -142,7 +180,7 @@ function metricStateFor(monitorID, metric) {
         }
     }
     if (!monitorState[metric]) {
-        monitorState[metric] = { breachedSince: null, alerted: false, lastNotified: 0 };
+        monitorState[metric] = { breachedSince: null, lastAboveAt: null, alerted: false, lastNotified: 0 };
     }
     return monitorState[metric];
 }
@@ -198,6 +236,10 @@ async function evaluateMetricAlerts(monitor) {
     const now = Date.now();
     const readings = readingsFrom(sample.metrics);
     const monitorID = Number(monitor.id);
+    // Continuity scales with the monitor's cadence: one or two missed
+    // samples are tolerated, a silence of three intervals is not. The base
+    // tolerance covers monitors without a usable interval.
+    const gapToleranceMs = Math.max(GAP_TOLERANCE_MS, Number(monitor.interval || 0) * 1000 * 3);
 
     for (const metric of [ "cpu", "ram", "disk" ]) {
         const threshold = thresholds[metric];
@@ -205,7 +247,7 @@ async function evaluateMetricAlerts(monitor) {
             continue;
         }
         const metricState = metricStateFor(monitorID, metric);
-        const action = stepMetric(metricState, readings[metric], threshold, now);
+        const action = stepMetric(metricState, readings[metric], threshold, now, gapToleranceMs);
         if (!action) {
             continue;
         }
@@ -278,4 +320,5 @@ module.exports = {
     DEBOUNCE_MS,
     COOLDOWN_MS,
     HYSTERESIS,
+    GAP_TOLERANCE_MS,
 };

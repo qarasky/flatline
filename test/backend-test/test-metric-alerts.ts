@@ -49,6 +49,33 @@ test("metric alert state machine", async (t) => {
         assert.strictEqual(stepMetric(s, 95, 90, t0 + DEBOUNCE_MS + COOLDOWN_MS), "alert");
     });
 
+    await t.test("sub-threshold time restarts the debounce (the audit's two-spike case)", async () => {
+        // 95% @0s, 88% @1s, 95% @61s used to alert on the last sample: the
+        // dip sat in the hysteresis band and the debounce kept running.
+        const s = fresh();
+        assert.strictEqual(stepMetric(s, 95, 90, t0), null);
+        assert.strictEqual(stepMetric(s, 88, 90, t0 + 1000), null);
+        assert.strictEqual(s.breachedSince, null, "the dip restarts the debounce");
+        assert.strictEqual(stepMetric(s, 95, 90, t0 + 61_000), null, "no 60s sustained breach yet");
+        // A fresh sustained episode alerts after a full window.
+        assert.strictEqual(stepMetric(s, 95, 90, t0 + 61_000 + DEBOUNCE_MS), "alert");
+    });
+
+    await t.test("an observation gap longer than the tolerance breaks continuity", async () => {
+        const { GAP_TOLERANCE_MS } = require("../../server/metric-alerts");
+        const s = fresh();
+        assert.strictEqual(stepMetric(s, 95, 90, t0), null);
+        assert.strictEqual(stepMetric(s, 95, 90, t0 + GAP_TOLERANCE_MS + 1), null, "a new episode, not the old one");
+        assert.strictEqual(stepMetric(s, 95, 90, t0 + GAP_TOLERANCE_MS + 1 + DEBOUNCE_MS), "alert");
+
+        // One dropped sample is not a gap: the breach is still observed
+        // across it.
+        const s2 = fresh();
+        assert.strictEqual(stepMetric(s2, 95, 90, t0), null);
+        assert.strictEqual(stepMetric(s2, null, 90, t0 + 1000), null);
+        assert.strictEqual(stepMetric(s2, 95, 90, t0 + DEBOUNCE_MS), "alert");
+    });
+
     await t.test("hysteresis band stays silent; recovery needs threshold - 5", async () => {
         const s = fresh();
         stepMetric(s, 95, 90, t0);

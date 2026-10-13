@@ -6,12 +6,19 @@
 //! when to speak:
 //!
 //! - debounce: the value must stay at or above the threshold for 60
-//!   seconds; a one-second spike never pages anyone.
-//! - hysteresis: recovery is declared at threshold - 5 points, so values
-//!   hovering at the boundary do not flap.
+//!   seconds; a one-second spike never pages anyone. Before the first alert
+//!   of an episode, a reading below the threshold restarts the debounce —
+//!   time in the hysteresis band is not "sustained breach" — and an
+//!   observation gap longer than the tolerance (three monitor intervals, at
+//!   least three minutes) breaks continuity: a value that reappears after
+//!   silence starts a new episode.
+//! - hysteresis: once an alert is active, recovery is declared at
+//!   threshold - 5 points, so values hovering at the boundary do not flap.
 //! - cooldown: while still breached, at most one repeat per 30 minutes.
 //! - a recovery message is sent only when an alert for that breach actually
 //!   went out; fully suppressed episodes stay silent.
+//! - a missing reading never invents a recovery; gaps are handled by the
+//!   continuity rule above, at the next observed value.
 //!
 //! State is in-memory and bounded; a restart may re-send one alert after
 //! the debounce. Evaluation uses receive time, not `sampledAt`, so a
@@ -28,6 +35,10 @@ use crate::notify;
 pub const DEBOUNCE_MS: i64 = 60_000;
 pub const COOLDOWN_MS: i64 = 30 * 60_000;
 pub const HYSTERESIS: f64 = 5.0;
+/// Base observation-gap tolerance: with no monitor interval to scale it, a
+/// breach must have been observed within this window to still count as
+/// continuous.
+pub const GAP_TOLERANCE_MS: i64 = 3 * 60_000;
 const MAX_STATE: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +52,9 @@ pub struct MetricState {
     breached_since: Option<i64>,
     alerted: bool,
     last_notified: i64,
+    /// When an at-or-above-threshold reading was last observed: the
+    /// continuity anchor for the pre-alert debounce.
+    last_above_at: Option<i64>,
 }
 
 #[derive(Default)]
@@ -102,29 +116,56 @@ pub fn readings_from(metrics: &Value) -> (Option<f64>, Option<f64>, Option<f64>,
 
 /// Pure state-machine step for one metric. Mutates `state`, returns the
 /// action to take, if any.
+///
+/// `gap_tolerance_ms` is the longest observation gap that keeps a pre-alert
+/// episode continuous.
 pub fn step_metric(
     state: &mut MetricState,
     value: Option<f64>,
     threshold: f64,
     now_ms: i64,
+    gap_tolerance_ms: i64,
 ) -> Option<Action> {
-    // No reading (agent omitted the metric): leave the episode alone rather
-    // than inventing a recovery.
+    // No reading (agent omitted the metric): never invent a recovery. A long
+    // gap is caught by the continuity check below, at the next reading that
+    // actually arrives.
     let value = value?;
 
     let recover_at = threshold - HYSTERESIS;
     if value <= recover_at {
         let was_alerted = state.alerted;
         state.breached_since = None;
+        state.last_above_at = None;
         state.alerted = false;
         return was_alerted.then_some(Action::Recover);
     }
 
     if value < threshold {
-        // Hysteresis band: above recovery, below the alert line. The episode
-        // stays open but stays silent.
+        // Below the alert line. Once an alert is active this is the
+        // hysteresis band: the episode stays open but stays silent. Before
+        // any alert, sub-threshold time is not a sustained breach: the
+        // debounce restarts, so two spikes separated by a dip cannot add up
+        // to one 60s breach.
+        if state.alerted {
+            return None;
+        }
+        state.breached_since = None;
+        state.last_above_at = None;
         return None;
     }
+
+    // At or above the threshold.
+    if !state.alerted
+        && state
+            .last_above_at
+            .is_some_and(|last| now_ms - last > gap_tolerance_ms)
+    {
+        // The breach was not observed for most of the window (a silent
+        // agent, dropped samples, a restarted collector): this reading
+        // starts a new episode rather than completing the old one.
+        state.breached_since = None;
+    }
+    state.last_above_at = Some(now_ms);
 
     let Some(breached_since) = state.breached_since else {
         state.breached_since = Some(now_ms);
@@ -199,6 +240,10 @@ pub(crate) async fn evaluate(metrics: &Metrics, monitor: &Monitor, now_ms: i64) 
     };
 
     let (cpu, ram, disk, disk_mount) = readings_from(&sample);
+    // Continuity scales with the monitor's cadence: one or two missed
+    // samples are tolerated, a silence of three intervals is not. The base
+    // tolerance covers monitors without a usable interval.
+    let gap_tolerance_ms = GAP_TOLERANCE_MS.max(monitor.interval.max(0) * 3 * 1000);
     for (metric, threshold) in thresholds {
         let Some(threshold) = threshold else {
             continue;
@@ -216,6 +261,7 @@ pub(crate) async fn evaluate(metrics: &Metrics, monitor: &Monitor, now_ms: i64) 
                 value,
                 threshold as f64,
                 now_ms,
+                gap_tolerance_ms,
             )
         };
         let Some(action) = action else {
@@ -273,52 +319,39 @@ mod tests {
     fn state_machine_debounces_hysteresis_and_cools_down() {
         let mut state = MetricState::default();
         let t0 = 1_000_000_000_i64;
+        let step = |state: &mut MetricState, value: Option<f64>, now: i64| {
+            step_metric(state, value, 90.0, now, GAP_TOLERANCE_MS)
+        };
 
         // A spike below the threshold: nothing.
-        assert_eq!(step_metric(&mut state, Some(89.0), 90.0, t0), None);
+        assert_eq!(step(&mut state, Some(89.0), t0), None);
         // At the threshold: the episode starts, still silent.
-        assert_eq!(step_metric(&mut state, Some(91.0), 90.0, t0), None);
+        assert_eq!(step(&mut state, Some(91.0), t0), None);
         // Debounce not elapsed.
-        assert_eq!(step_metric(&mut state, Some(95.0), 90.0, t0 + 59_000), None);
+        assert_eq!(step(&mut state, Some(95.0), t0 + 59_000), None);
         // Debounce elapsed: alert.
-        let action = step_metric(&mut state, Some(95.0), 90.0, t0 + 61_000);
+        let action = step(&mut state, Some(95.0), t0 + 61_000);
         assert_eq!(action, Some(Action::Alert));
         // Mark as notified like the evaluator does.
         state.alerted = true;
         state.last_notified = t0 + 61_000;
         // Still breached, but the cooldown holds.
-        assert_eq!(
-            step_metric(&mut state, Some(95.0), 90.0, t0 + 120_000),
-            None
-        );
+        assert_eq!(step(&mut state, Some(95.0), t0 + 120_000), None);
         // Hysteresis band: above recovery, below the line; stays silent.
-        assert_eq!(
-            step_metric(&mut state, Some(87.0), 90.0, t0 + 130_000),
-            None
-        );
+        assert_eq!(step(&mut state, Some(87.0), t0 + 130_000), None);
         // Cooldown elapsed while still breached: repeat.
         assert_eq!(
-            step_metric(&mut state, Some(95.0), 90.0, t0 + 61_000 + COOLDOWN_MS),
+            step(&mut state, Some(95.0), t0 + 61_000 + COOLDOWN_MS),
             Some(Action::Alert)
         );
         // Recovery at threshold - 5.
         assert_eq!(
-            step_metric(
-                &mut state,
-                Some(85.0),
-                90.0,
-                t0 + 61_000 + COOLDOWN_MS + 1_000
-            ),
+            step(&mut state, Some(85.0), t0 + 61_000 + COOLDOWN_MS + 1_000),
             Some(Action::Recover)
         );
         // A second recovery is silent.
         assert_eq!(
-            step_metric(
-                &mut state,
-                Some(80.0),
-                90.0,
-                t0 + 61_000 + COOLDOWN_MS + 2_000
-            ),
+            step(&mut state, Some(80.0), t0 + 61_000 + COOLDOWN_MS + 2_000),
             None
         );
         // Missing readings never invent recoveries.
@@ -326,8 +359,48 @@ mod tests {
             alerted: true,
             ..Default::default()
         };
-        assert_eq!(step_metric(&mut fresh, None, 90.0, t0), None);
+        assert_eq!(step(&mut fresh, None, t0), None);
         assert!(fresh.alerted);
+    }
+
+    #[test]
+    fn debounce_requires_continuous_above_threshold_observations() {
+        let t0 = 1_000_000_000_i64;
+        let step = |state: &mut MetricState, value: Option<f64>, now: i64| {
+            step_metric(state, value, 90.0, now, GAP_TOLERANCE_MS)
+        };
+
+        // The audit's reproduction: 95% @0s, 88% @1s, 95% @61s used to
+        // alert on the last sample. Sub-threshold time restarts the
+        // debounce, so it cannot add up to a "sustained" breach.
+        let mut state = MetricState::default();
+        assert_eq!(step(&mut state, Some(95.0), t0), None);
+        assert_eq!(step(&mut state, Some(88.0), t0 + 1_000), None);
+        assert_eq!(state.breached_since, None, "the dip restarts the debounce");
+        assert_eq!(step(&mut state, Some(95.0), t0 + 61_000), None);
+        // A fresh sustained episode from that reading alerts after a full
+        // window.
+        assert_eq!(
+            step(&mut state, Some(95.0), t0 + 61_000 + DEBOUNCE_MS),
+            Some(Action::Alert)
+        );
+
+        // A long observation gap breaks continuity: the reading that
+        // reappears after the tolerance starts a new episode.
+        let mut state = MetricState::default();
+        assert_eq!(step(&mut state, Some(95.0), t0), None);
+        assert_eq!(step(&mut state, Some(95.0), t0 + GAP_TOLERANCE_MS + 1), None);
+        assert_eq!(
+            step(&mut state, Some(95.0), t0 + GAP_TOLERANCE_MS + 1 + DEBOUNCE_MS),
+            Some(Action::Alert)
+        );
+
+        // One dropped sample is not a gap: a single missing reading does not
+        // restart a breach that was observed across it.
+        let mut state = MetricState::default();
+        assert_eq!(step(&mut state, Some(95.0), t0), None);
+        assert_eq!(step(&mut state, None, t0 + 1_000), None);
+        assert_eq!(step(&mut state, Some(95.0), t0 + DEBOUNCE_MS), Some(Action::Alert));
     }
 
     #[test]
