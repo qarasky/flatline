@@ -1,3 +1,24 @@
+/**
+ * Fallback deadline for one check when a monitor has no usable timeout.
+ * @type {number}
+ */
+const DEFAULT_TIMEOUT_MS = 48_000;
+
+/**
+ * Deadline for one check, in milliseconds.
+ *
+ * `monitor.timeout` is stored in seconds. Zero or missing (legacy rows the
+ * runtime never normalized) falls back to a bounded default instead of
+ * meaning "no limit": a server that accepts a connection and then stops
+ * answering must not hold the monitor's loop open forever.
+ * @param {{timeout?: number}} monitor Monitor being checked
+ * @returns {number} Deadline in milliseconds
+ */
+function operationTimeoutMs(monitor) {
+    const seconds = Number(monitor?.timeout);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : DEFAULT_TIMEOUT_MS;
+}
+
 class MonitorType {
     name = undefined;
 
@@ -37,4 +58,6 @@ class MonitorType {
 
 module.exports = {
     MonitorType,
+    DEFAULT_TIMEOUT_MS,
+    operationTimeoutMs,
 };

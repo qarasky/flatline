@@ -75,6 +75,50 @@ async function createTestGrpcServer(port, methodHandlers) {
     });
 }
 
+test("check() times out when the server accepts the call and never answers", async () => {
+    // The audit's second reproduction: no deadline was passed to
+    // makeUnaryRequest, so an unanswered call held the check (and the
+    // monitor loop awaiting it) open forever.
+    const port = 50056;
+    const server = await createTestGrpcServer(port, {
+        Echo: (call, callback) => {
+            // Accept the call and never reply.
+        },
+    });
+
+    const grpcMonitor = new GrpcKeywordMonitorType();
+    const monitor = {
+        grpcUrl: `localhost:${port}`,
+        grpcProtobuf: testProto,
+        grpcServiceName: "test.TestService",
+        grpcMethod: "echo",
+        grpcBody: JSON.stringify({ message: "test" }),
+        keyword: "SUCCESS",
+        invertKeyword: false,
+        grpcEnableTls: false,
+        timeout: 0.2,
+        isInvertKeyword: () => false,
+    };
+
+    const heartbeat = {
+        msg: "",
+        status: PENDING,
+    };
+
+    const started = Date.now();
+    try {
+        await assert.rejects(grpcMonitor.check(monitor, heartbeat, {}), (err) => {
+            // grpc-js cancels the RPC at the deadline; the backstop timer is
+            // the fallback for a callback that never arrives at all.
+            return err.code === grpc.status.DEADLINE_EXCEEDED || /timed out/i.test(err.message);
+        });
+        const elapsed = Date.now() - started;
+        assert.ok(elapsed < 5000, `check settled in ${elapsed}ms`);
+    } finally {
+        server.forceShutdown();
+    }
+});
+
 describe(
     "GrpcKeywordMonitorType",
     {
