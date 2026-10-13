@@ -156,9 +156,9 @@ test("monitor metrics ingest", async (t) => {
         assert.deepStrictEqual(JSON.parse(out), { v: 99, somethingNew: [ 1, 2, 3 ] });
     });
 
-    await t.test("pruneMetrics deletes only old rows", async () => {
+    await t.test("the maintenance run folds an expired row before pruning it", async () => {
         const { R } = require("redbean-node");
-        const { pruneMetrics } = require("../../server/monitor-metrics");
+        const { rollupMetrics } = require("../../server/metrics-rollup");
 
         const old = R.dispense("monitor_metric");
         old.monitor_id = 1;
@@ -166,7 +166,10 @@ test("monitor metrics ingest", async (t) => {
         old.payload = JSON.stringify({ v: 1 });
         await R.store(old);
 
-        await pruneMetrics(30);
+        // Pruning is part of the fold run and only deletes pairs a bucket
+        // covers: the expired row survives until this run has folded it.
+        const result = await rollupMetrics();
+        assert.ok(result.prunedRaw >= 1, "the expired row was folded and pruned in one run");
 
         const rows = await metricRows();
         assert.ok(rows.length >= 1, "recent rows survive");

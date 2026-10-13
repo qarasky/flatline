@@ -7,7 +7,7 @@ const HISTORY_INTERVAL_MS = 30_000;
 const { recordCPU, currentPeak, forgetCPU, resetCPU } = require("./cpu-peak");
 const { asCounters, transformCounters } = require("./cpu-counters");
 const { netSnapshot, diskSnapshot, netRates, diskRates } = require("./io-rates");
-const { markRollupDirty, hourStart, METRICS_RETENTION_DAYS } = require("./metrics-rollup");
+const { markRollupDirty, METRICS_RETENTION_DAYS } = require("./metrics-rollup");
 
 /**
  * Parse a stored timestamp (SQL or ISO) into epoch millis.
@@ -362,29 +362,11 @@ async function storeMetricsNow(monitorID, time, payload, { live = false } = {}) 
     return true;
 }
 
-/**
- * Delete samples older than the retention window.
- *
- * Whole hours only: a cutoff inside an hour leaves a partial hour behind,
- * and a later late sample would re-fold that hour from the survivors,
- * silently replacing a complete bucket with a partial aggregate (lost
- * peaks and means). With hour-aligned pruning an hour is either fully
- * retained or fully deleted, so a rebuild always sees complete evidence.
- * @param {number} days Keep window in days
- * @returns {Promise<void>} Resolves when pruned
- */
-async function pruneMetrics(days = METRICS_RETENTION_DAYS) {
-    const cutoff = hourStart(Date.now() - days * 24 * 3600_000);
-    await R.exec("DELETE FROM monitor_metric WHERE time < ?", [ sqlTimeMillis(cutoff) ]);
-    log.debug("metrics", `Pruned metric samples older than ${days} days (whole hours only)`);
-}
-
 module.exports = {
     METRICS_MAX_BYTES,
     METRICS_RETENTION_DAYS,
     validateMetrics,
     storeMetrics,
-    pruneMetrics,
     getLatestMetrics,
     forgetMetrics,
     HISTORY_INTERVAL_MS,

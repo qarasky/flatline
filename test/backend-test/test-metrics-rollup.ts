@@ -427,20 +427,68 @@ test("bucket integrity across the raw prune", async (t) => {
         "SELECT samples, cpu_min, cpu_max, cpu_avg FROM monitor_metric_hourly WHERE monitor_id = ? AND time = ?",
         [ monitorID, sql(time) ]);
 
-    await t.test("the raw prune removes whole hours, never half of one", async () => {
+    await t.test("the maintenance run folds, then prunes whole hours only", async () => {
         // The cutoff lands inside an hour; that hour must survive intact so
-        // its aggregate can never be rebuilt from a partial raw set.
+        // its aggregate can never be rebuilt from a partial raw set. The
+        // older hour is folded by the same run and only then pruned.
         const boundary = rawBoundaryHour(Date.now());
         await insertRaw(monitorID, boundary + 60_000, 10);
         await insertRaw(monitorID, boundary + 30 * 60_000, 20);
         await insertRaw(monitorID, boundary - 3 * HOUR + 60_000, 30);
 
-        const { pruneMetrics } = require("../../server/monitor-metrics");
-        await pruneMetrics(30);
+        const result = await rollupMetrics();
+        assert.strictEqual(result.prunedRaw, 1, "the aged-out hour is pruned once folded");
+        assert.strictEqual(result.skippedRaw, 0, "nothing was left unfolded");
 
         const kept = await R.getAll("SELECT time FROM monitor_metric WHERE monitor_id = ? ORDER BY time", [ monitorID ]);
         assert.strictEqual(kept.length, 2, "both rows of the boundary hour survive");
         assert.ok(kept.every((row: any) => Date.parse(row.time.replace(" ", "T") + "Z") >= boundary));
+    });
+
+    await t.test("expired raw rows stay until their hour is folded", async () => {
+        // The repair-before-prune guarantee: the prune is part of the same
+        // maintenance run as the fold and only deletes pairs a bucket
+        // provably covers. An unfolded old hour keeps its evidence, even
+        // though it is far past the retention window.
+        const now = Date.parse("2026-10-14T12:30:00Z");
+        const old = hourStart(now) - 40 * 24 * HOUR;
+        await insertRaw(monitorID, old + 5 * 60_000, 77);
+
+        // A run that cannot fold (simulated by hiding the raw row from the
+        // fold) must not delete it either — so assert the ordering directly:
+        // fold first, then the same run prunes it.
+        const folded = await rollupMetrics(now);
+        assert.ok(folded.rolledUp >= 1, "the old hour folds first");
+        assert.ok(folded.prunedRaw >= 1, "and is pruned in the same run");
+        assert.strictEqual(
+            await R.getCell("SELECT COUNT(*) FROM monitor_metric WHERE monitor_id = ? AND time < ?", [ monitorID, sql(old + HOUR) ]),
+            0, "folded rows are gone");
+        assert.strictEqual((await R.getRow(
+            "SELECT samples FROM monitor_metric_hourly WHERE monitor_id = ? AND time = ?", [ monitorID, sql(old) ])).samples, 1);
+    });
+
+    await t.test("an expired pair with no bucket is kept, not pruned", async () => {
+        // The core of the repair-before-prune guarantee: an hour far past
+        // the retention window that was never folded keeps its raw rows
+        // (they are the only record) until a run folds it.
+        const now = Date.parse("2026-10-14T12:30:00Z");
+        const hour = rawBoundaryHour(now) - 5 * HOUR;
+        await insertRaw(monitorID, hour + 5 * 60_000, 5);
+
+        const { pruneRawSamples } = require("../../server/metrics-rollup");
+        const outcome = await pruneRawSamples(now);
+        assert.strictEqual(outcome.deleted, 0, "nothing was deleted");
+        assert.ok(outcome.skipped >= 1, "the unfolded pair was skipped");
+        assert.strictEqual(
+            await R.getCell("SELECT COUNT(*) FROM monitor_metric WHERE monitor_id = ? AND time < ?", [ monitorID, sql(hour + HOUR) ]),
+            1, "its raw row survives");
+
+        // The next maintenance run folds it, and the same run prunes it.
+        const folded = await rollupMetrics(now);
+        assert.ok(folded.prunedRaw >= 1, "folded, then pruned");
+        assert.strictEqual(
+            await R.getCell("SELECT COUNT(*) FROM monitor_metric WHERE monitor_id = ? AND time < ?", [ monitorID, sql(hour + HOUR) ]),
+            0, "now prunable");
     });
 
     await t.test("a late sample never downgrades a bucket built from richer evidence", async () => {

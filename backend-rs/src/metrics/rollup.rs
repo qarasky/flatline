@@ -47,12 +47,32 @@ pub const ROWS_PER_PAGE: i64 = 5000;
 pub struct RollupResult {
     pub rolled_up: usize,
     pub chunks: usize,
+    /// Expired hourly buckets deleted.
     pub pruned: u64,
+    /// Expired raw (monitor, hour) pairs deleted after being proven folded.
+    pub pruned_raw: u64,
+    /// Expired raw pairs kept because no bucket covers them yet: the next
+    /// run folds them first.
+    pub skipped_raw: u64,
 }
 
 /// Floor epoch millis to the start of its UTC hour.
 pub fn hour_start(ms: i64) -> i64 {
     ms.div_euclid(3_600_000) * 3_600_000
+}
+
+/// The lowest SQL spelling of an hour start.
+///
+/// Stored times are strings, and legacy/imported rows can carry whole
+/// seconds instead of milliseconds. Compared as strings, the second-precision
+/// spelling of an hour start sorts below its millisecond spelling, so a range
+/// that must include an hour's first row whatever its precision starts from
+/// the second-precision form. Grouping is by hour, so including such a row
+/// can never put it in the wrong bucket — and leaving it out would leave it
+/// unfolded, which the verified prune would then refuse to delete forever.
+fn sql_time_lower_bound(ms: i64) -> String {
+    let full = sql_time_millis(ms);
+    full[..full.len().min(19)].to_string()
 }
 
 /// The oldest hour that still has complete raw evidence.
@@ -208,7 +228,7 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
 
     // Raw rows are stamped inside their hour, so the window ends at the next
     // hour start; bucket keys are stamped at the hour start itself.
-    let from = sql_time_millis(oldest_hour);
+    let from = sql_time_lower_bound(oldest_hour);
     let to_exclusive = sql_time_millis(last_complete_hour + 3_600_000);
 
     // Stored buckets inside the raw window: coverage is judged per monitor
@@ -327,7 +347,7 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
                          WHERE time >= ? AND time < ? AND (time > ? OR (time = ? AND id > ?))
                          ORDER BY time, id LIMIT ?",
                     )
-                    .bind(sql_time_millis(window_start))
+                    .bind(sql_time_lower_bound(window_start))
                     .bind(sql_time_millis(window_end))
                     .bind(time)
                     .bind(time)
@@ -342,7 +362,7 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
                          WHERE time >= ? AND time < ?
                          ORDER BY time, id LIMIT ?",
                     )
-                    .bind(sql_time_millis(window_start))
+                    .bind(sql_time_lower_bound(window_start))
                     .bind(sql_time_millis(window_end))
                     .bind(ROWS_PER_PAGE)
                     .fetch_all(pool)
@@ -382,6 +402,13 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
         .bind(sql_time_millis(last_complete_hour))
         .execute(pool)
         .await?;
+
+    // Fold first, then prune what is proven folded: verification is part of
+    // the maintenance run itself, not a separately scheduled job that merely
+    // assumes the fold succeeded.
+    let raw = prune_raw(pool, now_ms, crate::metrics::METRICS_RETENTION_DAYS).await?;
+    result.pruned_raw = raw.deleted;
+    result.skipped_raw = raw.skipped;
 
     result.pruned = prune_hourly(pool, now_ms).await?;
     Ok(result)
@@ -435,22 +462,98 @@ async fn prune_hourly(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<u64> {
     Ok(result.rows_affected())
 }
 
-/// Delete raw samples older than the retention window.
+/// Outcome of a verified raw prune.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RawPruneOutcome {
+    /// Expired (monitor, hour) pairs deleted.
+    pub deleted: u64,
+    /// Expired pairs kept because no bucket covers them yet.
+    pub skipped: u64,
+}
+
+/// Delete raw samples older than the retention window, verified pair by pair.
 ///
-/// Whole hours only: a cutoff inside an hour leaves a partial hour behind,
-/// and a later late sample would re-fold that hour from the survivors,
-/// silently replacing a complete hourly bucket with a partial aggregate.
-/// With hour-aligned pruning an hour is either fully retained or fully
-/// deleted, so a rebuild always sees complete evidence.
-pub async fn prune_raw(pool: &SqlitePool, days: i64) -> sqlx::Result<u64> {
-    let cutoff = hour_start(
-        chrono::Utc::now().timestamp_millis() - days * 24 * 3_600_000,
-    );
-    let result = sqlx::query("DELETE FROM metrics_raw WHERE time < ?")
-        .bind(sql_time_millis(cutoff))
+/// A pair — one (monitor, hour) — is deleted only when an hourly bucket covers
+/// every remaining raw row of it. Rows whose hour is not (fully) folded stay
+/// in place: the next run's repair folds them, and only then are they pruned.
+/// That is the actual repair-before-prune guarantee, instead of the old
+/// assumption that the daily schedule always ran after a successful fold.
+///
+/// Called from [`rollup_metrics`], after the fold, so a fold failure or a
+/// pending repair can never put deletion ahead of repair. Whole hours only:
+/// a cutoff inside an hour would leave partial evidence behind, and a later
+/// late sample would re-fold that hour from the survivors.
+pub async fn prune_raw(
+    pool: &SqlitePool,
+    now_ms: i64,
+    days: i64,
+) -> sqlx::Result<RawPruneOutcome> {
+    let cutoff_hour = hour_start(now_ms - days * 24 * 3_600_000);
+
+    // Pairs that have aged out, with their remaining row counts.
+    let expired: Vec<(i64, String, i64)> = sqlx::query_as(
+        "SELECT monitor_id, substr(replace(time, 'T', ' '), 1, 13) || ':00:00' AS hour, COUNT(*)
+         FROM metrics_raw WHERE time < ?
+         GROUP BY monitor_id, hour",
+    )
+    .bind(sql_time_millis(cutoff_hour))
+    .fetch_all(pool)
+    .await?;
+    if expired.is_empty() {
+        return Ok(RawPruneOutcome::default());
+    }
+
+    // Coverage: the stored bucket's sample count per pair.
+    let oldest = expired
+        .iter()
+        .filter_map(|(_, hour, _)| metric_time(hour).map(hour_start))
+        .min()
+        .unwrap_or(cutoff_hour);
+    let covered_rows: Vec<(i64, String, i64)> = sqlx::query_as(
+        "SELECT monitor_id, time, samples FROM metrics_hourly WHERE time >= ? AND time < ?",
+    )
+    .bind(sql_time_lower_bound(oldest))
+    .bind(sql_time_millis(cutoff_hour))
+    .fetch_all(pool)
+    .await?;
+    let covered: HashMap<(i64, i64), i64> = covered_rows
+        .iter()
+        .filter_map(|(monitor_id, time, samples)| {
+            metric_time(time).map(|ms| ((*monitor_id, hour_start(ms)), *samples))
+        })
+        .collect();
+
+    let mut outcome = RawPruneOutcome::default();
+    for (monitor_id, hour, samples) in &expired {
+        let Some(hour) = metric_time(hour).map(hour_start) else {
+            continue;
+        };
+        let stored_samples = covered.get(&(*monitor_id, hour)).copied();
+        if stored_samples.is_none_or(|stored| stored < *samples) {
+            // Not folded (yet): keep the evidence and let the repair pass
+            // fold it first. Pruning it now would lose those readings.
+            outcome.skipped += 1;
+            continue;
+        }
+        sqlx::query(
+            "DELETE FROM metrics_raw WHERE monitor_id = ? AND time >= ? AND time < ? AND time < ?",
+        )
+        .bind(monitor_id)
+        .bind(sql_time_lower_bound(hour))
+        .bind(sql_time_millis(hour + 3_600_000))
+        .bind(sql_time_millis(cutoff_hour))
         .execute(pool)
         .await?;
-    Ok(result.rows_affected())
+        outcome.deleted += 1;
+    }
+
+    if outcome.skipped > 0 {
+        tracing::warn!(
+            "rollup: kept {} expired raw hour(s) that are not fully folded yet",
+            outcome.skipped
+        );
+    }
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -751,7 +854,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prune_raw_keeps_whole_hours() {
+    async fn maintenance_run_folds_then_prunes_whole_hours() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.keep();
         let pool = crate::db::connect(&path).await.unwrap();
@@ -774,13 +877,62 @@ mod tests {
                 .unwrap();
         }
 
-        let deleted = prune_raw(&pool, 30).await.unwrap();
-        assert_eq!(deleted, 1, "only the whole hour before the boundary goes");
+        // One maintenance run: fold both hours, then prune the aged-out one.
+        let result = rollup_metrics(&pool, chrono::Utc::now().timestamp_millis())
+            .await
+            .unwrap();
+        assert_eq!(result.rolled_up, 2, "both hours fold");
+        assert_eq!(result.pruned_raw, 1, "the aged-out hour is pruned once folded");
+        assert_eq!(result.skipped_raw, 0);
+
+        let left: Vec<String> = sqlx::query_scalar("SELECT time FROM metrics_raw ORDER BY time")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left.len(), 1, "the boundary hour survives intact");
+        assert!(
+            left.iter()
+                .all(|time| metric_time(time).unwrap() >= boundary),
+            "no row from inside the boundary hour was deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn second_precision_rows_are_folded_and_pruned() {
+        // Legacy/imported rows can carry whole seconds. The second-precision
+        // spelling of an hour start sorts below the millisecond one, so a
+        // range that starts from the milliseconds form would skip the hour's
+        // first row: it would never fold, and the verified prune would then
+        // keep it forever.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let pool = crate::db::connect(&path).await.unwrap();
+
+        let (monitor_id,): (i64,) =
+            sqlx::query_as("INSERT INTO monitors (name, type) VALUES ('m', 'push') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let hour = raw_boundary_hour(now) - 5 * 3_600_000;
+        let second_precision = sql_time_millis(hour)[..19].to_string();
+        sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
+            .bind(monitor_id)
+            .bind(&second_precision)
+            .bind(json!({ "cpu": { "percent": 42.0 } }).to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(result.rolled_up, 1, "the whole-second row is folded");
+        assert_eq!(result.pruned_raw, 1, "and pruned once folded");
         let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metrics_raw")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(left, 1, "the boundary hour survives intact");
+        assert_eq!(left, 0);
     }
 
     #[tokio::test]
@@ -887,12 +1039,15 @@ mod tests {
                 .unwrap();
         }
 
-        let deleted = prune_raw(&pool, 30).await.unwrap();
-        assert_eq!(deleted, 1);
+        let outcome = prune_raw(&pool, chrono::Utc::now().timestamp_millis(), 30)
+            .await
+            .unwrap();
+        assert_eq!(outcome.deleted, 0, "unfolded rows are never deleted");
+        assert_eq!(outcome.skipped, 1);
         let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metrics_raw")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(left, 1);
+        assert_eq!(left, 2, "both rows stay until their hours are folded");
     }
 }

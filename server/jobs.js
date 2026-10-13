@@ -1,6 +1,5 @@
 const { UptimeKumaServer } = require("./uptime-kuma-server");
 const { clearOldData } = require("./jobs/clear-old-data");
-const { pruneOldMetrics } = require("./jobs/prune-old-metrics");
 const { rollupMetricsJob } = require("./metrics-rollup");
 const { incrementalVacuum } = require("./jobs/incremental-vacuum");
 const Cron = require("croner");
@@ -13,17 +12,13 @@ const jobs = [
         croner: null,
     },
     {
-        // Folds raw samples into hourly rollups. Runs hourly so the raw
-        // prune below never deletes an hour before it has been rolled up.
+        // Folds raw samples into hourly rollups and then prunes the raw rows
+        // that are provably folded. One job on purpose: a separately
+        // scheduled prune could delete evidence a failed or pending fold
+        // still needed.
         name: "rollup-metrics",
         interval: "12 * * * *",
         jobFunc: rollupMetricsJob,
-        croner: null,
-    },
-    {
-        name: "prune-old-metrics",
-        interval: "27 04 * * *",
-        jobFunc: pruneOldMetrics,
         croner: null,
     },
     {

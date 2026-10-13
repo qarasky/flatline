@@ -135,9 +135,10 @@ impl Metrics {
         alerts::evaluate(self, monitor, now_ms).await;
     }
 
-    /// Background jobs: hourly rollups at :12 past the hour, raw prune daily
-    /// at 04:27 UTC — the same schedule the Node cron uses — and heartbeat
-    /// retention once at startup and daily at 04:32.
+    /// Background jobs: hourly rollups at :12 past the hour (which fold and
+    /// then prune the raw rows that are proven folded — one maintenance run,
+    /// so a failed fold can never race a delete) and heartbeat retention once
+    /// at startup and daily at 04:32.
     ///
     /// `heartbeat_retention_days` comes from the configuration; 0 keeps
     /// heartbeats forever.
@@ -147,28 +148,24 @@ impl Metrics {
             loop {
                 sleep_until(next_hourly_at(Utc::now(), 12)).await;
                 match rollup::rollup_metrics(&metrics.pool, Utc::now().timestamp_millis()).await {
-                    Ok(result) if result.rolled_up > 0 || result.pruned > 0 => tracing::info!(
-                        "rollup: {} hour buckets ({} chunks), pruned {} expired",
-                        result.rolled_up,
-                        result.chunks,
-                        result.pruned
-                    ),
-                    Ok(_) => {}
-                    Err(error) => tracing::error!("rollup failed: {error}"),
-                }
-            }
-        });
-
-        let metrics = Arc::clone(self);
-        tokio::spawn(async move {
-            loop {
-                sleep_until(next_daily_at(Utc::now(), 4, 27)).await;
-                match rollup::prune_raw(&metrics.pool, METRICS_RETENTION_DAYS).await {
-                    Ok(deleted) if deleted > 0 => {
-                        tracing::info!("pruned {deleted} raw metric samples");
+                    Ok(result)
+                        if result.rolled_up > 0
+                            || result.pruned > 0
+                            || result.pruned_raw > 0
+                            || result.skipped_raw > 0 =>
+                    {
+                        tracing::info!(
+                            "rollup: {} hour buckets ({} chunks), pruned {} expired buckets, \
+                             pruned {} folded raw hours, kept {} unfolded",
+                            result.rolled_up,
+                            result.chunks,
+                            result.pruned,
+                            result.pruned_raw,
+                            result.skipped_raw
+                        );
                     }
                     Ok(_) => {}
-                    Err(error) => tracing::error!("raw metrics prune failed: {error}"),
+                    Err(error) => tracing::error!("rollup failed: {error}"),
                 }
             }
         });

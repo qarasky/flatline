@@ -31,9 +31,10 @@ const { readingsFromPayload, timestamp } = require("./metrics-history");
  *   backfills the full raw retention (30 days) without loading everything
  *   at once.
  * - Only complete hours roll up: the current hour is still accumulating.
- * - The job runs hourly and the raw prune daily, so a repair pass always has
- *   the raw evidence it needs; repairing missing/incomplete buckets happens
- *   before the prune of that same evidence.
+ * - Folding and raw pruning are one maintenance run: the prune happens
+ *   inside this job, after the fold, and only for (monitor, hour) pairs an
+ *   hourly bucket provably covers. A failed or pending fold therefore
+ *   keeps its raw evidence instead of racing a separately scheduled delete.
  */
 
 /** How long hourly rollups are kept. Raw stays at METRICS_RETENTION_DAYS. */
@@ -98,6 +99,24 @@ function hourStart(ms) {
  */
 function sqlTime(ms) {
     return new Date(ms).toISOString().replace("T", " ").replace("Z", "");
+}
+
+/**
+ * The lowest SQL spelling of an hour start.
+ *
+ * Stored times are strings, and legacy/imported rows can carry whole seconds
+ * instead of milliseconds. Compared as strings, the second-precision
+ * spelling of an hour start sorts below its millisecond spelling, so a range
+ * that must include an hour's first row whatever its precision starts from
+ * the second-precision form.
+ * Grouping is by hour, so including such a row can never put it in the wrong
+ * bucket — and leaving it out would leave it unfolded, which the verified
+ * prune would then refuse to delete forever.
+ * @param {number} ms Hour start millis
+ * @returns {string} SQL timestamp without fractional seconds
+ */
+function sqlTimeLowerBound(ms) {
+    return sqlTime(ms).slice(0, 19);
 }
 
 /**
@@ -289,7 +308,7 @@ async function rollupMetrics(now = Date.now()) {
         return { rolledUp: 0, chunks: 0, pruned };
     }
 
-    const from = sqlTime(oldestHour);
+    const from = sqlTimeLowerBound(oldestHour);
     const to = sqlTime(lastCompleteHour);
     // Raw rows are stamped inside their hour, so the window ends at the next
     // hour start; bucket keys are stamped at the hour start itself.
@@ -396,12 +415,12 @@ async function rollupMetrics(now = Date.now()) {
                     `SELECT id, monitor_id, time, payload FROM monitor_metric
                      WHERE time >= ? AND time < ? AND (time > ? OR (time = ? AND id > ?))
                      ORDER BY time, id LIMIT ${ROWS_PER_PAGE}`,
-                    [ sqlTime(windowStart), sqlTime(windowEnd), cursor.time, cursor.time, cursor.id ])
+                    [ sqlTimeLowerBound(windowStart), sqlTime(windowEnd), cursor.time, cursor.time, cursor.id ])
                 : await R.getAll(
                     `SELECT id, monitor_id, time, payload FROM monitor_metric
                      WHERE time >= ? AND time < ?
                      ORDER BY time, id LIMIT ${ROWS_PER_PAGE}`,
-                    [ sqlTime(windowStart), sqlTime(windowEnd) ]);
+                    [ sqlTimeLowerBound(windowStart), sqlTime(windowEnd) ]);
             for (const row of rows) {
                 accumulateRow(buckets, row);
             }
@@ -430,8 +449,84 @@ async function rollupMetrics(now = Date.now()) {
     // comparison sees the new row.
     await R.exec("DELETE FROM monitor_metric_rollup_dirty WHERE hour <= ?", [ to ]);
 
+    // Fold first, then prune what is proven folded: verification is part of
+    // the maintenance run itself, not a separately scheduled job that merely
+    // assumes the fold succeeded.
+    const raw = await pruneRawSamples(now);
     const pruned = await pruneHourly(now);
-    return { rolledUp, chunks, pruned };
+    return { rolledUp, chunks, pruned, prunedRaw: raw.deleted, skippedRaw: raw.skipped };
+}
+
+/**
+ * Delete raw samples older than the retention window, verified pair by pair.
+ *
+ * A pair — one (monitor, hour) — is deleted only when an hourly bucket covers
+ * every remaining raw row of it. Rows whose hour is not (fully) folded stay
+ * in place: the next run's repair folds them, and only then are they pruned.
+ * That is the actual repair-before-prune guarantee, instead of the old
+ * assumption that the daily schedule always ran after a successful fold.
+ *
+ * Called from [`rollupMetrics`], after the fold, so a fold failure or a
+ * pending repair can never put deletion ahead of repair.
+ * @param {number} now Current epoch millis
+ * @param {number} days Raw retention in days
+ * @returns {Promise<{deleted: number, skipped: number}>} Pairs deleted and
+ * skipped because they are not folded yet
+ */
+async function pruneRawSamples(now = Date.now(), days = METRICS_RETENTION_DAYS) {
+    const cutoffHour = hourStart(now - days * 24 * 3600_000);
+
+    // Pairs that have aged out, with their remaining row counts.
+    const expired = await R.getAll(
+        `SELECT monitor_id, ${hourKeyExpression()} AS hour, COUNT(*) AS samples
+         FROM monitor_metric WHERE time < ?
+         GROUP BY monitor_id, hour`,
+        [ sqlTime(cutoffHour) ]);
+    if (!expired.length) {
+        return { deleted: 0, skipped: 0 };
+    }
+
+    // Coverage: the stored bucket's sample count per pair.
+    const pairs = [];
+    let oldest = cutoffHour;
+    for (const row of expired) {
+        const hour = hourStart(timestamp(row.hour));
+        if (!Number.isFinite(hour)) {
+            continue;
+        }
+        pairs.push({ monitorID: Number(row.monitor_id), hour, samples: Number(row.samples) || 0 });
+        oldest = Math.min(oldest, hour);
+    }
+    const covered = new Map();
+    for (const row of await R.getAll(
+        "SELECT monitor_id, time, samples FROM monitor_metric_hourly WHERE time >= ? AND time < ?",
+        [ sqlTimeLowerBound(oldest), sqlTime(cutoffHour) ])) {
+        const hour = hourStart(timestamp(row.time));
+        if (Number.isFinite(hour)) {
+            covered.set(`${row.monitor_id}|${hour}`, Number(row.samples) || 0);
+        }
+    }
+
+    let deleted = 0;
+    let skipped = 0;
+    for (const pair of pairs) {
+        const storedSamples = covered.get(`${pair.monitorID}|${pair.hour}`);
+        if (storedSamples === undefined || storedSamples < pair.samples) {
+            // Not folded (yet): keep the evidence and let the repair pass
+            // fold it first. Pruning it now would lose those readings.
+            skipped++;
+            continue;
+        }
+        await R.exec(
+            "DELETE FROM monitor_metric WHERE monitor_id = ? AND time >= ? AND time < ? AND time < ?",
+            [ pair.monitorID, sqlTimeLowerBound(pair.hour), sqlTime(pair.hour + 3600_000), sqlTime(cutoffHour) ]);
+        deleted++;
+    }
+
+    if (skipped > 0) {
+        log.warn("rollupMetrics", `Kept ${skipped} expired raw hour(s) that are not fully folded yet`);
+    }
+    return { deleted, skipped };
 }
 
 /**
@@ -476,6 +571,7 @@ async function rollupMetricsJob() {
 module.exports = {
     rollupMetrics,
     rollupMetricsJob,
+    pruneRawSamples,
     markRollupDirty,
     aggregateChunk,
     accumulateRow,
@@ -483,6 +579,7 @@ module.exports = {
     bucketRow,
     hourStart,
     hourKeyExpression,
+    sqlTimeLowerBound,
     rawBoundaryHour,
     HOURLY_RETENTION_DAYS,
     METRICS_RETENTION_DAYS,
