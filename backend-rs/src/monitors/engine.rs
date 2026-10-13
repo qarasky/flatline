@@ -120,6 +120,7 @@ impl Engine {
                 tokio::spawn(async move { engine.check_loop(monitor, Check::Http).await })
             }
             "ping" => tokio::spawn(async move { engine.check_loop(monitor, Check::Ping).await }),
+            "group" => tokio::spawn(async move { engine.group_loop(monitor).await }),
             "push" => tokio::spawn(async move { engine.push_loop(monitor).await }),
             _ => return,
         };
@@ -199,6 +200,102 @@ impl Engine {
                 _ => monitor.interval.max(1),
             };
             tokio::time::sleep(Duration::from_secs(base as u64)).await;
+        }
+    }
+
+    /// The group check loop: aggregate the direct children's latest statuses
+    /// every interval (or retry interval while pending), like the Node
+    /// `GroupMonitorType`.
+    async fn group_loop(self: Arc<Self>, monitor: Monitor) {
+        loop {
+            let (requested, msg) = self.group_check(&monitor).await;
+            let status = match self
+                .record_and_publish(&monitor, requested, None, &msg, false, None)
+                .await
+            {
+                Ok(recorded) => recorded.beat.status,
+                Err(error) => {
+                    tracing::error!("engine: group heartbeat for {}: {error}", monitor.name);
+                    DOWN
+                }
+            };
+
+            let base = match status {
+                PENDING => monitor.retry_interval.max(1),
+                _ => monitor.interval.max(1),
+            };
+            tokio::time::sleep(Duration::from_secs(base as u64)).await;
+        }
+    }
+
+    /// Worst-of-children status for a group.
+    ///
+    /// Mirrors the Node `GroupMonitorType.check`: paused children are
+    /// ignored, a child without any beat counts as pending, the worst status
+    /// wins, and a down child reports the names (the retry walk and the
+    /// notification flow come from the shared record path). An empty group
+    /// is pending rather than up.
+    async fn group_check(&self, monitor: &Monitor) -> (i64, String) {
+        let children: Vec<(i64, String, i64)> =
+            sqlx::query_as("SELECT id, name, active FROM monitors WHERE parent = ?")
+                .bind(monitor.id)
+                .fetch_all(&self.pool)
+                .await
+                .unwrap_or_default();
+
+        if children.is_empty() {
+            return (PENDING, "Group empty".to_string());
+        }
+
+        let mut worst = UP;
+        let mut down: Vec<String> = Vec::new();
+        let mut pending: Vec<String> = Vec::new();
+
+        for (id, name, active) in children {
+            if active == 0 {
+                continue;
+            }
+            let label = if name.is_empty() {
+                format!("#{id}")
+            } else {
+                name
+            };
+            match heartbeats::latest(&self.pool, id).await.ok().flatten() {
+                None => {
+                    if worst == UP {
+                        worst = PENDING;
+                    }
+                    pending.push(label);
+                }
+                Some(beat) => match beat.status {
+                    DOWN => {
+                        worst = DOWN;
+                        down.push(label);
+                    }
+                    PENDING => {
+                        if worst != DOWN {
+                            worst = PENDING;
+                        }
+                        pending.push(label);
+                    }
+                    _ => {}
+                },
+            }
+        }
+
+        match worst {
+            DOWN => {
+                let mut message = format!("Child monitors down: {}", down.join(", "));
+                if !pending.is_empty() {
+                    message.push_str(&format!("; pending: {}", pending.join(", ")));
+                }
+                (DOWN, message)
+            }
+            PENDING => (
+                PENDING,
+                format!("Pending child monitors: {}", pending.join(", ")),
+            ),
+            _ => (UP, "All children up and running".to_string()),
         }
     }
 

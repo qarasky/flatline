@@ -380,6 +380,88 @@ async fn ping_engine_checks_icmp_when_available() {
 }
 
 #[tokio::test]
+async fn group_checks_aggregate_children() {
+    let h = harness().await;
+
+    let ok_url = spawn_server(Router::new().route("/", get(|| async { "ok" }))).await;
+    let (up_child, _) = create_monitor(
+        &h,
+        json!({ "name": "up-child", "type": "http", "url": ok_url, "interval": 20, "timeout": 5 }),
+    )
+    .await;
+    let dead_url = closed_port_url().await;
+    let (down_child, _) = create_monitor(
+        &h,
+        json!({ "name": "down-child", "type": "http", "url": dead_url, "interval": 20, "timeout": 5 }),
+    )
+    .await;
+
+    // Groups re-check every second while pending so the test settles fast.
+    let (up_group, _) = create_monitor(
+        &h,
+        json!({ "name": "all-up", "type": "group", "interval": 20, "retryInterval": 1, "maxretries": 0 }),
+    )
+    .await;
+    let (down_group, _) = create_monitor(
+        &h,
+        json!({ "name": "has-down", "type": "group", "interval": 20, "retryInterval": 1, "maxretries": 0 }),
+    )
+    .await;
+
+    for (monitor_id, parent) in [(up_child, up_group), (down_child, down_group)] {
+        let (status, body) = send(
+            &h.app,
+            request(
+                "PATCH",
+                &format!("/api/v1/monitors/{monitor_id}"),
+                Some(&h.token),
+                Some(json!({ "parent": parent })),
+            ),
+        )
+        .await;
+        assert_eq!(status, 200, "reparent failed: {body}");
+    }
+
+    h.state.engine.start_all().await;
+
+    // The all-up group reports up with the Node message.
+    let mut up_seen = false;
+    for _ in 0..200 {
+        if let Some(beat) = heartbeats::latest(&h.pool, up_group).await.unwrap()
+            && beat.status == UP
+        {
+            assert_eq!(beat.msg.as_deref(), Some("All children up and running"));
+            up_seen = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(up_seen, "an all-up group must report up");
+
+    // The group with the dead child reports down and names the child.
+    let mut down_seen = false;
+    for _ in 0..300 {
+        if let Some(beat) = heartbeats::latest(&h.pool, down_group).await.unwrap()
+            && beat.status == DOWN
+        {
+            let message = beat.msg.unwrap_or_default();
+            assert!(
+                message.contains("Child monitors down: down-child"),
+                "unexpected group message: {message}"
+            );
+            down_seen = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(down_seen, "a group with a down child must report down");
+
+    for id in [up_child, down_child, up_group, down_group] {
+        h.state.engine.stop(id);
+    }
+}
+
+#[tokio::test]
 async fn down_transition_sends_telegram_alert() {
     let h = harness().await;
 

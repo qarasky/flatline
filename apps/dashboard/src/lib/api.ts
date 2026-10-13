@@ -95,6 +95,8 @@ export interface MonitorSummary {
     name: string;
     type: string;
     url: string | null;
+    /** ICMP target for ping monitors. */
+    hostname?: string | null;
     status: number;
     ping: number | null;
     lastCheck: string | null;

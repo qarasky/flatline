@@ -111,11 +111,20 @@ web app). The Node stack (gateway, dashboard, status-site, flatline) is
 
 ### Dashboard grouping — 2026-10-13
 
-The monitor tree was reorganised on request: two groups, `personal`
-(personal-server 44, raspberrypi 45) and `work` (every other monitor, 25
-in total); the seven site-based groups were retired. Status pages are
-unaffected — they use their own group tables (`status_page_groups`), not
-the monitor tree.
+The monitor tree was reorganised on request and now nests: two root groups,
+`personal` (personal-server 44, raspberrypi 45) and `work` (everything
+else), with the seven client/site subgroups (`bes.media`,
+`nationalbusiness.kz`, `MEKS`, `nofake`, `jasalash`, `qumash.kz`,
+`Aiel Qorgan`) nested under `work` and `office`/`cmn` directly on it. The
+dashboard renders the tree recursively (indented, collapsible, subtree
+counts). Status pages are unaffected — they use their own group tables
+(`status_page_groups`), not the monitor tree.
+
+The same release added: group monitors are **checked** again (the Node
+`GroupMonitorType` semantics: worst-of-children, paused ignored, empty =
+pending, down names the children — ported into the Rust engine), ping rows
+show their ICMP hostname instead of a junk `https://` url, and right-click
+→ Rename works on monitor-list rows as well as Superboard cards.
 
 ### Superseded: pending Node rollout — 2026-10-12
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ApiError,
     deleteMonitor,
@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { MonitorForm } from "@/components/MonitorForm";
 import { MonitorDetail } from "@/components/MonitorDetail";
+import { RenameDialog, ServerMenu, type MenuAnchor } from "@/components/ServerMenu";
 import { AgentPanel } from "@/components/AgentPanel";
 import { UsersPanel } from "@/components/UsersPanel";
 import { TokenGate } from "@/components/TokenGate";
@@ -133,51 +134,106 @@ function byWeightThenName(a: MonitorSummary, b: MonitorSummary): number {
 }
 
 /**
- * Split the roster into group sections.
+ * One node of the group tree: a group, its subgroups and its direct monitors.
  *
- * Groups are monitors with type "group"; anything with a matching parent
- * lands in its section, the rest falls into Ungrouped. Group monitors never
- * render as rows themselves.
+ * Groups nest: a group whose `parent` is another group becomes its child, so
+ * the operator can model "client → site → monitors" without flattening it.
+ * Group monitors never render as rows themselves.
  */
-interface GroupSection {
-    id: number | null;
+interface GroupNode {
+    id: number;
     name: string;
+    weight: number;
+    groups: GroupNode[];
     monitors: MonitorSummary[];
 }
 
-function groupMonitors(monitors: MonitorSummary[]): GroupSection[] {
-    const groups = monitors
-        .filter((m) => m.type === "group")
-        .sort(byWeightThenName);
-    const groupIds = new Set(groups.map((g) => g.id));
+/**
+ * Build the group tree from the roster.
+ *
+ * Anything whose parent is missing or not a group lands in Ungrouped, so a
+ * broken link can never hide a monitor.
+ * @param monitors Full roster
+ * @returns Root groups plus parentless monitors
+ */
+function groupTree(monitors: MonitorSummary[]): { roots: GroupNode[]; ungrouped: MonitorSummary[] } {
+    const groups = monitors.filter((m) => m.type === "group");
+    const nodes = new Map<number, GroupNode>(
+        groups.map((group) => [ group.id, { id: group.id, name: group.name, weight: group.weight ?? 0, groups: [], monitors: [] } ])
+    );
 
-    const children = new Map<number, MonitorSummary[]>();
+    const roots: GroupNode[] = [];
+    for (const group of groups) {
+        const node = nodes.get(group.id) as GroupNode;
+        const parent = group.parent != null ? nodes.get(group.parent) : undefined;
+        if (parent) {
+            parent.groups.push(node);
+        } else {
+            roots.push(node);
+        }
+    }
+
     const ungrouped: MonitorSummary[] = [];
-
     for (const monitor of monitors) {
         if (monitor.type === "group") {
             continue;
         }
-        if (monitor.parent != null && groupIds.has(monitor.parent)) {
-            const list = children.get(monitor.parent) ?? [];
-            list.push(monitor);
-            children.set(monitor.parent, list);
+        const parent = monitor.parent != null ? nodes.get(monitor.parent) : undefined;
+        if (parent) {
+            parent.monitors.push(monitor);
         } else {
             ungrouped.push(monitor);
         }
     }
 
-    const sections: GroupSection[] = groups.map((group) => ({
-        id: group.id as number,
-        name: group.name,
-        monitors: (children.get(group.id) ?? []).sort(byWeightThenName),
-    }));
+    const byNodeOrder = (a: { weight: number; name: string }, b: { weight: number; name: string }): number =>
+        b.weight - a.weight || a.name.localeCompare(b.name);
+    const sortNode = (node: GroupNode) => {
+        node.monitors.sort(byWeightThenName);
+        node.groups.sort(byNodeOrder);
+        node.groups.forEach(sortNode);
+    };
+    roots.sort(byNodeOrder);
+    roots.forEach(sortNode);
 
-    if (ungrouped.length > 0) {
-        sections.push({ id: null, name: "Ungrouped", monitors: ungrouped.sort(byWeightThenName) });
+    return { roots, ungrouped };
+}
+
+/**
+ * Monitor and down counts for a node's whole subtree, so a parent header
+ * reports what is actually inside it.
+ * @param node Group node
+ * @returns Totals including subgroups
+ */
+function nodeTotals(node: GroupNode): { count: number; down: number } {
+    let count = node.monitors.length;
+    let down = node.monitors.filter((m) => m.status === 0).length;
+    for (const child of node.groups) {
+        const totals = nodeTotals(child);
+        count += totals.count;
+        down += totals.down;
     }
+    return { count, down };
+}
 
-    return sections;
+/**
+ * What to show next to the name: the check target for each type.
+ *
+ * Ping monitors are checked by hostname, and the old schema left a bare
+ * "https://" in their url column — showing that was pure noise. Push
+ * monitors have no target; their last message ("OK") is the honest thing.
+ * @param monitor Monitor row
+ * @returns Target string
+ */
+function monitorTarget(monitor: MonitorSummary): string {
+    if (monitor.type === "ping") {
+        return monitor.hostname?.trim() || "ICMP";
+    }
+    const url = monitor.url?.trim();
+    if (url && url !== "https://" && url !== "http://") {
+        return url;
+    }
+    return monitor.lastMessage?.trim() || "—";
 }
 
 /**
@@ -185,14 +241,18 @@ function groupMonitors(monitors: MonitorSummary[]): GroupSection[] {
  */
 function MonitorRow({
     monitor,
+    indent = 0,
     selected,
     onToggle,
     onEdit,
+    onContextMenu,
 }: {
     monitor: MonitorSummary;
+    indent?: number;
     selected: Set<number>;
     onToggle: (id: number) => void;
     onEdit: (id: number) => void;
+    onContextMenu?: (monitor: MonitorSummary, x: number, y: number) => void;
 }) {
     const status = statusOf(monitor.status);
     const isSelected = selected.has(monitor.id);
@@ -202,6 +262,13 @@ function MonitorRow({
             key={monitor.id}
             data-selected={isSelected || undefined}
             className="border-b border-border/60 last:border-0 hover:bg-surface data-[selected]:bg-surface"
+            onContextMenu={(event) => {
+                if (!onContextMenu) {
+                    return;
+                }
+                event.preventDefault();
+                onContextMenu(monitor, event.clientX, event.clientY);
+            }}
         >
             <td className="py-2 pl-4">
                 <input
@@ -212,7 +279,7 @@ function MonitorRow({
                     className="size-3.5 accent-[var(--primary)]"
                 />
             </td>
-            <td className="py-2 pr-4 pl-1">
+            <td className="py-2 pr-4 pl-1" style={{ paddingLeft: `${4 + indent * 18}px` }}>
                 {/* Name and target on one line: this view is for
                     scanning many rows, so vertical space in a row
                     is the scarce resource. */}
@@ -225,7 +292,7 @@ function MonitorRow({
                         {monitor.name}
                     </button>
                     <span className="truncate text-xs text-quiet">
-                        {monitor.url ?? monitor.lastMessage ?? "—"}
+                        {monitorTarget(monitor)}
                     </span>
                 </div>
             </td>
@@ -296,11 +363,13 @@ function MonitorTable({
     selected,
     onToggle,
     onEdit,
+    onContextMenu,
 }: {
     monitors: MonitorSummary[];
     selected: Set<number>;
     onToggle: (id: number) => void;
     onEdit: (id: number) => void;
+    onContextMenu?: (monitor: MonitorSummary, x: number, y: number) => void;
 }) {
     return (
         <div className="overflow-x-auto">
@@ -319,6 +388,7 @@ function MonitorTable({
                         selected={selected}
                         onToggle={onToggle}
                         onEdit={onEdit}
+                        onContextMenu={onContextMenu}
                     />
                 ))}
             </tbody>
@@ -328,21 +398,25 @@ function MonitorTable({
 }
 
 /**
- * Grouped table: one collapsible section per group, ungrouped last.
+ * Grouped table: a collapsible tree of groups, subgroups and monitors.
  *
  * Collapse state persists in localStorage so the board keeps the shape the
  * operator left it in across refreshes.
  */
 function GroupedTable({
-    sections,
+    roots,
+    ungrouped,
     selected,
     onToggle,
     onEdit,
+    onContextMenu,
 }: {
-    sections: GroupSection[];
+    roots: GroupNode[];
+    ungrouped: MonitorSummary[];
     selected: Set<number>;
     onToggle: (id: number) => void;
     onEdit: (id: number) => void;
+    onContextMenu?: (monitor: MonitorSummary, x: number, y: number) => void;
 }) {
     const [collapsed, setCollapsed] = useState<Set<number>>(() => {
         try {
@@ -370,60 +444,106 @@ function GroupedTable({
         });
     }
 
+    /** Header for a group node, indented by nesting depth. */
+    function nodeHeader(node: GroupNode, depth: number, totals: { count: number; down: number }) {
+        const isCollapsed = collapsed.has(node.id);
+        return (
+            <tr className="border-b border-border bg-surface/60">
+                <td
+                    colSpan={8}
+                    className="py-1.5 pr-4 pl-4"
+                    style={{ paddingLeft: `${16 + depth * 18}px` }}
+                >
+                    <button
+                        type="button"
+                        onClick={() => toggle(node.id)}
+                        aria-expanded={!isCollapsed}
+                        className="inline-flex items-center gap-2 text-xs font-semibold tracking-wide uppercase hover:text-primary"
+                    >
+                        <span className="inline-block w-3 text-quiet">{isCollapsed ? "▸" : "▾"}</span>
+                        {node.name}
+                    </button>
+                    <span className="ml-2 text-xs text-quiet">
+                        <span className="tnum">{totals.count}</span>
+                        {totals.down > 0 ? (
+                            <span className="ml-1 font-semibold text-bad">
+                                · <span className="tnum">{totals.down}</span> down
+                            </span>
+                        ) : (
+                            <span className="ml-1">· all up</span>
+                        )}
+                    </span>
+                </td>
+            </tr>
+        );
+    }
+
+    /** One node: its header and monitors, then its subgroups as siblings. */
+    function renderNode(node: GroupNode, depth: number, guard: number): React.ReactNode {
+        if (guard > 8) {
+            return null;
+        }
+        const isCollapsed = collapsed.has(node.id);
+        return (
+            <Fragment key={node.id}>
+                <tbody>
+                    {nodeHeader(node, depth, nodeTotals(node))}
+                    {!isCollapsed &&
+                        node.monitors.map((monitor) => (
+                            <MonitorRow
+                                key={monitor.id}
+                                monitor={monitor}
+                                indent={depth + 1}
+                                selected={selected}
+                                onToggle={onToggle}
+                                onEdit={onEdit}
+                                onContextMenu={onContextMenu}
+                            />
+                        ))}
+                </tbody>
+                {!isCollapsed && node.groups.map((child) => renderNode(child, depth + 1, guard + 1))}
+            </Fragment>
+        );
+    }
+
     return (
         <div className="overflow-x-auto">
         <table className="w-full table-fixed border-collapse text-sm">
             <MonitorColgroup />
             <MonitorHead />
-            {sections.map((section) => {
-                const down = section.monitors.filter((m) => m.status === 0).length;
-                const isCollapsed = section.id !== null && collapsed.has(section.id);
-
-                return (
-                    <tbody key={section.id ?? "ungrouped"}>
-                        <tr className="border-b border-border bg-surface/60">
-                            <td colSpan={8} className="py-1.5 pr-4 pl-4">
-                                {section.id !== null ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => toggle(section.id as number)}
-                                        aria-expanded={!isCollapsed}
-                                        className="inline-flex items-center gap-2 text-xs font-semibold tracking-wide uppercase hover:text-primary"
-                                    >
-                                        <span className="inline-block w-3 text-quiet">{isCollapsed ? "▸" : "▾"}</span>
-                                        {section.name}
-                                    </button>
-                                ) : (
-                                    <span className="inline-flex items-center gap-2 text-xs font-semibold tracking-wide text-quiet uppercase">
-                                        <span className="inline-block w-3" />
-                                        {section.name}
+            {roots.map((node) => renderNode(node, 0, 0))}
+            {ungrouped.length > 0 ? (
+                <tbody key="ungrouped">
+                    <tr className="border-b border-border bg-surface/60">
+                        <td colSpan={8} className="py-1.5 pr-4 pl-4">
+                            <span className="inline-flex items-center gap-2 text-xs font-semibold tracking-wide text-quiet uppercase">
+                                <span className="inline-block w-3" />
+                                Ungrouped
+                            </span>
+                            <span className="ml-2 text-xs text-quiet">
+                                <span className="tnum">{ungrouped.length}</span>
+                                {ungrouped.some((m) => m.status === 0) ? (
+                                    <span className="ml-1 font-semibold text-bad">
+                                        · <span className="tnum">{ungrouped.filter((m) => m.status === 0).length}</span> down
                                     </span>
+                                ) : (
+                                    <span className="ml-1">· all up</span>
                                 )}
-                                <span className="ml-2 text-xs text-quiet">
-                                    <span className="tnum">{section.monitors.length}</span>
-                                    {down > 0 ? (
-                                        <span className="ml-1 font-semibold text-bad">
-                                            · <span className="tnum">{down}</span> down
-                                        </span>
-                                    ) : (
-                                        <span className="ml-1">· all up</span>
-                                    )}
-                                </span>
-                            </td>
-                        </tr>
-                        {!isCollapsed &&
-                            section.monitors.map((monitor) => (
-                                <MonitorRow
-                                    key={monitor.id}
-                                    monitor={monitor}
-                                    selected={selected}
-                                    onToggle={onToggle}
-                                    onEdit={onEdit}
-                                />
-                            ))}
-                    </tbody>
-                );
-            })}
+                            </span>
+                        </td>
+                    </tr>
+                    {ungrouped.map((monitor) => (
+                        <MonitorRow
+                            key={monitor.id}
+                            monitor={monitor}
+                            selected={selected}
+                            onToggle={onToggle}
+                            onEdit={onEdit}
+                            onContextMenu={onContextMenu}
+                        />
+                    ))}
+                </tbody>
+            ) : null}
         </table>
         </div>
     );
@@ -437,9 +557,12 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
     const [monitors, setMonitors] = useState<MonitorSummary[]>([]);
     const [rosterLoaded, setRosterLoaded] = useState(false);
     const health = useMemo(() => rosterLoaded ? healthFromMonitors(monitors) : null, [monitors, rosterLoaded]);
+    const tree = useMemo(() => groupTree(monitors), [monitors]);
     const loadEpoch = useRef(0);
     const [selected, setSelected] = useState<Set<number>>(new Set());
     const [query, setQuery] = useState("");
+    const [menu, setMenu] = useState<MenuAnchor | null>(null);
+    const [renaming, setRenaming] = useState<MonitorSummary | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [formState, setFormState] = useState<
@@ -710,10 +833,12 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
                         setUsersOpen(false);
                         setDetailId(id);
                     }}
+                    onContextMenu={(monitor, x, y) => setMenu({ x, y, monitor })}
                 />
             ) : (
                 <GroupedTable
-                    sections={groupMonitors(monitors)}
+                    roots={tree.roots}
+                    ungrouped={tree.ungrouped}
                     selected={selected}
                     onToggle={(id) =>
                         setSelected((prev) => {
@@ -731,8 +856,27 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
                         setUsersOpen(false);
                         setDetailId(id);
                     }}
+                    onContextMenu={(monitor, x, y) => setMenu({ x, y, monitor })}
                 />
             )}
+
+            {menu ? (
+                <ServerMenu
+                    anchor={menu}
+                    onRename={() => {
+                        setRenaming(menu.monitor);
+                        setMenu(null);
+                    }}
+                    onClose={() => setMenu(null)}
+                />
+            ) : null}
+            {renaming ? (
+                <RenameDialog
+                    monitor={renaming}
+                    currentName={renaming.name}
+                    onClose={() => setRenaming(null)}
+                />
+            ) : null}
 
             {formState ? (
                 <div
