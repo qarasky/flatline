@@ -170,11 +170,29 @@ impl Engine {
         windows
     }
 
+    /// The next delay for a check loop: the configured interval minus the
+    /// time this iteration already spent checking and recording, measured on
+    /// a monotonic clock from the check's start.
+    ///
+    /// Node schedules the same way (`beatInterval * 1000 - elapsed`); waiting
+    /// a full interval *after* the check finished silently added the check's
+    /// execution time to every cycle — a 60s HTTP monitor with a 48s failed
+    /// request checked every ~108s, delaying outage detection most for
+    /// exactly the slow targets. The remainder floors at 1ms so a check
+    /// slower than its interval cannot spin, and checks never overlap
+    /// because the loop is sequential.
+    fn next_delay(started: Instant, base_seconds: i64) -> Duration {
+        let base = Duration::from_secs(base_seconds.max(1) as u64);
+        base.saturating_sub(started.elapsed())
+            .max(Duration::from_millis(1))
+    }
+
     /// The HTTP and ping check loops: check immediately (like the Node
     /// backend), then every interval — or every retry interval while the
     /// walk is PENDING.
     async fn check_loop(self: Arc<Self>, monitor: Monitor, check: Check) {
         loop {
+            let started = Instant::now();
             let outcome = match check {
                 Check::Http => self.http_check(&monitor).await,
                 Check::Ping => self.ping_check(&monitor).await,
@@ -199,7 +217,7 @@ impl Engine {
                 PENDING => monitor.retry_interval.max(1),
                 _ => monitor.interval.max(1),
             };
-            tokio::time::sleep(Duration::from_secs(base as u64)).await;
+            tokio::time::sleep(Self::next_delay(started, base)).await;
         }
     }
 
@@ -208,6 +226,7 @@ impl Engine {
     /// `GroupMonitorType`.
     async fn group_loop(self: Arc<Self>, monitor: Monitor) {
         loop {
+            let started = Instant::now();
             let (requested, msg) = self.group_check(&monitor).await;
             let status = match self
                 .record_and_publish(&monitor, requested, None, &msg, false, None)
@@ -224,7 +243,7 @@ impl Engine {
                 PENDING => monitor.retry_interval.max(1),
                 _ => monitor.interval.max(1),
             };
-            tokio::time::sleep(Duration::from_secs(base as u64)).await;
+            tokio::time::sleep(Self::next_delay(started, base)).await;
         }
     }
 
@@ -312,6 +331,7 @@ impl Engine {
         }
 
         loop {
+            let started = Instant::now();
             let latest = heartbeats::latest(&self.pool, monitor.id)
                 .await
                 .ok()
@@ -358,7 +378,7 @@ impl Engine {
                         PENDING => monitor.retry_interval.max(1),
                         _ => monitor.interval.max(1),
                     };
-                    tokio::time::sleep(Duration::from_secs(base as u64)).await;
+                    tokio::time::sleep(Self::next_delay(started, base)).await;
                 }
             }
         }
@@ -663,5 +683,26 @@ mod tests {
                     \n--- 203.0.113.1 ping statistics ---\n\
                     1 packets transmitted, 0 received, 100% packet loss, time 0ms\n";
         assert_eq!(parse_reply_ms(dead), None);
+    }
+
+    #[test]
+    fn next_delay_is_measured_from_the_check_start() {
+        // A 48s check inside a 60s interval leaves ~12s, not a full 60s:
+        // waiting the interval after the check would make the effective
+        // cadence 108s and delay outage detection most for slow targets.
+        let started = Instant::now() - Duration::from_secs(48);
+        let delay = Engine::next_delay(started, 60);
+        assert!(
+            delay <= Duration::from_secs(12) && delay > Duration::from_secs(11),
+            "expected ~12s, got {delay:?}"
+        );
+
+        // A check slower than its interval must not spin or go negative.
+        let slow = Instant::now() - Duration::from_secs(300);
+        assert_eq!(Engine::next_delay(slow, 60), Duration::from_millis(1));
+
+        // A normal, instant check waits the configured interval.
+        let quick = Engine::next_delay(Instant::now(), 60);
+        assert!(quick > Duration::from_secs(59) && quick <= Duration::from_secs(60));
     }
 }
