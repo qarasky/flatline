@@ -35,7 +35,24 @@ alert. Rollback values: `maxretries=0` and `retry_interval` 60 (monitor 43)
 or 180 (44–50). The deployed agent has no send buffer yet, so these blips
 leave telemetry gaps; agent 1.5's disk buffer closes that once deployed.
 
-## Pending rollout — 2026-10-12
+## Agent 1.5.0 rollout — 2026-10-13
+
+**Deployed to all five client hosts** (aiel-qorgan 46, cmn 47,
+modernization-meks 48, national-business 49, zhasalash 50), replacing
+1.2.0 in place (`/usr/local/bin/superboard`, service restarted, config and
+push tokens unchanged). Verified per host: `superboard version` = 1.5.0,
+service active, `/var/lib/superboard/buffer` created (0700 root), and
+server-side through the public API: raw CPU counters, load average, net and
+disk I/O counters with server-derived `netRate`/`diskIoRate`, the agent
+self-report block, pending-update counts and SMART health all flowing.
+
+Still on 1.2.0: **office (43)** — needs Tailscale access to reach the host;
+**personal-server (44)** and **raspberrypi (45)** — deferred by the
+operator.
+
+## Superseded rollout notes — 2026-10-12
+
+Kept for reference.
 
 - Agent **1.5.0** (raw CPU counters, server-side utilization derivation,
   pending-update counts, self-telemetry, disk-backed send buffer with

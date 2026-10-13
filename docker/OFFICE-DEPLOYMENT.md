@@ -105,8 +105,17 @@ web app). The Node stack (gateway, dashboard, status-site, flatline) is
   monitors run through the system `ping` binary in the image.
 - The previously pending Node-side rollout below (v2 consolidation,
   counters, threshold alerts, agent 1.5) is superseded by the Rust
-  backend for the backend half; the **agent 1.5.0** upgrade is still
-  pending on all hosts.
+  backend for the backend half; **agent 1.5.0 is deployed on the five
+  client hosts** (2026-10-13), with office and the personal hosts still
+  on 1.2.0.
+
+### Dashboard grouping — 2026-10-13
+
+The monitor tree was reorganised on request: two groups, `personal`
+(personal-server 44, raspberrypi 45) and `work` (every other monitor, 25
+in total); the seven site-based groups were retired. Status pages are
+unaffected — they use their own group tables (`status_page_groups`), not
+the monitor tree.
 
 ### Superseded: pending Node rollout — 2026-10-12
 
