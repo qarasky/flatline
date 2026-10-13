@@ -315,7 +315,7 @@ export function MonitorForm({
 
             <div className="flex gap-2">
                 <Button type="submit" disabled={saving}>
-                    {saving ? "Saving…" : isEdit ? "Save changes" : "Create monitor"}
+                    {saving ? "Saving…" : isEdit ? "Save changes" : type === "group" ? "Create group" : "Create monitor"}
                 </Button>
                 <Button type="button" variant="outline" onClick={onCancel}>
                     Cancel

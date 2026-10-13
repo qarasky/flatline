@@ -176,7 +176,7 @@ export const TYPE_SCHEMAS: Record<string, TypeSchema> = {
     group: {
         type: "group",
         label: "Group",
-        summary: "A folder for other monitors. Not checked itself.",
+        summary: "A folder for other monitors. Its status follows its children.",
         basics: [
             { key: "name", label: "Group name", kind: "text", required: true, placeholder: "Client A" },
         ],
