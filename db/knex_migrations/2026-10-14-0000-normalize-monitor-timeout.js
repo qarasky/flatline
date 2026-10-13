@@ -9,15 +9,23 @@
  *
  * The value is 80% of the interval in seconds, matching
  * `monitor-service.js` (`Math.floor(interval * 8 / 10)`) and
- * `Monitor.ensureTimeout()`.
+ * `Monitor.ensureTimeout()`. The calculation runs in JavaScript rather than
+ * SQL: `interval` is a reserved word in MySQL/MariaDB and integer casts
+ * differ per dialect, and the affected row count is normally zero or small.
  * @param {object} knex Knex instance
- * @returns {Promise<object>} Migration result
+ * @returns {Promise<void>} Resolves when every row is normalized
  */
-exports.up = function (knex) {
-    return knex("monitor")
+exports.up = async function (knex) {
+    const rows = await knex("monitor")
+        .select("id", "interval", "timeout")
         .where("timeout", "<=", 0)
-        .orWhereNull("timeout")
-        .update({ timeout: knex.raw("CAST(interval * 8 / 10 AS INTEGER)") });
+        .orWhereNull("timeout");
+
+    for (const row of rows) {
+        const interval = Number(row.interval);
+        const timeout = Number.isFinite(interval) && interval > 0 ? Math.max(1, Math.floor(interval * 0.8)) : 48;
+        await knex("monitor").where("id", row.id).update({ timeout });
+    }
 };
 
 /**
