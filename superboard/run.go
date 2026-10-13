@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -124,8 +125,17 @@ func runLoop(cfg *Config) error {
 		case <-ctx.Done():
 			return nil
 		case payload := <-samples:
-			if err := client.push(payload); err != nil {
+			err := client.push(payload)
+			if err != nil {
 				stats.recordPushFailure(err)
+				var rejected *pushRejectedError
+				if errors.As(err, &rejected) {
+					// Newest-wins already replaced any older sample; this one
+					// is dead. Counting and moving on is all that is left.
+					stats.recordDrop()
+					log.Printf("push rejected, sample dropped: %v", err)
+					continue
+				}
 				log.Printf("push failed: %v", err)
 				if !sleepBackoff(ctx, backoff) {
 					return nil
@@ -142,11 +152,18 @@ func runLoop(cfg *Config) error {
 
 // deliverBuffered drains the disk-backed queue, oldest first. In-order
 // arrival keeps counter-window math and backfilled history chronological; a
-// failed push retries the same sample, and the backlog stays bounded by the
+// failed push retries the same sample while the backlog stays bounded by the
 // buffer's byte cap. Returns nil when the context is cancelled.
+//
+// Failures are classified, because retrying the wrong kind is what wedges a
+// queue: a payload the server refuses (400/413) is quarantined so it cannot
+// block every healthy sample behind it, while a credential/configuration
+// answer (404/401/403) keeps the backlog — a fixed token should deliver the
+// history that accumulated while it was wrong.
 func deliverBuffered(ctx context.Context, buffer *sampleBuffer, client *pushClient, interval time.Duration) error {
 	backoff := interval
 	lastLog := time.Time{}
+	lastConfigLog := time.Time{}
 	for {
 		entry, payload, ok := buffer.next()
 		if !ok {
@@ -158,26 +175,50 @@ func deliverBuffered(ctx context.Context, buffer *sampleBuffer, client *pushClie
 			}
 			continue
 		}
-		if err := client.push(payload); err != nil {
-			stats.recordPushFailure(err)
-			log.Printf("push failed: %v", err)
-			if !sleepBackoff(ctx, backoff) {
-				return nil
+
+		err := client.push(payload)
+		if err == nil {
+			buffer.ack(entry)
+			stats.recordPushOk()
+			backoff = interval
+			logLive(&lastLog, payload)
+			if buffer.pending() > 0 {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(bufferDrainInterval):
+				}
 			}
-			backoff = min(30*time.Second, backoff*2)
 			continue
 		}
-		buffer.ack(entry)
-		stats.recordPushOk()
-		backoff = interval
-		logLive(&lastLog, payload)
-		if buffer.pending() > 0 {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(bufferDrainInterval):
-			}
+
+		stats.recordPushFailure(err)
+
+		var rejected *pushRejectedError
+		if errors.As(err, &rejected) {
+			buffer.quarantine(entry)
+			stats.recordDrop()
+			log.Printf("push rejected, sample quarantined (%d still queued): %v", buffer.pending(), err)
+			backoff = interval
+			continue
 		}
+
+		var configErr *pushConfigError
+		if errors.As(err, &configErr) {
+			// Rate-limited: a wrong token repeats forever and the operator
+			// only needs the newest reason, not one line per retry.
+			if time.Since(lastConfigLog) >= 5*time.Minute {
+				log.Printf("push refused by server configuration (%d queued, backlog kept): %v", buffer.pending(), err)
+				lastConfigLog = time.Now()
+			}
+		} else {
+			log.Printf("push failed: %v", err)
+		}
+
+		if !sleepBackoff(ctx, backoff) {
+			return nil
+		}
+		backoff = min(30*time.Second, backoff*2)
 	}
 }
 

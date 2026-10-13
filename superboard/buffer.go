@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // sampleBuffer is a bounded, disk-backed FIFO of samples awaiting delivery.
@@ -188,6 +189,46 @@ func (b *sampleBuffer) ack(entry bufferEntry) {
 		log.Printf("buffer: ack remove failed: %v", err)
 	}
 	b.discard(entry.path)
+}
+
+// quarantineMaxFiles bounds the rejected-payload directory: enough recent
+// evidence to debug a broken collector, bounded so an agent with a
+// permanently invalid payload cannot fill the disk with samples nobody will
+// read.
+const quarantineMaxFiles = 20
+
+// quarantine moves a rejected sample out of the delivery queue and keeps it
+// under <dir>/quarantine/ for inspection. A payload the server refuses
+// (400/413) will fail identically on every retry, so it must leave the queue
+// head instead of blocking healthy samples behind it. Removal from the queue
+// always succeeds; keeping a copy is best-effort.
+func (b *sampleBuffer) quarantine(entry bufferEntry) {
+	dir := filepath.Join(b.dir, "quarantine")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.Printf("buffer: quarantine dir unavailable (%v); dropping %s", err, entry.path)
+	} else {
+		target := filepath.Join(dir, fmt.Sprintf("%d-%s", time.Now().UnixNano(), filepath.Base(entry.path)))
+		if err := os.Rename(entry.path, target); err != nil {
+			log.Printf("buffer: quarantine of %s failed (%v)", entry.path, err)
+			_ = os.Remove(entry.path)
+		} else {
+			b.trimQuarantine(dir)
+		}
+	}
+	b.discard(entry.path)
+}
+
+// trimQuarantine keeps the newest quarantineMaxFiles rejected payloads.
+func (b *sampleBuffer) trimQuarantine(dir string) {
+	names, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		return
+	}
+	sort.Strings(names)
+	for len(names) > quarantineMaxFiles {
+		_ = os.Remove(names[0])
+		names = names[1:]
+	}
 }
 
 // discard forgets an entry by path (bytes accounting included).

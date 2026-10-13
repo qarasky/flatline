@@ -34,6 +34,12 @@ func newPushClient(cfg *Config) *pushClient {
  * 2. The server answers 400 for a bad metrics payload while still recording
  *    the heartbeat, so a 400 here means "fix the collector", never "the host
  *    is down". Do not retry a 400: it will fail identically next tick.
+ * 3. A 413 means the transport body limit rejected this payload; like a 400
+ *    it can never succeed on retry.
+ * 4. Auth/config answers (404 for an unknown or inactive token, 401/403)
+ *    are neither: the payload is fine, the configuration is wrong. Those
+ *    are classified separately so a queued backlog is kept, not deleted,
+ *    while the operator fixes the token.
  */
 func (c *pushClient) push(payload *Payload) error {
 	server := strings.TrimRight(c.cfg.ServerURL, "/")
@@ -70,8 +76,11 @@ func (c *pushClient) push(payload *Payload) error {
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
 
-	if resp.StatusCode == http.StatusBadRequest {
-		return &pushRejectedError{msg: strings.TrimSpace(string(respBody))}
+	switch resp.StatusCode {
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
+		return &pushRejectedError{msg: fmt.Sprintf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))}
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return &pushConfigError{msg: fmt.Sprintf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -81,9 +90,10 @@ func (c *pushClient) push(payload *Payload) error {
 	return nil
 }
 
-// pushRejectedError marks a 400: the server understood the request and said
-// no. Retrying is pointless; the loop must wait for the next tick instead of
-// hammering a deterministic failure with backoff.
+// pushRejectedError marks a payload the server will never accept: a 400
+// (understood and refused) or a 413 (transport body limit). Retrying is
+// pointless for the same bytes, so the caller discards or quarantines the
+// sample instead of blocking everything behind it.
 type pushRejectedError struct {
 	msg string
 }
@@ -92,9 +102,23 @@ func (e *pushRejectedError) Error() string {
 	return fmt.Sprintf("server rejected payload: %s", e.msg)
 }
 
+// pushConfigError marks an authentication or configuration problem: an
+// unknown/inactive push token (404), or an auth answer (401/403). The
+// payload is fine; the agent's configuration is not. The backlog must be
+// kept — fixing the token should deliver the history that accumulated while
+// it was wrong — and the failure must be visible rather than silent.
+type pushConfigError struct {
+	msg string
+}
+
+func (e *pushConfigError) Error() string {
+	return fmt.Sprintf("server refused the push token/configuration: %s", e.msg)
+}
+
 // pushWithBackoff tries a push, retrying transient failures with capped
-// exponential backoff. A rejection (400) is returned immediately: it will
-// fail identically on retry.
+// exponential backoff. A rejection (400/413) is returned immediately: it
+// will fail identically on retry. A configuration error is retried — the
+// token may be fixed while the agent waits.
 //
 // A failed push is not reported as host-down locally. Silence is the signal,
 // and the server already turns sustained silence into an alert.

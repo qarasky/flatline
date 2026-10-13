@@ -35,6 +35,15 @@ newest-wins queue and logs it. Every sample carries `sampledAt`, so the
 server archives a drained backlog at its real 30s cadence. `uninstall`
 removes the buffer directory.
 
+Delivery failures are classified so a poisoned entry cannot wedge the queue:
+a payload the server refuses (400 for bad metrics, 413 for the body limit) is
+**quarantined** under `buffer/quarantine/` (newest 20 kept) and counted as a
+dropped sample, while the rest of the backlog keeps draining. A credential
+or configuration answer (404 for an unknown/inactive token, 401/403) keeps
+the backlog — sampling continues, the failure is logged at most once per
+five minutes, and fixing the token delivers everything that accumulated.
+Transient failures (network, 5xx) still retry the same sample with backoff.
+
 Every payload carries an `agent` self-report, Telegraf-style: version,
 process uptime, dropped samples, failed pushes with the last error reason,
 and per-collector error counts (only nonzero entries). Cards show the agent
