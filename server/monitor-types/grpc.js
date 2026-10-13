@@ -27,31 +27,38 @@ class GrpcKeywordMonitorType extends MonitorType {
     async check(monitor, heartbeat, _server) {
         const startTime = dayjs().valueOf();
         const timeoutMs = operationTimeoutMs(monitor);
-        const service = this.constructGrpcService(
+        const { service, close } = this.constructGrpcService(
             monitor.grpcUrl,
             monitor.grpcProtobuf,
             monitor.grpcServiceName,
             monitor.grpcEnableTls,
             timeoutMs
         );
-        let response = await this.grpcQuery(service, monitor.grpcMethod, monitor.grpcBody, timeoutMs);
-        heartbeat.ping = dayjs().valueOf() - startTime;
-        log.debug(this.name, "gRPC response:", response);
-        let keywordFound = response.toString().includes(monitor.keyword);
-        if (keywordFound !== !monitor.isInvertKeyword()) {
-            log.debug(
-                this.name,
-                `GRPC response [${response}] + ", but keyword [${monitor.keyword}] is ${keywordFound ? "present" : "not"} in [" + ${response} + "]"`
-            );
+        try {
+            let response = await this.grpcQuery(service, monitor.grpcMethod, monitor.grpcBody, timeoutMs);
+            heartbeat.ping = dayjs().valueOf() - startTime;
+            log.debug(this.name, "gRPC response:", response);
+            let keywordFound = response.toString().includes(monitor.keyword);
+            if (keywordFound !== !monitor.isInvertKeyword()) {
+                log.debug(
+                    this.name,
+                    `GRPC response [${response}] + ", but keyword [${monitor.keyword}] is ${keywordFound ? "present" : "not"} in [" + ${response} + "]"`
+                );
 
-            let truncatedResponse = response.length > 50 ? response.toString().substring(0, 47) + "..." : response;
+                let truncatedResponse = response.length > 50 ? response.toString().substring(0, 47) + "..." : response;
 
-            throw new Error(
-                `keyword [${monitor.keyword}] is ${keywordFound ? "present" : "not"} in [" + ${truncatedResponse} + "]`
-            );
+                throw new Error(
+                    `keyword [${monitor.keyword}] is ${keywordFound ? "present" : "not"} in [" + ${truncatedResponse} + "]`
+                );
+            }
+            heartbeat.status = UP;
+            heartbeat.msg = `${response}, keyword [${monitor.keyword}] ${keywordFound ? "is" : "not"} found`;
+        } finally {
+            // One check, one channel: the client must be closed on success,
+            // failure and deadline alike, or repeated checks accumulate
+            // channels, registrations and timers (the audit's leak).
+            close();
         }
-        heartbeat.status = UP;
-        heartbeat.msg = `${response}, keyword [${monitor.keyword}] ${keywordFound ? "is" : "not"} found`;
     }
 
     /**
@@ -109,13 +116,19 @@ class GrpcKeywordMonitorType extends MonitorType {
     }
 
     /**
-     * Create gRPC client, with every call bounded by the monitor timeout.
+     * Create a gRPC client and the protobuf service bound to it.
+     *
+     * The returned handle owns the channel: `close()` must be called when
+     * the check is done (the caller does it in a finally). Without that,
+     * every check leaked a client, its connections and its timers, because
+     * nothing in the check lifecycle closes a grpc-js client.
      * @param {string} url grpc Url
      * @param {string} protobufData grpc ProtobufData
      * @param {string} serviceName grpc ServiceName
      * @param {boolean} enableTls grpc EnableTls
      * @param {number} timeoutMs Deadline applied to each call
-     * @returns {grpc.Service} grpc Service
+     * @returns {{service: grpc.Service, close: () => void}} Service and its
+     * channel cleanup
      */
     constructGrpcService(url, protobufData, serviceName, enableTls, timeoutMs) {
         const protocObject = protojs.parse(protobufData);
@@ -123,7 +136,7 @@ class GrpcKeywordMonitorType extends MonitorType {
         const Client = grpc.makeGenericClientConstructor({});
         const credentials = enableTls ? grpc.credentials.createSsl() : grpc.credentials.createInsecure();
         const client = new Client(url, credentials);
-        return protoServiceObject.create(
+        const service = protoServiceObject.create(
             (method, requestData, cb) => {
                 const fullServiceName = method.fullName;
                 const serviceFQDN = fullServiceName.split(".");
@@ -143,6 +156,16 @@ class GrpcKeywordMonitorType extends MonitorType {
             false,
             false
         );
+        return {
+            service,
+            close: () => {
+                try {
+                    client.close();
+                } catch {
+                    // Already closed; cleanup must never mask the check result.
+                }
+            },
+        };
     }
 }
 

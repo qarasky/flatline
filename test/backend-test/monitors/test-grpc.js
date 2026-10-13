@@ -119,6 +119,67 @@ test("check() times out when the server accepts the call and never answers", asy
     }
 });
 
+test("check() closes the channel it created, on success and on failure", async () => {
+    // The audit's leak: constructGrpcService allocated a client per check and
+    // nothing closed it, so channels, registrations and timers piled up. The
+    // test spies on Client.prototype.close (the generic client's instances
+    // inherit it) rather than relying on process handles.
+    const port = 50057;
+    const server = await createTestGrpcServer(port, {
+        Echo: (call, callback) => {
+            callback(null, { message: "SUCCESS in every reply" });
+        },
+    });
+
+    const originalClose = grpc.Client.prototype.close;
+    let closes = 0;
+    grpc.Client.prototype.close = function (...args) {
+        closes++;
+        return originalClose.apply(this, args);
+    };
+
+    const grpcMonitor = new GrpcKeywordMonitorType();
+    const monitor = {
+        grpcUrl: `localhost:${port}`,
+        grpcProtobuf: testProto,
+        grpcServiceName: "test.TestService",
+        grpcMethod: "echo",
+        grpcBody: JSON.stringify({ message: "test" }),
+        keyword: "SUCCESS",
+        invertKeyword: false,
+        grpcEnableTls: false,
+        timeout: 5,
+        isInvertKeyword: () => false,
+    };
+
+    try {
+        const heartbeat = { msg: "", status: PENDING };
+        await grpcMonitor.check(monitor, heartbeat, {});
+        assert.strictEqual(heartbeat.status, UP);
+        assert.strictEqual(closes, 1, "a successful check must close its channel");
+
+        // A failing keyword check throws, and the channel must still close.
+        await assert.rejects(
+            grpcMonitor.check({ ...monitor, keyword: "MISSING" }, { msg: "", status: PENDING }, {})
+        );
+        assert.strictEqual(closes, 2, "a failed check must close its channel");
+
+        // So must a check that times out (never-answering server).
+        const silent = await createTestGrpcServer(50058, { Echo: () => {} });
+        try {
+            await assert.rejects(
+                grpcMonitor.check({ ...monitor, grpcUrl: "localhost:50058", timeout: 0.2 }, { msg: "", status: PENDING }, {})
+            );
+            assert.strictEqual(closes, 3, "a timed-out check must close its channel");
+        } finally {
+            silent.forceShutdown();
+        }
+    } finally {
+        grpc.Client.prototype.close = originalClose;
+        server.forceShutdown();
+    }
+});
+
 describe(
     "GrpcKeywordMonitorType",
     {
