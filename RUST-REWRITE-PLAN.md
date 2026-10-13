@@ -1,10 +1,10 @@
 # Rust backend rewrite — plan
 
-Status: **started.** Scope locked with the operator on 2026-10-12. The
-existing Node backend and the Go agent stay untouched until cutover; this
-document is the contract the Rust rewrite is built against. M0–M6 are
-shipped in `backend-rs/`; the cutover runbook is `docker/RUST-CUTOVER.md`
-and the parity evidence is `docker/RUST-PARITY.md`.
+Status: **done.** Scope locked with the operator on 2026-10-12. M0–M6 are
+shipped in `backend-rs/`; the cutover ran on 2026-10-13 (record:
+`docker/OFFICE-DEPLOYMENT.md`; procedure: `docker/RUST-CUTOVER.md`; parity
+evidence: `docker/RUST-PARITY.md`). The Node stack is stopped and kept for
+rollback; its database is untouched.
 
 ## Locked scope (from the operator's answers)
 

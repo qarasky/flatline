@@ -300,6 +300,16 @@ async fn import_monitors(
         let created_at = text(row, &cols, "created_date").unwrap_or_else(|| {
             crate::metrics::sql_time_millis(chrono::Utc::now().timestamp_millis())
         });
+        // The old schema names this column `accepted_statuscodes_json`; the
+        // shorter name is a defensive fallback. Losing it silently would
+        // flip monitors that accept 404/403 to DOWN.
+        let accepted = text(row, &cols, "accepted_statuscodes_json")
+            .or_else(|| text(row, &cols, "accepted_statuscodes"));
+        if !cols.contains("accepted_statuscodes_json") && !cols.contains("accepted_statuscodes") {
+            report.warnings.push(format!(
+                "monitor {id} ({name}): no accepted-status-codes column found; defaulted to 200-299"
+            ));
+        }
         // Parents are set in a second pass: children routinely have lower
         // ids than the group they hang under.
         sqlx::query(
@@ -326,7 +336,7 @@ async fn import_monitors(
         .bind(int_or(row, &cols, "weight", 0))
         .bind(text(row, &cols, "url"))
         .bind(text(row, &cols, "method"))
-        .bind(text_or(row, &cols, "accepted_statuscodes", "[\"200-299\"]"))
+        .bind(accepted.unwrap_or_else(|| "[\"200-299\"]".to_string()))
         .bind(int_or(row, &cols, "ignore_tls", 0))
         .bind(int_or(row, &cols, "maxredirects", 10))
         .bind(text(row, &cols, "push_token"))

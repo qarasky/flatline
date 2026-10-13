@@ -24,7 +24,7 @@ async fn old_database(path: &Path) -> SqlitePool {
             id INTEGER PRIMARY KEY, name VARCHAR(255), type VARCHAR(255), active BOOLEAN,
             description TEXT, interval INTEGER, retry_interval INTEGER, maxretries INTEGER,
             timeout DOUBLE, resend_interval INTEGER, upside_down BOOLEAN, parent INTEGER,
-            weight INTEGER, url TEXT, method TEXT, accepted_statuscodes TEXT,
+            weight INTEGER, url TEXT, method TEXT, accepted_statuscodes_json TEXT,
             ignore_tls BOOLEAN, maxredirects INTEGER, push_token VARCHAR(255),
             hostname VARCHAR(255), packet_size INTEGER, ping_count INTEGER,
             ping_numeric BOOLEAN, ping_per_request_timeout INTEGER,
@@ -80,7 +80,7 @@ async fn old_database(path: &Path) -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO monitor (id, name, type, active, interval, timeout, parent, url, method, accepted_statuscodes, maxretries) VALUES (8, 'bes.media', 'http', 1, 60, 48.0, 18, 'https://bes.media', 'GET', '[\"200-299\"]', 3)")
+    sqlx::query("INSERT INTO monitor (id, name, type, active, interval, timeout, parent, url, method, accepted_statuscodes_json, maxretries) VALUES (8, 'bes.media', 'http', 1, 60, 48.0, 18, 'https://bes.media', 'GET', '[\"200-299\",\"404\"]', 3)")
         .execute(&pool)
         .await
         .unwrap();
@@ -217,6 +217,15 @@ async fn imports_the_production_shape() {
             .unwrap();
     assert_eq!(hostname.as_deref(), Some("46.62.149.85"));
     assert_eq!(ping_count, 3);
+    let accepted: String =
+        sqlx::query_scalar("SELECT accepted_statuscodes FROM monitors WHERE id = 8")
+            .fetch_one(&new)
+            .await
+            .unwrap();
+    assert_eq!(
+        accepted, "[\"200-299\",\"404\"]",
+        "old-schema column name is honored"
+    );
     let push_token: String = sqlx::query_scalar("SELECT push_token FROM monitors WHERE id = 46")
         .fetch_one(&new)
         .await

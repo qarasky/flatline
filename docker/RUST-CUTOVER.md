@@ -1,8 +1,10 @@
 # Rust backend cutover runbook
 
-Status: **prepared, not executed.** The Node stack on office keeps running
-until this runbook is walked. Nothing here touches the live `./data`
-directory or the Node container.
+Status: **executed 2026-10-13.** The office origin now runs the Rust
+backend; the Node stack is stopped and kept for rollback. The record and
+rollback commands are in `docker/OFFICE-DEPLOYMENT.md` ("Cutover to the
+Rust backend"). This document remains the procedure for a re-run or for
+another host.
 
 The Rust backend (`backend-rs/`) is API-compatible with the surfaces the
 operator and the agents use: push contract, monitors, heartbeats, metrics
@@ -58,6 +60,13 @@ sudo docker exec flatline-flatline-1 \
 sudo docker run --rm -v /home/office/flatline:/work -w /work \
     artchsh/flatline-rust:office-live \
     flatline-backend import --from /work/data/kuma-pre-rust.db --data-dir /work/data-rust
+
+# Staging only: mute notifications so the second backend never alerts
+# alongside the live Node stack. The cutover re-import (step 5) restores
+# the live notification config from a fresh copy.
+sudo docker run --rm -v /home/office/flatline/data-rust:/data \
+    --entrypoint sqlite3 artchsh/flatline:office-live \
+    /data/flatline.db "UPDATE notifications SET active = 0"
 ```
 
 The report lists every imported table and **warns loudly about skipped
@@ -106,13 +115,33 @@ Checklist:
 
 ## 5. Cutover
 
-Keep the Node container and `./data` untouched. Only the tunnel port
-changes.
+The staging copy misses everything the live stack recorded while it was
+up (agent pushes, heartbeats), so cutover re-imports a fresh copy of the
+just-stopped database. The Node stack and its `./data` stay untouched for
+rollback; only the tunnel port changes owner.
 
 ```sh
 cd /home/office/flatline
-sudo docker compose -f compose.rust.yaml stop
+
+# 1. Stop the Rust staging stack (frees 3101).
+sudo docker compose -f compose.rust.yaml down
+
+# 2. Stop the live Node stack (frees 3001; alerts pause for ~2 minutes).
+sudo docker compose stop
+
+# 3. Consistent copy of the now-quiescent database and a fresh import.
+sudo docker run --rm -v /home/office/flatline/data:/data \
+    --entrypoint sqlite3 artchsh/flatline:office-live \
+    /data/kuma.db ".backup /data/kuma-cutover.db"
+sudo docker run --rm -v /home/office/flatline:/work -w /work \
+    artchsh/flatline-rust:office-live \
+    flatline-backend import --from /work/data/kuma-cutover.db --data-dir /work/data-rust --force
+
+# 4. Start the Rust stack on the tunnel port. Notifications are active in
+#    the fresh import, so alerts resume immediately.
 FLATLINE_PORT=3001 sudo -E docker compose -f compose.rust.yaml up -d
+
+# 5. Verify through the public origin.
 curl -fsS https://uptime.mediaboost.kz/api/v1/auth/setup
 ```
 
@@ -129,7 +158,8 @@ sudo docker compose up -d          # the Node stack, original ./data
 
 Nothing in the Rust path writes to `./data`; the original database is
 exactly as it was. If the Rust stack ran long enough to matter, its DB
-stays under `data-rust/` for inspection.
+stays under `data-rust/` for inspection. Alerts pause for the seconds it
+takes the Node stack to come back.
 
 ## 7. After cutover
 

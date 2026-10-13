@@ -1,22 +1,34 @@
 # Office deployment
 
 Public origin: `https://uptime.mediaboost.kz`, existing Cloudflare Tunnel to
-`http://localhost:3001`. One container (v2 consolidation): the backend serves
-the API and the web app — operator dashboard and public status pages — on one
-origin. No gateway, no separate dashboard or status container.
+`http://localhost:3001`.
 
-The standalone `compose.production.yaml` is deployed as
-`/home/office/flatline/compose.yaml`. Uses the system (rootful) Docker daemon
-via `sudo docker`.
+**Current (since 2026-10-13): the Rust backend.** One container
+(`artchsh/flatline-rust:office-live`) serves the API and the web app —
+operator dashboard and public status pages — on one origin. Compose:
+`/home/office/flatline/compose.rust.yaml` (project `flatline-rust`); data:
+`data-rust/`. The Node stack is stopped and kept for rollback; see the
+cutover record further down.
+
+Historical: the Node deployment ran as a standalone
+`compose.production.yaml` deployed as `/home/office/flatline/compose.yaml`.
+Uses the system (rootful) Docker daemon via `sudo docker`.
 Moved from the `office` user's rootless daemon on 2026-10-11; the old
 rootless daemon is no longer used for this stack.
 
-Build the image for `linux/amd64` on the build machine, then transfer/load
-it into office's system daemon (`sudo docker load ...`). All `docker`
-commands on office run as root:
+Build the Node image for `linux/amd64` on the build machine, then
+transfer/load it into office's system daemon (`sudo docker load ...`). All
+`docker` commands on office run as root:
 
 ```sh
 docker build --platform linux/amd64 -f docker/dockerfile --target release -t artchsh/flatline:office-live .
+```
+
+The Rust image builds on the office itself from a synced source tree:
+
+```sh
+cd /home/office/flatline-src
+sudo docker build --platform linux/amd64 -f docker/rust.dockerfile -t artchsh/flatline-rust:office-live .
 ```
 
 Stage on loopback port 3101. Do not replace the original Kuma data directory.
@@ -66,16 +78,39 @@ unless its notification links have first been disabled.
   containers: expect root-owned files there and manage/back up that
   directory as root.
 
-## Pending rollout — 2026-10-12
+## Cutover to the Rust backend — 2026-10-13
 
-Committed but **not yet deployed** anywhere:
+**Deployed.** The public origin is served by the Rust backend
+(`artchsh/flatline-rust:office-live`, one container, one origin — API and
+web app). The Node stack (gateway, dashboard, status-site, flatline) is
+**stopped but kept** for rollback; its `./data` is untouched.
 
-- **Rust backend rewrite (M0–M5):** a full replacement backend is prepared
-  under `backend-rs/`, with the importer and cutover runbook in
-  `docker/RUST-CUTOVER.md`. Not deployed; the Node stack below keeps
-  running until that runbook is walked. The rewrite covers push, HTTP(S),
-  ping and group monitors — the full fleet, including the three ICMP
-  monitors.
+- Compose: `/home/office/flatline/compose.rust.yaml` (project
+  `flatline-rust`, port 3001). The old `compose.yaml` is the rollback
+  stack.
+- Data: `/home/office/flatline/data-rust/flatline.db` (imported from a
+  consistent copy of the pre-cutover database; verified by
+  `docker/parity-contract.py`, 115/115).
+- **Admin token** (dashboard sign-in: use it as the password):
+  `data-rust/initial-token.txt` (0600, root-owned; `sudo cat`).
+- Rollback: `sudo docker compose -f compose.rust.yaml down && sudo docker
+  compose up -d` — the Node stack and its original database return.
+- The importer run surfaced one cutover-blocking bug, fixed and verified
+  in staging: the old schema stores accepted status codes in
+  `accepted_statuscodes_json`; the importer read the wrong name and
+  defaulted every monitor to 200-299, which would have flipped four
+  monitors that accept 4xx to DOWN.
+- Agents are unchanged (same origin, same tokens); push traffic and
+  check heartbeats verified fresh after the switch. The three ping
+  monitors run through the system `ping` binary in the image.
+- The previously pending Node-side rollout below (v2 consolidation,
+  counters, threshold alerts, agent 1.5) is superseded by the Rust
+  backend for the backend half; the **agent 1.5.0** upgrade is still
+  pending on all hosts.
+
+### Superseded: pending Node rollout — 2026-10-12
+
+Kept for reference; not deployed (the Rust cutover replaced it).
 
 - v2 consolidation: the single image serves the API and the web app. On
   deploy, load the new image, update `compose.yaml` (one service, no
