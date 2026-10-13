@@ -188,21 +188,28 @@ fn text_or(row: &SqliteRow, cols: &HashSet<String>, name: &str, default: &str) -
 }
 
 fn real(row: &SqliteRow, cols: &HashSet<String>, name: &str) -> Option<f64> {
+    number(row, cols, name)
+}
+
+/// Numbers may be stored as INTEGER or REAL depending on the schema's
+/// history (`ping` is INTEGER on this fleet, `timeout` is REAL); accept
+/// both.
+fn number(row: &SqliteRow, cols: &HashSet<String>, name: &str) -> Option<f64> {
     if !cols.contains(name) {
         return None;
     }
-    row.try_get::<Option<f64>, _>(name).ok().flatten()
+    if let Ok(value) = row.try_get::<Option<f64>, _>(name) {
+        return value;
+    }
+    row.try_get::<Option<i64>, _>(name)
+        .ok()
+        .flatten()
+        .map(|value| value as f64)
 }
 
 /// Integers that may have been stored as REAL by older schemas.
 fn int(row: &SqliteRow, cols: &HashSet<String>, name: &str) -> Option<i64> {
-    if !cols.contains(name) {
-        return None;
-    }
-    if let Ok(value) = row.try_get::<Option<i64>, _>(name) {
-        return value;
-    }
-    real(row, cols, name).map(|value| value.round() as i64)
+    number(row, cols, name).map(|value| value.round() as i64)
 }
 
 fn int_or(row: &SqliteRow, cols: &HashSet<String>, name: &str, default: i64) -> i64 {

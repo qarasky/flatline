@@ -32,7 +32,7 @@ async fn patch(h: &Harness, id: i64, body: Value) -> (StatusCode, Value) {
 
 async fn create_push(h: &Harness, name: &str) -> Value {
     let (status, body) = create(h, json!({ "name": name, "type": "push" })).await;
-    assert_eq!(status, StatusCode::OK, "create failed: {body}");
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body}");
     body["monitor"].clone()
 }
 
@@ -41,7 +41,7 @@ async fn create_push_monitor_mints_a_push_token() {
     let h = harness().await;
     let (status, body) = create(&h, json!({ "name": "agent-host", "type": "push" })).await;
 
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::CREATED);
     assert_eq!(body["ok"], true);
     assert_eq!(body["monitor"]["type"], "push");
     assert_eq!(body["monitor"]["status"], 2, "no heartbeat yet = pending");
@@ -87,7 +87,7 @@ async fn create_reports_ignored_fields() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::CREATED);
     let ignored = body["ignoredFields"].as_array().unwrap();
     assert!(ignored.contains(&json!("keyword")));
     assert!(ignored.contains(&json!("tags")));
@@ -177,7 +177,7 @@ async fn groups_link_children_and_reject_cycles() {
     let h = harness().await;
 
     let (status, group) = create(&h, json!({ "name": "clients", "type": "group" })).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::CREATED);
     let group_id = group["monitor"]["id"].as_i64().unwrap();
 
     // Child lands in the group.
@@ -186,7 +186,7 @@ async fn groups_link_children_and_reject_cycles() {
         json!({ "name": "client-a", "type": "push", "parent": group_id }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::CREATED);
     assert_eq!(child["monitor"]["parent"], group_id);
     let child_id = child["monitor"]["id"].as_i64().unwrap();
 

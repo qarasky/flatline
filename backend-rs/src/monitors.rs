@@ -166,6 +166,9 @@ pub fn monitor_json(m: &Monitor, beat: Option<&Beat>, uptime: &UptimeWindows) ->
         "pingCount": m.ping_count,
         "pingNumeric": m.ping_numeric != 0,
         "pingPerRequestTimeout": m.ping_per_request_timeout,
+        // Tags are out of scope in v1; the array stays empty rather than
+        // absent so consumers see the Node shape.
+        "tags": [],
         "createdDate": m.created_at,
     })
 }

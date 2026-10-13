@@ -28,7 +28,7 @@ async fn create_push_monitor(h: &common::Harness, extra: Value) -> (i64, String)
         request("POST", "/api/v1/monitors", Some(&h.token), Some(body)),
     )
     .await;
-    assert_eq!(status, 200, "create failed: {response}");
+    assert_eq!(status, 201, "create failed: {response}");
     (
         response["monitor"]["id"].as_i64().unwrap(),
         response["monitor"]["pushToken"]

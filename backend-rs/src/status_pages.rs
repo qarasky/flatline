@@ -185,8 +185,20 @@ pub async fn page_data(pool: &SqlitePool, page: &Page) -> sqlx::Result<Value> {
         }));
     }
 
+    let domains: Vec<String> = sqlx::query_scalar(
+        "SELECT domain FROM status_page_cnames WHERE status_page_id = ? ORDER BY domain",
+    )
+    .bind(page.id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut config = config_json(page);
+    // Node exposes the page's CNAMEs inside the config; consumers use it to
+    // show alternate URLs.
+    config["domainNameList"] = json!(domains);
+
     Ok(json!({
-        "config": config_json(page),
+        "config": config,
         "incidents": incidents.iter().map(incident_json).collect::<Vec<_>>(),
         "publicGroupList": public_groups,
         "maintenanceList": [],

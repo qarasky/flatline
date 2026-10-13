@@ -143,7 +143,9 @@ stays under `data-rust/` for inspection.
 
 ## 8. What is not covered here
 
-Contract-level parity verification (M6) runs both backends against a copy
-of this same database and compares responses field by field. Run it before
-step 5 if any doubt remains; the runbook's staging phase is the natural
-place.
+Contract-level parity verification (M6) is implemented: run
+`python3 docker/parity-contract.py --prod-db <copy>` before step 5 — it
+starts both backends on copies of the same database and diffs ~115 checks
+across every surface (see `docker/RUST-PARITY.md`, including the manual
+golden-path checklist). The staging phase in step 4 is the natural place
+to walk that checklist.

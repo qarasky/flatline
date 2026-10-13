@@ -2,8 +2,9 @@
 
 Status: **started.** Scope locked with the operator on 2026-10-12. The
 existing Node backend and the Go agent stay untouched until cutover; this
-document is the contract the Rust rewrite is built against. M0–M5 are
-shipped in `backend-rs/`.
+document is the contract the Rust rewrite is built against. M0–M6 are
+shipped in `backend-rs/`; the cutover runbook is `docker/RUST-CUTOVER.md`
+and the parity evidence is `docker/RUST-PARITY.md`.
 
 ## Locked scope (from the operator's answers)
 
@@ -170,8 +171,20 @@ backend-rs/
   database: 34 monitors (including the three ping monitors), 111k
   heartbeats, 73k metric rows, 29 API keys, the status page — and the
   imported data was served correctly through the live API.
-- **M6 — parity verification:** contract tests against both backends on a
-  copy of the production DB; golden-path checklist.
+- **M6 — parity verification (shipped):** `docker/parity-contract.py`
+  starts both backends from copies of the same production database
+  (monitors/notifications quiesced, a known API key minted for the Node
+  side) and diffs ~115 checks across auth, health, monitors, heartbeats,
+  metrics (bulk/single/summary/raw), notifications, status pages, badges,
+  the push contract (create/legacy/telemetry/down/404/oversized) and the
+  API-key lifecycle. Result on the production copy: **115/115**, with the
+  deliberate differences reported as INFO lines (gap-sensitive 7d/30d
+  uptime, Node's broken `?status=` filter, the locked monitor-type
+  subset, out-of-scope tags and cert-expiry fields). The run surfaced and
+  fixed two real defects: the importer dropped INTEGER-typed values
+  (`ping`), and `serde_json`'s fast float parsing truncated 17-digit
+  payload decimals (`float_roundtrip` now on). `docker/RUST-PARITY.md`
+  carries the results and the manual golden-path checklist.
 
 ## Cutover and rollback
 

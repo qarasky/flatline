@@ -2,6 +2,7 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
@@ -291,7 +292,7 @@ pub async fn heartbeats(
 pub async fn create(
     State(state): State<AppState>,
     Json(body): Json<Value>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let payload = body
         .as_object()
         .ok_or_else(|| ApiError::bad("body must be a JSON object"))?;
@@ -376,11 +377,14 @@ pub async fn create(
     }
     state.engine.restart(stored.id).await;
 
-    Ok(Json(json!({
-        "ok": true,
-        "monitor": monitor_json(&stored, None, &crate::heartbeats::UptimeWindows::default()),
-        "ignoredFields": ignored,
-    })))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "ok": true,
+            "monitor": monitor_json(&stored, None, &crate::heartbeats::UptimeWindows::default()),
+            "ignoredFields": ignored,
+        })),
+    ))
 }
 
 /// PATCH /api/v1/monitors/{id}
