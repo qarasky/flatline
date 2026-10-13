@@ -292,6 +292,98 @@ test("rollup job folds raw samples into hourly buckets", async (t) => {
     });
 });
 
+test("rollup work is bounded in elapsed time and rows", async (t) => {
+    const { R } = require("redbean-node");
+    let monitorID = 0;
+
+    t.before(async () => {
+        await testDb.create();
+        const { auth } = require("../../server/better-auth");
+        await auth();
+        await auth().api.createUser({
+            body: {
+                name: "admin", email: "admin@noreply.uptime-kuma.internal",
+                password: "Kuma-Test-8f4Q2xR9p", role: "admin", data: { username: "admin" },
+            },
+        });
+        const owner = await R.findOne("better_auth_user", " email = ? ", [ "admin@noreply.uptime-kuma.internal" ]);
+        const monitor = R.dispense("monitor");
+        monitor.user_id = owner.id;
+        monitor.name = "Bounded Rollup Host";
+        monitor.type = "push";
+        monitor.interval = 60;
+        monitor.retryInterval = 60;
+        monitor.timeout = 48;
+        monitor.active = 1;
+        await R.store(monitor);
+        monitorID = monitor.id;
+    });
+
+    t.after(async () => {
+        await testDb.destroy();
+    });
+
+    const now = Date.parse("2026-10-10T12:30:00Z");
+    const lastComplete = Date.parse("2026-10-10T11:00:00Z");
+    const payload = (cpu: number) => JSON.stringify({ cpu: { percent: cpu }, mem: { percent: 50 } });
+
+    const rawBean = (time: number, cpu: number) => {
+        const bean = R.dispense("monitor_metric");
+        bean.monitor_id = monitorID;
+        bean.time = sql(time);
+        bean.payload = payload(cpu);
+        return bean;
+    };
+
+    await t.test("a gap splits the chunks instead of stretching one across it", async () => {
+        // One hour 20 days back, one recent hour: the old code produced a
+        // single chunk whose window spanned the whole gap.
+        const oldHour = lastComplete - 20 * 24 * HOUR;
+        await R.store(rawBean(oldHour + 5 * 60_000, 10));
+        await R.store(rawBean(lastComplete + 5 * 60_000, 20));
+
+        const { rollupMetrics } = require("../../server/metrics-rollup");
+        const result = await rollupMetrics(now);
+        assert.strictEqual(result.rolledUp, 2);
+        assert.strictEqual(result.chunks, 2, "the 20-day gap must split the two hours into separate chunks");
+
+        const rows = await R.getAll("SELECT time, samples FROM monitor_metric_hourly ORDER BY time");
+        assert.strictEqual(rows.length, 2);
+    });
+
+    await t.test("a chunk wider than one page is folded page by page", async () => {
+        const { rollupMetrics, ROWS_PER_PAGE } = require("../../server/metrics-rollup");
+        const hour = Date.parse("2026-10-10T10:00:00Z");
+        const total = ROWS_PER_PAGE + 1;
+
+        // One hour with more rows than a single page holds. Insert in small
+        // batches: SQLite's compound-SELECT term limit is 500 and knex's
+        // union-all insert shape would exceed it at once.
+        const beans = [];
+        for (let i = 0; i < total; i++) {
+            beans.push({ monitor_id: monitorID, time: sql(hour + 1000 + i * 100), payload: payload(i % 100) });
+        }
+        for (let offset = 0; offset < beans.length; offset += 250) {
+            await R.knex("monitor_metric").insert(beans.slice(offset, offset + 250));
+        }
+
+        const result = await rollupMetrics(now);
+        assert.strictEqual(result.rolledUp, 1);
+
+        const row = await R.getRow(
+            "SELECT samples, cpu_min, cpu_max, cpu_avg FROM monitor_metric_hourly WHERE monitor_id = ? AND time = ?",
+            [ monitorID, sql(hour) ]);
+        assert.strictEqual(row.samples, total, "every page must be folded");
+        assert.strictEqual(row.cpu_min, 0);
+        assert.strictEqual(row.cpu_max, 99);
+        // Values 0..99 repeating: 50 full cycles plus the remainder.
+        const cycles = Math.floor(total / 100);
+        const remainder = total % 100;
+        const expected = (cycles * 4950 + (remainder * (remainder - 1)) / 2) / total;
+        assert.ok(Math.abs(row.cpu_avg - expected) < 1e-9, `cpu_avg ${row.cpu_avg} != ${expected}`);
+    });
+});
+
 test("summary reads the long tier beyond a week", async (t) => {
     const express = require("express");
     const { R } = require("redbean-node");

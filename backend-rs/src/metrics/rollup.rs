@@ -17,8 +17,10 @@
 //!   forces the hour to be re-folded and is cleared once a run looked at it.
 //!   Markers for hours whose raw rows were pruned are dropped without
 //!   touching the bucket.
-//! - Work is chunked by time; a first run backfills the full raw retention
-//!   without loading everything at once.
+//! - Work is chunked by elapsed time (a gap splits a chunk rather than
+//!   stretching it) and each chunk is folded page by page, so no single
+//!   query materializes a long stretch of raw payloads; a first run
+//!   backfills the full raw retention without loading everything at once.
 //! - Only complete hours roll up: the current hour is still accumulating.
 //! - The rollup runs hourly and the raw prune daily, so the repair pass
 //!   always has the raw evidence it needs before the prune removes it.
@@ -32,8 +34,14 @@ use crate::metrics::{metric_time, sql_time_millis};
 
 /// How long hourly rollups are kept. Raw stays at 30 days.
 pub const HOURLY_RETENTION_DAYS: i64 = 730;
-/// Raw-row window processed per query, bounding memory and lock time.
+/// Widest span of elapsed time folded in one pass.
+///
+/// It bounds elapsed time, not the number of missing hours: a single old
+/// gap beside recent hours used to stretch one chunk across hundreds of
+/// hours and pull every payload in between. A gap now splits the chunk.
 pub const CHUNK_HOURS: usize = 6;
+/// Raw rows fetched per query, bounding memory and lock time per page.
+pub const ROWS_PER_PAGE: i64 = 5000;
 
 #[derive(Debug, Default)]
 pub struct RollupResult {
@@ -47,11 +55,19 @@ pub fn hour_start(ms: i64) -> i64 {
     ms.div_euclid(3_600_000) * 3_600_000
 }
 
+/// One (monitor, hour) accumulator.
+///
+/// Min/max/sum/count per metric instead of every reading: pages of one hour
+/// are folded together as they arrive, so a chunk never holds the raw
+/// samples in memory.
 struct Bucket {
     monitor_id: i64,
     hour: i64,
     samples: i64,
-    values: [Vec<f64>; 4],
+    min: [Option<f64>; 4],
+    max: [Option<f64>; 4],
+    sum: [f64; 4],
+    count: [i64; 4],
 }
 
 impl Bucket {
@@ -60,7 +76,23 @@ impl Bucket {
             monitor_id,
             hour,
             samples: 0,
-            values: std::array::from_fn(|_| Vec::new()),
+            min: [None; 4],
+            max: [None; 4],
+            sum: [0.0; 4],
+            count: [0; 4],
+        }
+    }
+
+    /// Fold one reading (cpu/ram/gpu/vram, `None` = absent) into the bucket.
+    fn add(&mut self, reading: &history::Readings) {
+        self.samples += 1;
+        let values = [reading.cpu, reading.ram, reading.gpu, reading.vram];
+        for (slot, value) in values.into_iter().enumerate() {
+            let Some(value) = value else { continue };
+            self.sum[slot] += value;
+            self.count[slot] += 1;
+            self.min[slot] = Some(self.min[slot].map_or(value, |current| current.min(value)));
+            self.max[slot] = Some(self.max[slot].map_or(value, |current| current.max(value)));
         }
     }
 
@@ -78,25 +110,12 @@ impl Bucket {
             (&mut row.vram_min, &mut row.vram_max, &mut row.vram_avg),
         ];
         for (slot, (min, max, avg)) in slots.into_iter().enumerate() {
-            let values = &self.values[slot];
-            if values.is_empty() {
+            if self.count[slot] == 0 {
                 continue;
             }
-            let mut lo = values[0];
-            let mut hi = values[0];
-            let mut sum = 0.0;
-            for value in values {
-                if *value < lo {
-                    lo = *value;
-                }
-                if *value > hi {
-                    hi = *value;
-                }
-                sum += *value;
-            }
-            *min = Some(lo);
-            *max = Some(hi);
-            *avg = Some(sum / values.len() as f64);
+            *min = self.min[slot];
+            *max = self.max[slot];
+            *avg = Some(self.sum[slot] / self.count[slot] as f64);
         }
         row
     }
@@ -121,26 +140,29 @@ struct HourlyBucketRow {
     samples: i64,
 }
 
+/// Fold one raw row into the running accumulators.
+fn accumulate_row(
+    buckets: &mut HashMap<(i64, i64), Bucket>,
+    monitor_id: i64,
+    time: &str,
+    payload: &str,
+) {
+    let Some(ms) = metric_time(time) else {
+        return;
+    };
+    let hour = hour_start(ms);
+    let bucket = buckets
+        .entry((monitor_id, hour))
+        .or_insert_with(|| Bucket::new(monitor_id, hour));
+    bucket.add(&history::readings_from_payload(payload));
+}
+
 /// Fold one chunk of raw rows into per-monitor, per-hour aggregates.
+#[cfg(test)]
 fn aggregate_chunk(rows: &[(i64, String, String)]) -> HashMap<(i64, i64), Bucket> {
     let mut buckets: HashMap<(i64, i64), Bucket> = HashMap::new();
     for (monitor_id, time, payload) in rows {
-        let Some(time) = metric_time(time) else {
-            continue;
-        };
-        let hour = hour_start(time);
-        let bucket = buckets
-            .entry((*monitor_id, hour))
-            .or_insert_with(|| Bucket::new(*monitor_id, hour));
-        bucket.samples += 1;
-
-        let reading = history::readings_from_payload(payload);
-        let values = [reading.cpu, reading.ram, reading.gpu, reading.vram];
-        for (slot, value) in values.into_iter().enumerate() {
-            if let Some(value) = value {
-                bucket.values[slot].push(value);
-            }
-        }
+        accumulate_row(&mut buckets, *monitor_id, time, payload);
     }
     buckets
 }
@@ -239,29 +261,75 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
         }
     }
 
-    // Process the due pairs in time order; each chunk reads only the raw rows
-    // of the hours it holds. Buckets outside the due set are never rewritten
-    // from partial evidence.
+    // Process the due pairs in time order. Chunks are bounded in elapsed
+    // time (a gap splits them) and each chunk is folded page by page, so no
+    // single query materializes a long stretch of raw payloads.
     let mut hours: Vec<i64> = needs.iter().map(|(_, hour)| *hour).collect::<HashSet<_>>().into_iter().collect();
     hours.sort_unstable();
 
     let mut result = RollupResult::default();
     let mut index = 0;
     while index < hours.len() {
-        let end_index = (index + CHUNK_HOURS).min(hours.len()) - 1;
         let window_start = hours[index];
-        let window_end = hours[end_index] + 3_600_000;
-
-        let rows: Vec<(i64, String, String)> = sqlx::query_as(
-            "SELECT monitor_id, time, payload FROM metrics_raw WHERE time >= ? AND time < ?",
-        )
-        .bind(sql_time_millis(window_start))
-        .bind(sql_time_millis(window_end))
-        .fetch_all(pool)
-        .await?;
+        let mut end = index;
+        while end + 1 < hours.len()
+            && hours[end + 1] - window_start < CHUNK_HOURS as i64 * 3_600_000
+        {
+            end += 1;
+        }
+        let window_end = hours[end] + 3_600_000;
         result.chunks += 1;
+        index = end + 1;
 
-        for bucket in aggregate_chunk(&rows).into_values() {
+        // Keyset pagination on (time, id): each page is bounded, and the
+        // accumulators hold one entry per (monitor, hour), never the rows.
+        let mut buckets: HashMap<(i64, i64), Bucket> = HashMap::new();
+        let mut cursor: Option<(String, i64)> = None;
+        loop {
+            let rows: Vec<(i64, i64, String, String)> = match &cursor {
+                Some((time, id)) => {
+                    sqlx::query_as(
+                        "SELECT id, monitor_id, time, payload FROM metrics_raw
+                         WHERE time >= ? AND time < ? AND (time > ? OR (time = ? AND id > ?))
+                         ORDER BY time, id LIMIT ?",
+                    )
+                    .bind(sql_time_millis(window_start))
+                    .bind(sql_time_millis(window_end))
+                    .bind(time)
+                    .bind(time)
+                    .bind(id)
+                    .bind(ROWS_PER_PAGE)
+                    .fetch_all(pool)
+                    .await?
+                }
+                None => {
+                    sqlx::query_as(
+                        "SELECT id, monitor_id, time, payload FROM metrics_raw
+                         WHERE time >= ? AND time < ?
+                         ORDER BY time, id LIMIT ?",
+                    )
+                    .bind(sql_time_millis(window_start))
+                    .bind(sql_time_millis(window_end))
+                    .bind(ROWS_PER_PAGE)
+                    .fetch_all(pool)
+                    .await?
+                }
+            };
+
+            let page_len = rows.len();
+            for (_, monitor_id, time, payload) in &rows {
+                accumulate_row(&mut buckets, *monitor_id, time, payload);
+            }
+            if page_len < ROWS_PER_PAGE as usize {
+                break;
+            }
+            let Some((id, _, time, _)) = rows.last() else {
+                break;
+            };
+            cursor = Some((time.clone(), *id));
+        }
+
+        for bucket in buckets.into_values() {
             let key = (bucket.monitor_id, bucket.hour);
             if !needs.remove(&key) {
                 continue;
@@ -269,8 +337,6 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
             store_bucket(pool, &bucket.row()).await?;
             result.rolled_up += 1;
         }
-
-        index += CHUNK_HOURS;
     }
 
     // Every marker inside the processed range has been considered: re-folded
@@ -576,6 +642,70 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(buckets, 6, "existing buckets survive");
+    }
+
+    #[tokio::test]
+    async fn rollup_bounds_elapsed_windows_and_pages() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let pool = crate::db::connect(&path).await.unwrap();
+
+        let (monitor_id,): (i64,) =
+            sqlx::query_as("INSERT INTO monitors (name, type) VALUES ('m', 'push') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let now = crate::metrics::metric_time("2026-10-10 12:30:00").unwrap();
+        let last_complete = hour_start(now) - 3_600_000;
+
+        let insert = |pool: &SqlitePool, monitor_id: i64, ms: i64, cpu: f64| {
+            let time = sql_time_millis(ms);
+            let payload = json!({ "cpu": { "percent": cpu } }).to_string();
+            let pool = pool.clone();
+            async move {
+                sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
+                    .bind(monitor_id)
+                    .bind(time)
+                    .bind(payload)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+
+        // One hour 20 days back and one recent hour: the old coverage check
+        // would have produced a single chunk spanning the whole gap.
+        insert(&pool, monitor_id, last_complete - 20 * 24 * 3_600_000 + 600_000, 10.0).await;
+        insert(&pool, monitor_id, last_complete + 600_000, 20.0).await;
+
+        let result = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(result.rolled_up, 2);
+        assert_eq!(
+            result.chunks, 2,
+            "the 20-day gap must split the two hours into separate chunks"
+        );
+
+        // An hour holding more rows than one page: every page must be folded.
+        let wide = last_complete - 3_600_000;
+        let total = ROWS_PER_PAGE + 1;
+        for i in 0..total {
+            insert(&pool, monitor_id, wide + 1000 + i * 100, (i % 100) as f64).await;
+        }
+
+        let result = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(result.rolled_up, 1);
+        let (samples, min, max): (i64, f64, f64) = sqlx::query_as(
+            "SELECT samples, cpu_min, cpu_max FROM metrics_hourly WHERE monitor_id = ? AND time = ?",
+        )
+        .bind(monitor_id)
+        .bind(sql_time_millis(wide))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(samples, total, "every page must be folded");
+        assert_eq!(min, 0.0);
+        assert_eq!(max, 99.0);
     }
 
     #[tokio::test]

@@ -25,9 +25,11 @@ const { readingsFromPayload, timestamp } = require("./metrics-history");
  *   recency window would re-fold the hour; the marker forces it and is
  *   cleared once a run has looked at it. Markers for hours whose raw rows
  *   were already pruned are dropped without touching the bucket.
- * - Work is chunked by time; each chunk reads only its window of raw rows.
- *   A first run backfills the full raw retention (30 days) without loading
- *   everything at once.
+ * - Work is chunked by elapsed time (a gap splits a chunk rather than
+ *   stretching it) and each chunk is folded page by page, so no single
+ *   query materializes a long stretch of raw payloads. A first run
+ *   backfills the full raw retention (30 days) without loading everything
+ *   at once.
  * - Only complete hours roll up: the current hour is still accumulating.
  * - The job runs hourly and the raw prune daily, so a repair pass always has
  *   the raw evidence it needs; repairing missing/incomplete buckets happens
@@ -37,8 +39,17 @@ const { readingsFromPayload, timestamp } = require("./metrics-history");
 /** How long hourly rollups are kept. Raw stays at METRICS_RETENTION_DAYS. */
 const HOURLY_RETENTION_DAYS = 730;
 
-/** Raw-row window processed per query, bounding memory and lock time. */
+/**
+ * Widest span of elapsed time folded in one pass.
+ *
+ * It bounds elapsed time, not the number of missing hours: a single old gap
+ * beside recent hours used to stretch one chunk across hundreds of hours
+ * and pull every payload in between. A gap now splits the chunk.
+ */
 const CHUNK_HOURS = 6;
+
+/** Raw rows fetched per query, bounding memory and lock time per page. */
+const ROWS_PER_PAGE = 5000;
 
 const FIELDS = [ "cpu", "ram", "gpu", "vram" ];
 
@@ -81,6 +92,87 @@ function hourKeyExpression() {
 }
 
 /**
+ * Split due hours into time-ordered groups no wider than the chunk window,
+ * so one pass never spans a long covered stretch just because a gap sits
+ * beside recent hours.
+ * @param {number[]} hours Sorted due hours (epoch millis)
+ * @param {number} maxSpanHours Widest elapsed span per group
+ * @returns {number[][]} Grouped hours
+ */
+function groupHours(hours, maxSpanHours = CHUNK_HOURS) {
+    const groups = [];
+    let group = [];
+    for (const hour of hours) {
+        if (group.length && hour - group[0] >= maxSpanHours * 3600_000) {
+            groups.push(group);
+            group = [];
+        }
+        group.push(hour);
+    }
+    if (group.length) {
+        groups.push(group);
+    }
+    return groups;
+}
+
+/**
+ * Start an empty accumulator for one (monitor, hour) bucket.
+ *
+ * Min/max/sum/count instead of keeping every reading: pages of one hour are
+ * folded together as they arrive, so a chunk never holds the raw samples in
+ * memory.
+ * @param {number} monitorID Owning monitor
+ * @param {number} hour Hour bucket start
+ * @returns {object} Empty accumulator
+ */
+function emptyBucket(monitorID, hour) {
+    const bucket = { monitorID, hour, samples: 0, sum: {}, count: {}, min: {}, max: {} };
+    for (const field of FIELDS) {
+        bucket.sum[field] = 0;
+        bucket.count[field] = 0;
+        bucket.min[field] = null;
+        bucket.max[field] = null;
+    }
+    return bucket;
+}
+
+/**
+ * Fold one raw row into the running accumulators.
+ * @param {Map<string, object>} buckets Accumulators keyed by monitor and hour
+ * @param {{monitor_id: number, time: string, payload: string}} row Raw row
+ * @returns {void}
+ */
+function accumulateRow(buckets, row) {
+    const time = timestamp(row.time);
+    if (!Number.isFinite(time)) {
+        return;
+    }
+    const hour = hourStart(time);
+    const key = `${row.monitor_id}|${hour}`;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+        bucket = emptyBucket(Number(row.monitor_id), hour);
+        buckets.set(key, bucket);
+    }
+    bucket.samples++;
+    const reading = readingsFromPayload(row.payload);
+    for (const field of FIELDS) {
+        const value = reading[field];
+        if (value === null) {
+            continue;
+        }
+        bucket.sum[field] += value;
+        bucket.count[field]++;
+        if (bucket.min[field] === null || value < bucket.min[field]) {
+            bucket.min[field] = value;
+        }
+        if (bucket.max[field] === null || value > bucket.max[field]) {
+            bucket.max[field] = value;
+        }
+    }
+}
+
+/**
  * Fold one chunk of raw rows into per-monitor, per-hour aggregates.
  *
  * Pure and exported for tests: takes rows in any order and returns a map of
@@ -91,27 +183,7 @@ function hourKeyExpression() {
 function aggregateChunk(rows) {
     const buckets = new Map();
     for (const row of rows) {
-        const time = timestamp(row.time);
-        if (!Number.isFinite(time)) {
-            continue;
-        }
-        const hour = hourStart(time);
-        const key = `${row.monitor_id}|${hour}`;
-        let bucket = buckets.get(key);
-        if (!bucket) {
-            bucket = { monitorID: Number(row.monitor_id), hour, samples: 0, values: {} };
-            for (const field of FIELDS) {
-                bucket.values[field] = [];
-            }
-            buckets.set(key, bucket);
-        }
-        bucket.samples++;
-        const reading = readingsFromPayload(row.payload);
-        for (const field of FIELDS) {
-            if (reading[field] !== null) {
-                bucket.values[field].push(reading[field]);
-            }
-        }
+        accumulateRow(buckets, row);
     }
     return buckets;
 }
@@ -124,28 +196,10 @@ function aggregateChunk(rows) {
 function bucketRow(bucket) {
     const row = { monitor_id: bucket.monitorID, time: sqlTime(bucket.hour), samples: bucket.samples };
     for (const field of FIELDS) {
-        const values = bucket.values[field];
-        if (!values.length) {
-            row[`${field}_min`] = null;
-            row[`${field}_max`] = null;
-            row[`${field}_avg`] = null;
-            continue;
-        }
-        let min = values[0];
-        let max = values[0];
-        let sum = 0;
-        for (const value of values) {
-            if (value < min) {
-                min = value;
-            }
-            if (value > max) {
-                max = value;
-            }
-            sum += value;
-        }
-        row[`${field}_min`] = min;
-        row[`${field}_max`] = max;
-        row[`${field}_avg`] = sum / values.length;
+        const count = bucket.count[field];
+        row[`${field}_min`] = count ? bucket.min[field] : null;
+        row[`${field}_max`] = count ? bucket.max[field] : null;
+        row[`${field}_avg`] = count ? bucket.sum[field] / count : null;
     }
     return row;
 }
@@ -267,21 +321,43 @@ async function rollupMetrics(now = Date.now()) {
         }
     }
 
-    // Process the due pairs in time order; each chunk reads only the raw rows
-    // of the hours it holds. Buckets outside the due set are merged over by
-    // the next chunk that needs them, never rewritten from partial evidence.
+    // Process the due pairs in time order. Chunks are bounded in elapsed
+    // time (a gap splits them) and each chunk is folded page by page, so no
+    // single query materializes a long stretch of raw payloads.
     const hours = [ ...new Set([ ...needs ].map((key) => Number(key.split("|")[1]))) ].sort((a, b) => a - b);
     let rolledUp = 0;
     let chunks = 0;
-    for (let i = 0; i < hours.length; i += CHUNK_HOURS) {
-        const group = hours.slice(i, i + CHUNK_HOURS);
+    for (const group of groupHours(hours)) {
         const windowStart = group[0];
         const windowEnd = group[group.length - 1] + 3600_000;
-        const rows = await R.getAll(
-            "SELECT monitor_id, time, payload FROM monitor_metric WHERE time >= ? AND time < ?",
-            [ sqlTime(windowStart), sqlTime(windowEnd) ]);
         chunks++;
-        for (const bucket of aggregateChunk(rows).values()) {
+        const buckets = new Map();
+        let cursor = null;
+        // Keyset pagination on (time, id): each page is bounded, and the
+        // accumulators hold one entry per (monitor, hour), never the rows.
+        for (;;) {
+            const rows = cursor
+                ? await R.getAll(
+                    `SELECT id, monitor_id, time, payload FROM monitor_metric
+                     WHERE time >= ? AND time < ? AND (time > ? OR (time = ? AND id > ?))
+                     ORDER BY time, id LIMIT ${ROWS_PER_PAGE}`,
+                    [ sqlTime(windowStart), sqlTime(windowEnd), cursor.time, cursor.time, cursor.id ])
+                : await R.getAll(
+                    `SELECT id, monitor_id, time, payload FROM monitor_metric
+                     WHERE time >= ? AND time < ?
+                     ORDER BY time, id LIMIT ${ROWS_PER_PAGE}`,
+                    [ sqlTime(windowStart), sqlTime(windowEnd) ]);
+            for (const row of rows) {
+                accumulateRow(buckets, row);
+            }
+            if (rows.length < ROWS_PER_PAGE) {
+                break;
+            }
+            const last = rows[rows.length - 1];
+            cursor = { time: last.time, id: last.id };
+        }
+
+        for (const bucket of buckets.values()) {
             const key = `${bucket.monitorID}|${bucket.hour}`;
             if (!needs.has(key)) {
                 continue;
@@ -347,9 +423,12 @@ module.exports = {
     rollupMetricsJob,
     markRollupDirty,
     aggregateChunk,
+    accumulateRow,
+    groupHours,
     bucketRow,
     hourStart,
     hourKeyExpression,
     HOURLY_RETENTION_DAYS,
     CHUNK_HOURS,
+    ROWS_PER_PAGE,
 };
