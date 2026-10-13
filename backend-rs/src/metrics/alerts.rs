@@ -39,6 +39,15 @@ pub const HYSTERESIS: f64 = 5.0;
 /// breach must have been observed within this window to still count as
 /// continuous.
 pub const GAP_TOLERANCE_MS: i64 = 3 * 60_000;
+/// Minimum age a sample may have and still describe the present.
+///
+/// A buffered agent drains old readings quickly; evaluating those against
+/// receive time would page for a historical spike — or announce a recovery
+/// for a historical dip — while the host's present load has already moved
+/// on. Backfill is still archived; only the alert decision is skipped. The
+/// window scales with the monitor interval so slow pushers are not judged by
+/// a 1Hz yardstick.
+pub const MIN_FRESHNESS_MS: i64 = 60_000;
 const MAX_STATE: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +93,20 @@ impl AlertState {
     pub fn forget(&mut self, monitor_id: i64) {
         self.monitors.remove(&monitor_id);
         self.order.retain(|id| *id != monitor_id);
+    }
+
+    /// Pause a monitor's episodes because the readings stopped describing
+    /// the present (stale telemetry). The debounce and its continuity anchor
+    /// are dropped — old readings must not add up to a sustained-breach
+    /// alert — while an already-fired alert stays open: staleness is not
+    /// evidence of recovery. Live readings resume the debounce from scratch.
+    pub fn pause(&mut self, monitor_id: i64) {
+        if let Some(metrics) = self.monitors.get_mut(&monitor_id) {
+            for state in metrics.values_mut() {
+                state.breached_since = None;
+                state.last_above_at = None;
+            }
+        }
     }
 }
 
@@ -235,9 +258,23 @@ pub(crate) async fn evaluate(metrics: &Metrics, monitor: &Monitor, now_ms: i64) 
         return;
     }
 
-    let Some((_, sample)) = metrics.sample(monitor.id) else {
+    let Some((sample_time, sample)) = metrics.sample(monitor.id) else {
         return;
     };
+
+    // Alerts describe the present. A buffered agent draining a backlog
+    // delivers old readings quickly; evaluating each against receive time
+    // could satisfy the debounce with a historical high-load stretch (or
+    // announce a recovery for a historical dip) after the host's load has
+    // already moved on. Backfill is archived; stale samples only pause the
+    // debounce, and live readings resume it.
+    let freshness_ms = MIN_FRESHNESS_MS.max(monitor.interval.max(0) * 2 * 1000);
+    let fresh = crate::metrics::metric_time(&sample_time)
+        .is_some_and(|sampled_at| now_ms - sampled_at <= freshness_ms);
+    if !fresh {
+        metrics.alert_state.lock().unwrap().pause(monitor.id);
+        return;
+    }
 
     let (cpu, ram, disk, disk_mount) = readings_from(&sample);
     // Continuity scales with the monitor's cadence: one or two missed

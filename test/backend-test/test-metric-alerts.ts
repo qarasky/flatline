@@ -19,7 +19,7 @@ test("metric alert state machine", async (t) => {
     const { stepMetric, readingsFrom, formatMetricMessage, DEBOUNCE_MS, COOLDOWN_MS } =
         require("../../server/metric-alerts");
     const t0 = 1_760_000_000_000;
-    const fresh = () => ({ breachedSince: null, alerted: false, lastNotified: 0 });
+    const fresh = () => ({ breachedSince: null, lastAboveAt: null, alerted: false, lastNotified: 0 });
 
     await t.test("debounce: a short spike never alerts, sustained does", async () => {
         const s = fresh();
@@ -98,6 +98,51 @@ test("metric alert state machine", async (t) => {
         assert.strictEqual(stepMetric(s, null, 90, t0 + DEBOUNCE_MS + 1000), null);
         assert.notStrictEqual(s.breachedSince, null, "absent metric must not fake a recovery");
         assert.strictEqual(s.alerted, true);
+    });
+
+    await t.test("stale backfilled samples pause the debounce instead of alerting", async (st) => {
+        // A reconnecting agent drains old readings; a historical high-load
+        // stretch that takes over a minute to drain must not satisfy the
+        // debounce and page for a load that has already passed.
+        const { evaluateMetricAlerts, metricStateFor } = require("../../server/metric-alerts");
+        const metricsModule = require("../../server/monitor-metrics");
+        const monitorID = 4242;
+        const monitor = { id: monitorID, name: "Backfill Host", interval: 60, metric_cpu_threshold: 90 };
+
+        let fakeNow = Date.parse("2026-10-13T12:00:00Z");
+        st.mock.method(Date, "now", () => fakeNow);
+        const stamp = (ms: number) => new Date(ms).toISOString().replace("T", " ").replace("Z", "");
+
+        // The cache holds a ten-minute-old, above-threshold reading: exactly
+        // what a draining backlog leaves behind.
+        let sampleTime = fakeNow - 10 * 60_000;
+        st.mock.method(metricsModule, "getLatestMetrics", () => ({
+            time: stamp(sampleTime),
+            metrics: { cpu: { percent: 95 } },
+        }));
+
+        await evaluateMetricAlerts(monitor);
+        assert.strictEqual(
+            metricStateFor(monitorID, "cpu").breachedSince, null,
+            "a stale reading must not start a debounce");
+        assert.strictEqual(metricStateFor(monitorID, "cpu").alerted, false);
+
+        // Another stale reading more than a debounce window later: still no
+        // alert, because the sample itself is not current.
+        fakeNow += 61_000;
+        sampleTime += 61_000;
+        await evaluateMetricAlerts(monitor);
+        assert.strictEqual(
+            metricStateFor(monitorID, "cpu").breachedSince, null,
+            "stale telemetry keeps the debounce paused");
+        assert.strictEqual(metricStateFor(monitorID, "cpu").alerted, false);
+
+        // Live readings resume: the debounce starts from the live sample.
+        sampleTime = fakeNow;
+        await evaluateMetricAlerts(monitor);
+        assert.strictEqual(
+            metricStateFor(monitorID, "cpu").breachedSince, fakeNow,
+            "live readings resume the debounce");
     });
 
     await t.test("readingsFrom takes the fullest mount and rejects garbage", async () => {
@@ -234,30 +279,34 @@ test("metric alerts deliver through the push endpoint", async (t) => {
     };
 
     await t.test("debounce, repeat, recovery, in that order", async (st) => {
-        let fakeNow = Date.now();
-        st.mock.method(Date, "now", () => fakeNow);
+        // Mock the clock itself (Date.now and new Date()), so sample times,
+        // receive time and evaluation time all agree: the alert freshness
+        // and continuity rules compare them, and a fixed Date.now with
+        // real-time samples would look like stale backfill. Real timers keep
+        // running for the waits below.
+        st.mock.timers.enable({ apis: [ "Date" ], now: Date.now() });
 
         await push(95); // breach starts; silent
         await new Promise((resolve) => setTimeout(resolve, 100));
         assert.strictEqual(messages.length, 0, "a fresh breach must not alert immediately");
 
-        fakeNow += 61_000;
+        st.mock.timers.tick(61_000);
         await push(95); // debounce passed -> alert
         await waitFor(1);
         assert.strictEqual(messages.length, 1, "sustained breach must alert");
         assert.match(messages[0].text, /\[Alert Host\] \[⚠️ Metric\] CPU 95% ≥ threshold 90%/);
 
-        fakeNow += 60_000;
+        st.mock.timers.tick(60_000);
         await push(95); // within cooldown -> silent
         await new Promise((resolve) => setTimeout(resolve, 100));
         assert.strictEqual(messages.length, 1, "cooldown must suppress repeats");
 
-        fakeNow += 30 * 60_000;
+        st.mock.timers.tick(30 * 60_000);
         await push(95); // cooldown elapsed -> repeat
         await waitFor(2);
         assert.strictEqual(messages.length, 2, "sustained breach must repeat after the cooldown");
 
-        fakeNow += 1000;
+        st.mock.timers.tick(1000);
         await push(50); // recovery
         await waitFor(3);
         assert.strictEqual(messages.length, 3, "recovery must be announced");

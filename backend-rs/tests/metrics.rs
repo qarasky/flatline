@@ -413,11 +413,8 @@ async fn summary_uses_raw_then_hourly_tiers() {
     assert_eq!(status, 400);
 }
 
-#[tokio::test]
-async fn threshold_alerts_debounce_page_and_recover() {
-    let h = harness().await;
-
-    // Fake Telegram bot API capturing messages.
+/// A fake Telegram bot API: returns its base URL and the captured messages.
+async fn alert_stub() -> (String, Arc<Mutex<Vec<Value>>>) {
     let captured: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
     let stub = {
         let captured = Arc::clone(&captured);
@@ -437,21 +434,33 @@ async fn threshold_alerts_debounce_page_and_recover() {
     tokio::spawn(async move {
         axum::serve(listener, stub).await.unwrap();
     });
+    (format!("http://{addr}"), captured)
+}
 
+/// Create a telegram notification pointing at `base_url`.
+async fn alert_notification(pool: &SqlitePool, base_url: &str) -> i64 {
     let (notification_id,): (i64,) = sqlx::query_as(
         "INSERT INTO notifications (name, type, config) VALUES ('alerts', 'telegram', ?) RETURNING id",
     )
     .bind(
         json!({
-            "telegramServerUrl": format!("http://{addr}"),
+            "telegramServerUrl": base_url,
             "telegramBotToken": "TEST:TOKEN",
             "telegramChatID": "-100123",
         })
         .to_string(),
     )
-    .fetch_one(&h.pool)
+    .fetch_one(pool)
     .await
     .unwrap();
+    notification_id
+}
+
+#[tokio::test]
+async fn threshold_alerts_debounce_page_and_recover() {
+    let h = harness().await;
+    let (base_url, captured) = alert_stub().await;
+    let notification_id = alert_notification(&h.pool, &base_url).await;
 
     let (id, token) = create_push_monitor(
         &h,
@@ -526,6 +535,102 @@ async fn threshold_alerts_debounce_page_and_recover() {
     assert_eq!(
         messages[1],
         "[✅ METRIC] [Ungrouped] [hot-box]\n[cpu] [CPU recovered: 80% (threshold 90%)]"
+    );
+}
+
+#[tokio::test]
+async fn stale_backfill_does_not_page() {
+    // The audit's scenario: a reconnecting agent drains historical samples
+    // oldest-first, and a historical high-load stretch satisfied the
+    // debounce while the host had already recovered. Stale samples are
+    // archived but pause the debounce; live readings resume it.
+    let h = harness().await;
+    let (base_url, captured) = alert_stub().await;
+    let notification_id = alert_notification(&h.pool, &base_url).await;
+
+    let (id, token) = create_push_monitor(
+        &h,
+        json!({
+            "name": "backfill-box",
+            "metricCpuThreshold": 90,
+            "notificationIDList": [notification_id],
+        }),
+    )
+    .await;
+    let monitor: flatline_backend::monitors::Monitor =
+        sqlx::query_as("SELECT * FROM monitors WHERE id = ?")
+            .bind(id)
+            .fetch_one(&h.pool)
+            .await
+            .unwrap();
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let backfill = flatline_backend::metrics::sql_time_millis(now - 10 * 60_000);
+
+    // Ten minutes old and above the threshold: archived, never paged.
+    let (status, _) = push(
+        &h,
+        &token,
+        "",
+        Some(json!({ "metrics": { "sampledAt": backfill, "cpu": { "percent": 95.0 } } })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(raw_count(&h.pool, id).await, 1, "backfill is still archived");
+
+    h.state.metrics.evaluate_alerts_at(&monitor, now).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        captured.lock().unwrap().is_empty(),
+        "a stale reading must not alert"
+    );
+
+    // A backlog that takes over a minute of receive time to drain must not
+    // add up to a sustained-breach alert either (the audit reproduction).
+    let later = flatline_backend::metrics::sql_time_millis(now - 9 * 60_000);
+    push(
+        &h,
+        &token,
+        "",
+        Some(json!({ "metrics": { "sampledAt": later, "cpu": { "percent": 96.0 } } })),
+    )
+    .await;
+    h.state
+        .metrics
+        .evaluate_alerts_at(&monitor, now + 61_000)
+        .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        captured.lock().unwrap().is_empty(),
+        "stale telemetry must pause the debounce instead of completing it"
+    );
+
+    // Live telemetry resumes: the debounce starts from the live sample and
+    // alerts a window later.
+    push(
+        &h,
+        &token,
+        "",
+        Some(json!({ "metrics": { "cpu": { "percent": 95.0 } } })),
+    )
+    .await;
+    let live = chrono::Utc::now().timestamp_millis();
+    h.state.metrics.evaluate_alerts_at(&monitor, live).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        captured.lock().unwrap().is_empty(),
+        "a fresh breach still debounces"
+    );
+
+    h.state
+        .metrics
+        .evaluate_alerts_at(&monitor, live + 61_000)
+        .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        captured.lock().unwrap().len(),
+        1,
+        "live readings resume the debounce and alert"
     );
 }
 

@@ -1,6 +1,7 @@
 const { log } = require("../src/util");
 const { Notification } = require("./notification");
 const { enqueueNotification } = require("./notification-queue");
+const { timestamp } = require("./metrics-history");
 const Monitor = require("./model/monitor");
 
 /**
@@ -42,6 +43,17 @@ const HYSTERESIS = 5;
  * continuous.
  */
 const GAP_TOLERANCE_MS = 3 * 60_000;
+
+/**
+ * Minimum age a sample may have and still describe the present. A buffered
+ * agent drains old readings (about 20/s): evaluating those against receive
+ * time would page for a historical spike — or announce a recovery for a
+ * historical dip — while the host's present load has already moved on.
+ * Backfill is still archived; only the alert decision is skipped. The
+ * window scales with the monitor interval so slow pushers are not judged
+ * by a 1Hz yardstick.
+ */
+const MIN_FRESHNESS_MS = 60_000;
 const MAX_STATE = 512;
 
 /**
@@ -68,6 +80,26 @@ function forgetMetricAlerts(id) {
  */
 function resetMetricAlerts() {
     state.clear();
+}
+
+/**
+ * Pause an episode's debounce because the readings stopped describing the
+ * present (stale telemetry). `breachedSince` and the continuity anchor are
+ * dropped — old readings must not add up to a sustained-breach alert — while
+ * an already-fired alert stays open: staleness is not evidence of recovery.
+ * The next live readings resume the debounce from scratch.
+ * @param {number} monitorID Monitor id
+ * @returns {void}
+ */
+function pauseMetricAlerts(monitorID) {
+    const monitorState = state.get(Number(monitorID));
+    if (!monitorState) {
+        return;
+    }
+    for (const metricState of Object.values(monitorState)) {
+        metricState.breachedSince = null;
+        metricState.lastAboveAt = null;
+    }
 }
 
 /**
@@ -236,6 +268,20 @@ async function evaluateMetricAlerts(monitor) {
     const now = Date.now();
     const readings = readingsFrom(sample.metrics);
     const monitorID = Number(monitor.id);
+
+    // Alerts describe the present. A buffered agent draining a backlog
+    // delivers old readings quickly; evaluating each against receive time
+    // could satisfy the debounce with a historical high-load stretch (or
+    // announce a recovery for a historical dip) after the host's load has
+    // already moved on. Backfill is archived; stale samples only pause the
+    // debounce, and live readings resume it.
+    const sampledAt = timestamp(sample.time);
+    const freshnessMs = Math.max(MIN_FRESHNESS_MS, Number(monitor.interval || 0) * 1000 * 2);
+    if (!Number.isFinite(sampledAt) || now - sampledAt > freshnessMs) {
+        pauseMetricAlerts(monitorID);
+        return;
+    }
+
     // Continuity scales with the monitor's cadence: one or two missed
     // samples are tolerated, a silence of three intervals is not. The base
     // tolerance covers monitors without a usable interval.
@@ -315,10 +361,13 @@ module.exports = {
     readingsFrom,
     stepMetric,
     formatMetricMessage,
+    metricStateFor,
     forgetMetricAlerts,
     resetMetricAlerts,
+    pauseMetricAlerts,
     DEBOUNCE_MS,
     COOLDOWN_MS,
     HYSTERESIS,
     GAP_TOLERANCE_MS,
+    MIN_FRESHNESS_MS,
 };
