@@ -12,6 +12,12 @@ pub struct Config {
     pub host: String,
     /// Directory of the built SPA. Served when it exists.
     pub web_dist: PathBuf,
+    /// Public origin used in provisioning docs and scripts
+    /// (`https://uptime.example`). Empty falls back to the request's Host.
+    pub public_url: Option<String>,
+    /// Directory holding the agent binaries, `VERSION` and `sha256sums`
+    /// served under `/agent/*`.
+    pub agent_dir: PathBuf,
 }
 
 impl Config {
@@ -33,11 +39,22 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/app/dashboard"));
 
+        let public_url = std::env::var("FLATLINE_PUBLIC_URL")
+            .ok()
+            .map(|url| url.trim().to_string())
+            .filter(|url| !url.is_empty());
+
+        let agent_dir = std::env::var("FLATLINE_AGENT_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/app/agent"));
+
         Self {
             data_dir,
             port,
             host,
             web_dist,
+            public_url,
+            agent_dir,
         }
     }
 }

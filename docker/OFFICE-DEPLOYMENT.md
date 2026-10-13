@@ -155,6 +155,45 @@ the group path/type/target, and push failures needed a way to clear.
   counter is ahead. Ingest drops the ack whenever a newest sample reports a
   lower counter, so an agent restart can never leave new failures hidden.
 
+### Provisioning surfaces for LLM agents — 2026-10-13 (third release)
+
+Operator request: one tokenized URL the CTO can point Claude at, which both
+documents and enables adding a push server, plus one-liners to install and
+update the agent.
+
+- **Runbook**: `GET /add-push-server.md?token=<key>` (also accepts
+  `Authorization: Bearer`). Served from the repo-root `add-push-server.md`,
+  embedded in the binary and rendered with the origin, the token and the
+  agent version substituted, so every command in it is copy-paste ready.
+  Covers push/http/ping monitors, groups, notifications, pause/delete,
+  field reference and troubleshooting.
+- **`/llms.txt`** — pointer file for LLM crawlers, linking the tokenized
+  runbook.
+- **Installer**: `GET /agent/install.sh?token=<key>` — pre-credentialed
+  script. Fresh install needs `--server <origin> --token <push token>`;
+  `--update` replaces the binary and restarts, keeping config and push
+  token (previous binary kept as `superboard.bak`).
+- **Binaries**: `/agent/superboard-linux-amd64` and `-arm64`, checksums at
+  `/agent/sha256sums`, metadata at `/agent/version`. Built in the image by
+  a Go stage in `docker/rust.dockerfile` (`VERSION` file beside them).
+- Everything is gated by an ordinary API key. The one in use is named
+  `llm-provisioning` (mint/disable in the dashboard's Agents panel); the
+  token and its full URL live on the office host at
+  `provisioning-token.txt` (root 0600), not in Git. Rotation: disable the
+  key in the panel, mint a replacement, update that file and the shared
+  URL.
+- `FLATLINE_PUBLIC_URL=https://uptime.mediaboost.kz` in the office `.env`
+  (passed through by `compose.rust.yaml`) so rendered links are absolute;
+  without it the request's Host header is used.
+
+Verified live 2026-10-13: all endpoints serve correctly and answer 401
+without a token; the served binary's sha256 matches `sha256sums`; the
+office agent was updated 1.2.0 → 1.5.0 → 1.5.1 entirely through the
+script; a fresh install in a throwaway Debian container came up and pushed
+telemetry within seconds. Agent 1.5.1 (this image) fixes the cron fallback
+on hosts with no existing crontab — the fleet's systemd hosts are
+unaffected.
+
 ### Superseded: pending Node rollout — 2026-10-12
 
 Kept for reference; not deployed (the Rust cutover replaced it).

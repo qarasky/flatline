@@ -7,6 +7,7 @@ pub mod metrics;
 pub mod monitors;
 pub mod notifications;
 pub mod openapi;
+pub mod provisioning;
 pub mod push;
 pub mod status_pages;
 pub mod stream;
@@ -87,6 +88,19 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/openapi.json", get(openapi::document))
         .route("/robots.txt", get(status_pages::robots))
+        .route("/add-push-server.md", get(provisioning::runbook))
+        .route("/llms.txt", get(provisioning::llms))
+        .route("/agent/install.sh", get(provisioning::installer))
+        .route("/agent/sha256sums", get(provisioning::checksums))
+        .route(
+            "/agent/superboard-linux-amd64",
+            get(provisioning::agent_amd64),
+        )
+        .route(
+            "/agent/superboard-linux-arm64",
+            get(provisioning::agent_arm64),
+        )
+        .route("/agent/version", get(provisioning::version))
         .route(
             "/api/status-page/resolve-host",
             get(status_pages::resolve_host),

@@ -28,6 +28,8 @@ pub async fn harness() -> Harness {
         port: 0,
         host: "127.0.0.1".to_string(),
         web_dist: dir.path().join("no-web-build"),
+        public_url: None,
+        agent_dir: dir.path().join("agent"),
     };
     let pool = db::connect(&config.data_dir).await.unwrap();
     let token = auth::ensure_initial_token(&pool, &config.data_dir)

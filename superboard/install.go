@@ -120,8 +120,14 @@ func installCron(binaryPath, configPath string) error {
 	entry := fmt.Sprintf("@reboot %s run --config %s # %s\n", binaryPath, configPath, cronMarker)
 
 	out, err := exec.Command("crontab", "-l").CombinedOutput()
-	if err != nil && len(out) != 0 {
+	if err != nil && !strings.Contains(string(out), "no crontab") {
 		return fmt.Errorf("read crontab: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if err != nil {
+		// A fresh host has no crontab yet: `crontab -l` exits 1 with
+		// "no crontab for <user>" on stderr. That is an empty crontab,
+		// not a failure.
+		out = nil
 	}
 
 	if strings.Contains(string(out), cronMarker) {

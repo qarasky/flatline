@@ -97,3 +97,19 @@ installed on any client host. Upload staging binaries were removed after install
 
 Provisioning manifests/scripts with push credentials are held in Git/Docker-
 ignored `private/client-agent-deployment/`, never in this document or `client-cli/`.
+
+## Agent 1.5.1 — 2026-10-13
+
+One fix: `superboard install`'s cron fallback treated `crontab -l` exiting 1
+("no crontab for root") as fatal, so fresh installs on non-systemd hosts
+failed. Found while testing the new `/agent/install.sh` flow in a clean
+container; fixed in `install.go`, version bumped to 1.5.1.
+
+Updates no longer need SSH uploads — the server now serves the binary and a
+pre-credentialed script:
+
+    curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
+
+Office (43) runs 1.5.1 (updated through that script). The five client hosts
+stay on 1.5.0: the fix only affects non-systemd installs, and they can be
+updated with the same one-liner whenever convenient.

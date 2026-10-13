@@ -17,6 +17,10 @@ services:
   flatline:
     image: artchsh/flatline-rust:office-live
     restart: unless-stopped
+    environment:
+      # Absolute origin used in the provisioning docs/scripts; without it
+      # the request's Host header is used.
+      FLATLINE_PUBLIC_URL: ${FLATLINE_PUBLIC_URL:-}
     volumes:
       - ./data-rust:/app/data
     ports:

@@ -28,6 +28,23 @@ WORKDIR /app/apps/dashboard
 RUN npm ci --no-audit --no-fund
 RUN npm run build
 
+# Agent build: the Go binary served under /agent/* for installs and updates.
+# Static (CGO off) so it runs on any glibc/musl host. VERSION is what
+# `superboard version` prints; sha256sums is what install.sh verifies.
+FROM golang:1.27-trixie AS agent
+WORKDIR /src
+
+COPY superboard/go.mod superboard/go.sum ./
+RUN go mod download
+
+COPY superboard ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" \
+        -o /out/superboard-linux-amd64 . \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" \
+        -o /out/superboard-linux-arm64 . \
+    && /out/superboard-linux-amd64 version | cut -d' ' -f2 > /out/VERSION \
+    && cd /out && sha256sum superboard-linux-amd64 superboard-linux-arm64 > sha256sums
+
 # Rust build. Dependencies are cached against a dummy crate so source edits
 # do not rebuild the world.
 FROM rust:1.99-trixie AS build
@@ -40,6 +57,10 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs \
 
 COPY backend-rs/src src
 COPY backend-rs/migrations migrations
+# Embedded with include_str! by src/api/provisioning.rs; the paths resolve
+# to the container root, not /app.
+COPY add-push-server.md /add-push-server.md
+COPY agent-install.sh /agent-install.sh
 RUN touch src/main.rs src/lib.rs && cargo build --release
 
 # Runtime: glibc base matching the build image, curl for the healthcheck,
@@ -55,10 +76,12 @@ WORKDIR /app
 ENV UPTIME_KUMA_IS_CONTAINER=1 \
     DATA_DIR=/app/data \
     PORT=3001 \
-    FLATLINE_WEB_DIST=/app/dashboard
+    FLATLINE_WEB_DIST=/app/dashboard \
+    FLATLINE_AGENT_DIR=/app/agent
 
 COPY --from=build /app/target/release/flatline-backend /usr/local/bin/flatline-backend
 COPY --from=web /app/apps/dashboard/dist /app/dashboard
+COPY --from=agent /out /app/agent
 
 RUN mkdir -p /app/data
 
