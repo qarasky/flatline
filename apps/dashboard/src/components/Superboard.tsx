@@ -50,16 +50,17 @@ function intParam(params: URLSearchParams, key: string, fallback: number, min: n
  * A null sample is not an error: it is exactly how the board discovers which
  * monitors are servers. Any transport failure propagates.
  * @param monitors Roster entries with metrics candidates
+ * @param signal Cancels the bulk requests when the snapshot deadline fires
  * @returns One entry per monitor that has a sample
  */
-async function toFleetServers(monitors: MonitorSummary[]): Promise<FleetServer[]> {
+async function toFleetServers(monitors: MonitorSummary[], signal?: AbortSignal): Promise<FleetServer[]> {
     if (monitors.length === 0) {
         return [];
     }
 
     const samples = {} as Record<number, { time: string; metrics: FleetServer["metrics"]; cpuPeak10m?: FleetServer["cpuPeak10m"] } | null>;
     const batches = Array.from({ length: Math.ceil(monitors.length / 200) }, (_, index) =>
-        fetchLatestMetricsBulk(monitors.slice(index * 200, (index + 1) * 200).map(m => m.id)));
+        fetchLatestMetricsBulk(monitors.slice(index * 200, (index + 1) * 200).map(m => m.id), signal));
     for (const batch of await Promise.all(batches)) { Object.assign(samples, batch.samples); }
     const out: FleetServer[] = [];
 
@@ -192,9 +193,9 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
             (roster.get(a.monitor.parent ?? -1)?.weight ?? 0) - (roster.get(b.monitor.parent ?? -1)?.weight ?? 0) ||
             (a.monitor.weight ?? 0) - (b.monitor.weight ?? 0) || a.monitor.name.localeCompare(b.monitor.name);
 
-        async function load() {
+        async function load(signal?: AbortSignal) {
             try {
-                const monitors = await fetchAllMonitors();
+                const monitors = await fetchAllMonitors(signal);
                 roster = new Map(monitors.map(m => [m.id, m]));
                 const matched = filter ? matchGroups(monitors, filter) : [];
                 scopeIds = filter ? new Set(matched.map(g => g.id)) : null;
@@ -208,7 +209,7 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
                 // never match a scope.
                 const candidates = monitors.filter((m) => m.type !== "group" && m.active !== false &&
                     (!scopeIds || (m.parent != null && scopeIds.has(m.parent))));
-                const next = await toFleetServers(candidates);
+                const next = await toFleetServers(candidates, signal);
 
                 if (!alive) {
                     return;

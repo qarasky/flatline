@@ -63,6 +63,67 @@ test("unauthorized stream stops without snapshots, retries or token URLs", async
     } finally {stop();globalThis.fetch=originalFetch;delete globalThis.window;delete globalThis.document;}
 });
 
+test("a hung snapshot cannot disable stream recovery", async () => {
+    // The audit's reproduction: the stream dies (here: the watchdog aborts
+    // it), the snapshot never resolves, and recovery used to stop dead —
+    // no error callback, no reconnect, `connected` stuck true.
+    const originalFetch = globalThis.fetch;
+    globalThis.window = { localStorage: { getItem: () => "test" } };
+    globalThis.document = { hidden: false };
+
+    const errors = [];
+    let streamAttempts = 0;
+    let snapshotCalls = 0;
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    let snapshotSignal;
+
+    globalThis.fetch = async (url, init) => {
+        streamAttempts++;
+        // Stay open and silent: the reader times out waiting for a frame and
+        // the watchdog aborts. The abort listener is what a real socket does.
+        init.signal.addEventListener("abort", () => {});
+        const body = new ReadableStream({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode('data: {"type":"ready"}\n\n'));
+            },
+        });
+        return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+    };
+
+    const stop = watchLive({
+        watchdogMs: 40,
+        snapshotTimeoutMs: 150,
+        snapshot: (signal) => {
+            snapshotCalls++;
+            snapshotSignal = signal;
+            concurrent++;
+            maxConcurrent = Math.max(maxConcurrent, concurrent);
+            return new Promise(() => {
+                // Never resolves on its own: only the deadline (or unmount)
+                // may end it.
+                signal?.addEventListener("abort", () => { concurrent--; });
+            });
+        },
+        event: () => assert.fail("no deltas are delivered"),
+        error: e => errors.push(e),
+    });
+
+    try {
+        await new Promise(resolve => setTimeout(resolve, 1800));
+        assert.ok(snapshotCalls >= 1, "the ready frame must trigger a snapshot");
+        assert.ok(errors.length >= 1, "a dead stream must report an error");
+        assert.ok(streamAttempts >= 2, `reconnect must not wait for the snapshot (attempts=${streamAttempts})`);
+        assert.equal(snapshotSignal?.aborted, true, "the snapshot deadline must cancel its fetches");
+        assert.equal(maxConcurrent, 1, "fallback and reconnect snapshots must never overlap");
+    } finally {
+        stop();
+        globalThis.fetch = originalFetch;
+        delete globalThis.window;
+        delete globalThis.document;
+    }
+});
+
 test("stream reconnect obtains a fresh snapshot before subsequent deltas", async () => {
     const originalFetch=globalThis.fetch;
     globalThis.window={localStorage:{getItem:()=>"test"}};

@@ -138,18 +138,20 @@ export interface Pagination {
 
 /**
  * Fetch the aggregate health summary.
+ * @param signal Cancels the request when the caller's deadline fires
  * @returns Health counts for every monitor
  */
-export function fetchHealth(): Promise<{ ok: true; health: HealthSummary }> {
-    return request("/api/v1/health");
+export function fetchHealth(signal?: AbortSignal): Promise<{ ok: true; health: HealthSummary }> {
+    return request("/api/v1/health", { signal });
 }
 
 /**
  * Fetch monitors.
  * @param params Optional filters
+ * @param signal Cancels the request when the caller's deadline fires
  * @returns Monitors plus pagination metadata
  */
-export function fetchMonitors(params: { status?: string; q?: string; page?: number; perPage?: number } = {}): Promise<{
+export function fetchMonitors(params: { status?: string; q?: string; page?: number; perPage?: number } = {}, signal?: AbortSignal): Promise<{
     ok: true;
     count: number;
     monitors: MonitorSummary[];
@@ -163,14 +165,18 @@ export function fetchMonitors(params: { status?: string; q?: string; page?: numb
     }
 
     const suffix = query.toString() ? `?${query.toString()}` : "";
-    return request(`/api/v1/monitors${suffix}`);
+    return request(`/api/v1/monitors${suffix}`, { signal });
 }
 
-/** Roster snapshots are infrequent; never silently truncate a larger fleet. */
-export async function fetchAllMonitors(): Promise<MonitorSummary[]> {
+/**
+ * Roster snapshots are infrequent; never silently truncate a larger fleet.
+ * @param signal Cancels the paging loop when the caller's deadline fires
+ * @returns Every monitor
+ */
+export async function fetchAllMonitors(signal?: AbortSignal): Promise<MonitorSummary[]> {
     const monitors: MonitorSummary[] = [];
     for (let page = 1; ; page++) {
-        const result = await fetchMonitors({ page, perPage: 200 });
+        const result = await fetchMonitors({ page, perPage: 200 }, signal);
         monitors.push(...result.monitors);
         if (!result.pagination.hasMore) { return monitors; }
     }
@@ -183,12 +189,22 @@ export type LiveEvent =
 /** Fetch-based SSE keeps credentials in Authorization, never URLs/cookies.
  * Reconnect resnapshots before applying buffered deltas, closing the race
  * between a REST snapshot and updates that arrive while it is loading.
+ *
+ * Snapshots run under their own deadline and never overlap: a roster or bulk
+ * request that never settles used to stall the stream reader (and the
+ * catch-path snapshot before it) forever, leaving `connected` true, no error
+ * callback and no fallback polling — the audit's reproduction. Recovery now
+ * schedules the reconnect independently of snapshot completion.
  */
 export function watchLive(options: {
     metrics?: boolean;
-    snapshot: () => Promise<void>;
+    snapshot: (signal?: AbortSignal) => Promise<void>;
     event: (event: LiveEvent) => void;
     error: (error: Error) => void;
+    /** Deadline for one snapshot; overridable for tests. */
+    snapshotTimeoutMs?: number;
+    /** Abort the stream after this much silence; overridable for tests. */
+    watchdogMs?: number;
 }): () => void {
     let stopped = false;
     let controller: AbortController | null = null;
@@ -196,12 +212,69 @@ export function watchLive(options: {
     let delay = 1000;
     let connected = false;
     let generation = 0;
+
+    /** A hung snapshot must be abandoned, not awaited forever. */
+    const SNAPSHOT_DEADLINE_MS = options.snapshotTimeoutMs ?? 15_000;
+    /** Silence that means the stream is dead even if the socket is not. */
+    const STREAM_WATCHDOG_MS = options.watchdogMs ?? 45_000;
+    let snapshotAbort: AbortController | null = null;
+    let snapshotInFlight: Promise<void> | null = null;
+
+    /**
+     * Run the snapshot under a deadline, refusing to overlap an in-flight
+     * one. The abort signal is passed to the snapshot so its fetches are
+     * actually cancelled, not just abandoned.
+     * @returns Resolves when the snapshot finished; rejects on failure
+     */
+    function runSnapshot(): Promise<void> {
+        if (snapshotInFlight) {
+            return snapshotInFlight;
+        }
+        const abort = new AbortController();
+        snapshotAbort = abort;
+        const deadline = setTimeout(() => abort.abort(new Error("Snapshot timed out")), SNAPSHOT_DEADLINE_MS);
+        const inflight = Promise.resolve()
+            .then(() => options.snapshot(abort.signal))
+            .finally(() => {
+                clearTimeout(deadline);
+                if (snapshotAbort === abort) { snapshotAbort = null; }
+                snapshotInFlight = null;
+            });
+        snapshotInFlight = inflight;
+        return inflight;
+    }
+
+    /**
+     * Await the snapshot, but give up as soon as the stream itself is dead.
+     *
+     * A snapshot that outlives its stream is re-joined by the reconnect
+     * handler (snapshots never overlap), so the reader must not sit on it:
+     * recovery is a property of the stream, not of the snapshot.
+     * @param promise Snapshot in flight
+     * @param signal The stream's abort signal
+     * @returns The snapshot's result, or a rejection once the stream dies
+     */
+    function untilStreamDies<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            const onAbort = () => reject(new Error("Live stream aborted while snapshotting"));
+            if (signal.aborted) {
+                onAbort();
+                return;
+            }
+            signal.addEventListener("abort", onAbort, { once: true });
+            promise.then(
+                value => { signal.removeEventListener("abort", onAbort); resolve(value); },
+                error => { signal.removeEventListener("abort", onAbort); reject(error); }
+            );
+        });
+    }
+
     async function connect() {
         if (stopped) { return; }
         const epoch = ++generation;
         controller = new AbortController();
         const currentController = controller;
-        let watchdog = setTimeout(() => currentController.abort(), 45_000);
+        let watchdog = setTimeout(() => currentController.abort(), STREAM_WATCHDOG_MS);
         try {
             const token = getToken();
             const response = await fetch(`${BASE}/api/v1/events${options.metrics === false ? "?metrics=0" : ""}`, {
@@ -220,7 +293,7 @@ export function watchLive(options: {
                 while (!stopped && epoch === generation) {
                     const chunk = await reader.read();
                     clearTimeout(watchdog);
-                    watchdog = setTimeout(() => currentController.abort(), 45_000);
+                    watchdog = setTimeout(() => currentController.abort(), STREAM_WATCHDOG_MS);
                     if (chunk.done) { throw new Error("Live connection closed; reconnecting"); }
                     buffer += decoder.decode(chunk.value, { stream: true }).replace(/\r/g, "");
                     if (buffer.length > 1024 * 1024) { throw new Error("Live frame exceeds limit"); }
@@ -234,7 +307,7 @@ export function watchLive(options: {
                         const event = JSON.parse(data);
                         if (event.type === "unauthorized") { throw new ApiError(401, "unauthorized", "Live token expired or revoked"); }
                         if (event.type === "ready" || event.type === "invalidate") {
-                            await options.snapshot();
+                            await untilStreamDies(runSnapshot(), currentController.signal);
                             delay = 1000;
                         } else if ((event.type === "metrics" || event.type === "heartbeat") && !stopped && epoch === generation) {
                             options.event(event);
@@ -255,19 +328,22 @@ export function watchLive(options: {
                 clearInterval(fallback);
                 return;
             }
-            try { await options.snapshot(); } catch { /* reconnect retries the snapshot */ }
-            if (stopped || epoch !== generation) { return; }
+            // Recover on a timer that does not depend on the snapshot: the
+            // snapshot is bounded and coalesced, and the reconnect's own
+            // reader awaits it before applying deltas anyway.
             retry = setTimeout(() => void connect(), delay + Math.random() * 500);
             delay = Math.min(15_000, delay * 2);
+            void runSnapshot().catch(() => { /* reconnect retries the snapshot */ });
         } finally {
             clearTimeout(watchdog);
         }
     }
     // Compatibility fallback while a proxy/server cannot stream. Never poll
-    // whole rosters while the live connection is healthy.
+    // whole rosters while the live connection is healthy, and never stack
+    // snapshots: runSnapshot coalesces them and bounds each one.
     const fallback = setInterval(() => {
         if (!stopped && !connected && !document.hidden) {
-            void options.snapshot().catch(error => options.error(error));
+            void runSnapshot().catch(error => options.error(error));
         }
     }, 30_000);
     void connect();
@@ -275,6 +351,7 @@ export function watchLive(options: {
         stopped = true;
         generation++;
         controller?.abort();
+        snapshotAbort?.abort();
         clearTimeout(retry);
         clearInterval(fallback);
     };
@@ -325,9 +402,12 @@ export function fetchMonitorTypes(): Promise<{
 
 /**
  * Fetch a single monitor with full detail.
+ * @param id Monitor id
+ * @param signal Cancels the request when the caller's deadline fires
+ * @returns The monitor's full record
  */
-export function fetchMonitor(id: number): Promise<{ ok: true; monitor: MonitorSummary & Record<string, unknown> }> {
-    return request(`/api/v1/monitors/${id}`);
+export function fetchMonitor(id: number, signal?: AbortSignal): Promise<{ ok: true; monitor: MonitorSummary & Record<string, unknown> }> {
+    return request(`/api/v1/monitors/${id}`, { signal });
 }
 
 /**
@@ -463,14 +543,15 @@ export function fetchMetricsHistory(id: number, hours: number, signal?: AbortSig
  * Unknown ids and monitors without samples come back as null entries, which
  * is how the Superboard discovers servers without paying a request per id.
  * @param ids Monitor ids (max 200)
+ * @param signal Cancels the request when the caller's deadline fires
  * @returns Samples keyed by monitor id, null where missing
  */
-export function fetchLatestMetricsBulk(ids: number[]): Promise<{
+export function fetchLatestMetricsBulk(ids: number[], signal?: AbortSignal): Promise<{
     ok: true;
     count: number;
     samples: Record<number, { time: string; metrics: MetricsPayload; cpuPeak10m?: CPUPeak | null } | null>;
 }> {
-    return request(`/api/v1/monitors/metrics/latest?ids=${ids.join(",")}`);
+    return request(`/api/v1/monitors/metrics/latest?ids=${ids.join(",")}`, { signal });
 }
 
 export interface ApiKeySummary {

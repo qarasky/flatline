@@ -15,9 +15,10 @@ export interface HeartbeatEntry {
  * Fetch recent heartbeats for a monitor.
  * @param id Monitor id
  * @param limit How many to take
+ * @param signal Cancels the request when the caller's deadline fires
  * @returns Heartbeats newest first, plus the total
  */
-async function fetchHeartbeats(id: number, limit = 120): Promise<{ heartbeats: HeartbeatEntry[]; total: number }> {
+async function fetchHeartbeats(id: number, limit = 120, signal?: AbortSignal): Promise<{ heartbeats: HeartbeatEntry[]; total: number }> {
     const token = window.localStorage.getItem("flatline.token");
     const base = (import.meta.env.VITE_FLATLINE_URL as string | undefined) ?? "";
     const response = await fetch(`${base}/api/v1/monitors/${id}/heartbeats?limit=${limit}`, {
@@ -25,6 +26,7 @@ async function fetchHeartbeats(id: number, limit = 120): Promise<{ heartbeats: H
             Accept: "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        signal,
     });
 
     if (!response.ok) {
@@ -172,9 +174,9 @@ export function MonitorDetail({
     useEffect(() => {
         let cancelled = false;
 
-        async function load() {
+        async function load(signal?: AbortSignal) {
             try {
-                const [ m, h ] = await Promise.all([ fetchMonitor(id), fetchHeartbeats(id) ]);
+                const [ m, h ] = await Promise.all([ fetchMonitor(id, signal), fetchHeartbeats(id, 120, signal) ]);
                 if (cancelled) {
                     return;
                 }

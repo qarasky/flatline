@@ -617,10 +617,10 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
     const [agentsOpen, setAgentsOpen] = useState(false);
     const [usersOpen, setUsersOpen] = useState(false);
 
-    const load = useCallback(async (strict = false) => {
+    const load = useCallback(async (strict = false, signal?: AbortSignal) => {
         const epoch = ++loadEpoch.current;
         try {
-            const next = await fetchAllMonitors();
+            const next = await fetchAllMonitors(signal);
             if (epoch !== loadEpoch.current) { return; }
             setMonitors(next);
             setRosterLoaded(true);
@@ -645,7 +645,7 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
 
         const stop = watchLive({
             metrics: false,
-            snapshot: () => load(true),
+            snapshot: signal => load(true, signal),
             event: event => {
                 if (event.type !== "heartbeat") { return; }
                 setMonitors(previous => previous.map(monitor => monitor.id === event.monitorId ? { ...monitor, ...event.patch } : monitor));
