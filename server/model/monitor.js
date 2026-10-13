@@ -464,11 +464,9 @@ class Monitor extends BeanModel {
                 bean.status = flipStatus(bean.status);
             }
 
-            // Runtime patch timeout if it is 0
-            // See https://github.com/louislam/uptime-kuma/pull/3961#issuecomment-1804149144
-            if (!this.timeout || this.timeout <= 0) {
-                this.timeout = this.interval * 1000 * 0.8;
-            }
+            // Runtime patch for legacy rows whose timeout is 0 (see
+            // https://github.com/louislam/uptime-kuma/pull/3961#issuecomment-1804149144).
+            Monitor.ensureTimeout(this);
 
             try {
                 if (await Monitor.isUnderMaintenance(this.id)) {
@@ -1202,6 +1200,28 @@ class Monitor extends BeanModel {
                 throw error;
             }
         }
+    }
+
+    /**
+     * Normalize a legacy zero/missing timeout, in place.
+     *
+     * Old rows can carry timeout 0 (created before the column was
+     * meaningful). The fallback is 80% of the interval in *seconds*:
+     * consumers (axios options, abort signals, database deadlines) multiply
+     * by 1000 themselves, and the old fallback multiplied twice — a 60s
+     * interval produced a 48,000s timeout, roughly 13 hours, instead of 48
+     * seconds, so a failing check could be held for hours.
+     * @param {Monitor} monitor Monitor bean to normalize
+     * @returns {Monitor} The same monitor
+     */
+    static ensureTimeout(monitor) {
+        if (!monitor.timeout || monitor.timeout <= 0) {
+            const interval = Number(monitor.interval);
+            monitor.timeout = Number.isFinite(interval) && interval > 0
+                ? Math.max(1, Math.floor(interval * 0.8))
+                : 48;
+        }
+        return monitor;
     }
 
     /**
