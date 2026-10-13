@@ -4,6 +4,18 @@ const { HttpProxyAgent } = require("http-proxy-agent");
 const { HttpsProxyAgent } = require("https-proxy-agent");
 const { SocksProxyAgent } = require("socks-proxy-agent");
 
+/**
+ * Default delivery deadline for notification HTTP requests, in ms.
+ *
+ * Axios ships with `timeout: 0`, which means no deadline at all: a provider
+ * endpoint or proxy that accepts the connection without answering would hang
+ * delivery forever (the audit reproduced exactly that with Telegram). One
+ * notification is worth this much; past it the failure is reported like any
+ * other delivery failure.
+ * @type {number}
+ */
+const DEFAULT_NOTIFICATION_TIMEOUT_MS = 30_000;
+
 class NotificationProvider {
     /**
      * Notification Provider Name
@@ -175,10 +187,18 @@ class NotificationProvider {
 
     /**
      * Returns axios config with proxy agent if proxy env is set.
+     *
+     * Also guarantees a delivery deadline: axios' default of `timeout: 0`
+     * means "wait forever", and a notification request that never settles
+     * must not park the caller. Callers can override the deadline.
      * @param {object} axiosConfig - Axios config containing params
      * @returns {object} Axios config
      */
     getAxiosConfigWithProxy(axiosConfig = {}) {
+        if (axiosConfig.timeout === undefined || axiosConfig.timeout === 0) {
+            axiosConfig.timeout = DEFAULT_NOTIFICATION_TIMEOUT_MS;
+        }
+
         const proxyEnv = process.env.notification_proxy || process.env.NOTIFICATION_PROXY;
         if (proxyEnv) {
             const proxyUrl = new URL(proxyEnv);

@@ -1,5 +1,6 @@
 const { log } = require("../src/util");
 const { Notification } = require("./notification");
+const { enqueueNotification } = require("./notification-queue");
 const Monitor = require("./model/monitor");
 
 /**
@@ -258,11 +259,12 @@ async function sendMetricNotification(monitor, message, detail) {
     const monitorJSON = { id: monitor.id, name: monitor.name, active: monitor.active };
 
     for (const notification of notificationList) {
-        try {
-            await Notification.send(JSON.parse(notification.config), message, monitorJSON, heartbeatJSON);
-        } catch (e) {
-            log.error("metric-alerts", `Cannot send metric alert to ${notification.name}: ${e.message}`);
-        }
+        // Queued, not awaited: the alert evaluation must not park on a hung
+        // provider (see notification-queue.js).
+        const config = JSON.parse(notification.config);
+        enqueueNotification(`${notification.name} (${monitor.name})`, async () => {
+            await Notification.send(config, message, monitorJSON, heartbeatJSON);
+        });
     }
 }
 

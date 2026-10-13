@@ -99,6 +99,12 @@ class Telegram extends NotificationProvider {
                 }
             }
 
+            // Bounded delivery deadline: axios's installed default is
+            // `timeout: 0` (no deadline at all), so a Telegram endpoint or
+            // proxy that accepts the connection and never answers would hang
+            // delivery — and everything that awaited it — forever. The
+            // default is applied by getAxiosConfigWithProxy unless a caller
+            // overrides it.
             let config = this.getAxiosConfigWithProxy();
 
             await axios.post(`${url}/bot${notification.telegramBotToken}/sendMessage`, params, config);

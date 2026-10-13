@@ -44,6 +44,7 @@ const {
 const { R } = require("redbean-node");
 const { BeanModel } = require("redbean-node/dist/bean-model");
 const { Notification } = require("../notification");
+const { enqueueNotification } = require("../notification-queue");
 const { Proxy } = require("../proxy");
 const { demoMode } = require("../config");
 const version = require("../../package.json").version;
@@ -1434,18 +1435,36 @@ class Monitor extends BeanModel {
                 }
             }
 
-            for (let notification of notificationList) {
-                try {
-                    await Notification.send(
-                        JSON.parse(notification.config),
-                        msg,
-                        monitor.toJSON(preloadData, false),
-                        heartbeatJSON
-                    );
-                } catch (e) {
-                    log.error("monitor", "Cannot send notification to " + notification.name);
-                    log.error("monitor", e);
-                }
+            // Snapshot what the providers need now, exactly as the awaited
+            // version did: the queued task must only perform the delivery.
+            let monitorJSON = null;
+            let configs = [];
+            try {
+                monitorJSON = monitor.toJSON(preloadData, false);
+                configs = notificationList.map((notification) => ({
+                    name: notification.name,
+                    config: JSON.parse(notification.config),
+                }));
+            } catch (e) {
+                log.error("monitor", "Cannot prepare notification payload: " + e.message);
+                configs = [];
+            }
+
+            for (const item of configs) {
+                // Queue the delivery instead of awaiting it: a provider that
+                // accepts the connection and never answers must not hold the
+                // beat path (and with it heartbeat persistence, uptime and
+                // the next scheduled check) open. The queue is bounded and
+                // deliveries keep their order.
+                enqueueNotification(`${item.name} (${monitor.name})`, async () => {
+                    try {
+                        await Notification.send(item.config, msg, monitorJSON, heartbeatJSON);
+                    } catch (e) {
+                        log.error("monitor", "Cannot send notification to " + item.name);
+                        log.error("monitor", e);
+                        throw e;
+                    }
+                });
             }
         }
     }
