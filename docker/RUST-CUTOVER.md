@@ -165,8 +165,11 @@ takes the Node stack to come back.
 
 - Delete `data/kuma-pre-rust.db` once satisfied (it is a full copy of
   production).
-- The Rust backend prunes raw metrics at 30 days and rolls up hourly
-  buckets at :12; no cron or external scheduler is needed.
+- The Rust backend prunes raw metrics at 30 days, rolls up hourly
+  buckets at :12, and prunes heartbeats older than 90 days (startup and
+  daily at 04:32 UTC, keeping one boundary sample per monitor so uptime
+  across the cut stays honest). No cron or external scheduler is needed;
+  `FLATLINE_HEARTBEAT_RETENTION_DAYS=0` keeps heartbeats forever.
 - Logs: `sudo docker logs -f flatline-rust-flatline-1` (the Rust project
   is named `flatline-rust`; the retired Node container was
   `flatline-flatline-1`).

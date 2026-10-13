@@ -18,6 +18,14 @@ pub struct Config {
     /// Directory holding the agent binaries, `VERSION` and `sha256sums`
     /// served under `/agent/*`.
     pub agent_dir: PathBuf,
+    /// How long heartbeats are kept, in days. 0 keeps them forever.
+    ///
+    /// Every check writes a heartbeat row, so without retention a monitor's
+    /// history grows without bound (about 1.58M rows per monitor per year at
+    /// a 20s interval). The read paths stay inside the window: uptime
+    /// windows are at most 30 days, badges and status pages use 24h, and the
+    /// heartbeat list is capped by its `limit`.
+    pub heartbeat_retention_days: i64,
 }
 
 impl Config {
@@ -48,6 +56,13 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/app/agent"));
 
+        // Negative values are meaningless; treat them as the default.
+        let heartbeat_retention_days = std::env::var("FLATLINE_HEARTBEAT_RETENTION_DAYS")
+            .ok()
+            .and_then(|value| value.trim().parse::<i64>().ok())
+            .filter(|days| *days >= 0)
+            .unwrap_or(crate::heartbeats::DEFAULT_RETENTION_DAYS);
+
         Self {
             data_dir,
             port,
@@ -55,6 +70,7 @@ impl Config {
             web_dist,
             public_url,
             agent_dir,
+            heartbeat_retention_days,
         }
     }
 }

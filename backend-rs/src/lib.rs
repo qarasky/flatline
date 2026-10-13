@@ -73,7 +73,9 @@ pub async fn run() -> anyhow::Result<()> {
 
     let state = build_state(config).await?;
     state.engine.start_all().await;
-    state.metrics.start_jobs();
+    state
+        .metrics
+        .start_jobs(state.config.heartbeat_retention_days);
 
     let listener = tokio::net::TcpListener::bind(&address).await?;
     tracing::info!("flatline-rs listening on {address}");

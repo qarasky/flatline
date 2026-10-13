@@ -114,8 +114,12 @@ impl Metrics {
     }
 
     /// Background jobs: hourly rollups at :12 past the hour, raw prune daily
-    /// at 04:27 UTC — the same schedule the Node cron uses.
-    pub fn start_jobs(self: &Arc<Self>) {
+    /// at 04:27 UTC — the same schedule the Node cron uses — and heartbeat
+    /// retention once at startup and daily at 04:32.
+    ///
+    /// `heartbeat_retention_days` comes from the configuration; 0 keeps
+    /// heartbeats forever.
+    pub fn start_jobs(self: &Arc<Self>, heartbeat_retention_days: i64) {
         let metrics = Arc::clone(self);
         tokio::spawn(async move {
             loop {
@@ -144,6 +148,25 @@ impl Metrics {
                     Ok(_) => {}
                     Err(error) => tracing::error!("raw metrics prune failed: {error}"),
                 }
+            }
+        });
+
+        // Heartbeats grow with every check and had no retention at all. The
+        // first pass runs at startup (an imported database can carry years),
+        // then daily just after the raw metrics prune.
+        let metrics = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                match crate::heartbeats::prune(&metrics.pool, heartbeat_retention_days).await {
+                    Ok(deleted) if deleted > 0 => {
+                        tracing::info!(
+                            "pruned {deleted} heartbeats older than {heartbeat_retention_days} days"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => tracing::error!("heartbeat prune failed: {error}"),
+                }
+                sleep_until(next_daily_at(Utc::now(), 4, 32)).await;
             }
         });
     }

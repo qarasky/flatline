@@ -78,6 +78,55 @@ pub async fn latest(pool: &SqlitePool, monitor_id: i64) -> sqlx::Result<Option<B
     .await
 }
 
+/// How long heartbeats are kept by default, in days.
+///
+/// Every completed check writes a row, so a long-lived monitor grows its
+/// history without bound (about 1.58M rows per monitor per year at a 20s
+/// interval). Every read path stays inside this window: uptime windows are
+/// at most 30 days, badges use 24h, status pages use 24h plus the incident
+/// history, and the heartbeat list is bounded by its `limit`. The value is
+/// configurable (`FLATLINE_HEARTBEAT_RETENTION_DAYS`, 0 disables pruning)
+/// for operators who want more raw history.
+pub const DEFAULT_RETENTION_DAYS: i64 = 90;
+
+/// Delete heartbeats older than the retention window, keeping one boundary
+/// sample per monitor.
+///
+/// The boundary sample — the newest beat before the cutoff — is what keeps
+/// time-weighted uptime honest: a window that starts before it still has a
+/// starting state to carry forward instead of a gap. Everything else older
+/// than the cutoff goes; state transitions inside the window stay, so the
+/// incident history matches the retained period. `retention_days <= 0`
+/// disables pruning entirely.
+pub async fn prune(pool: &SqlitePool, retention_days: i64) -> sqlx::Result<u64> {
+    if retention_days <= 0 {
+        return Ok(0);
+    }
+
+    let cutoff = (Utc::now() - ChronoDuration::days(retention_days))
+        .format("%Y-%m-%d %H:%M:%S%.3f")
+        .to_string();
+
+    let result = sqlx::query(
+        "DELETE FROM heartbeats
+         WHERE time < ?
+           AND id NOT IN (
+               SELECT id FROM (
+                   SELECT id, ROW_NUMBER() OVER (
+                       PARTITION BY monitor_id ORDER BY time DESC, id DESC
+                   ) AS rn
+                   FROM heartbeats WHERE time < ?
+               ) WHERE rn = 1
+           )",
+    )
+    .bind(&cutoff)
+    .bind(&cutoff)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
 /// The status walk of the Node push route (`determineStatus`): requested is
 /// UP or DOWN as pushed; `explicit_down` bypasses the retry walk. Returns
 /// `(status, retries)`.
@@ -495,6 +544,86 @@ mod tests {
             .await
             .unwrap();
         assert!(!recorded.notify);
+    }
+
+    #[tokio::test]
+    async fn prune_keeps_recent_beats_and_one_boundary_sample() {
+        let pool = test_pool().await;
+        let monitor = insert_monitor(&pool).await;
+        let other = insert_monitor(&pool).await;
+
+        let now = Utc::now();
+        let stamp = |seconds_ago: i64| {
+            (now - ChronoDuration::seconds(seconds_ago))
+                .format("%Y-%m-%d %H:%M:%S%.3f")
+                .to_string()
+        };
+        let day = 24 * 3600;
+
+        // Two monitors, one with three beats older than the 90-day cutoff
+        // and a fresh one, one with two old beats (its newest old beat is its
+        // boundary and must survive too).
+        insert_beat(&pool, monitor.id, &stamp(100 * day), UP).await;
+        insert_beat(&pool, monitor.id, &stamp(95 * day), UP).await;
+        let boundary = {
+            sqlx::query_as::<_, Beat>(
+                "INSERT INTO heartbeats (monitor_id, time, status) VALUES (?, ?, ?) RETURNING *",
+            )
+            .bind(monitor.id)
+            .bind(stamp(92 * day))
+            .bind(DOWN)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        insert_beat(&pool, monitor.id, &stamp(day), UP).await;
+        insert_beat(&pool, other.id, &stamp(250 * day), UP).await;
+        insert_beat(&pool, other.id, &stamp(200 * day), DOWN).await;
+
+        let deleted = prune(&pool, 90).await.unwrap();
+        assert_eq!(deleted, 3, "old beats beyond the boundary are deleted");
+
+        let left: Vec<(i64, String)> =
+            sqlx::query_as("SELECT monitor_id, time FROM heartbeats ORDER BY time")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(left.len(), 3);
+        // The newest pre-cutoff beat of each monitor survives: the starting
+        // state a window reaching past the cutoff carries forward.
+        assert!(
+            left.iter()
+                .any(|(id, time)| *id == monitor.id && *time == boundary.time)
+        );
+        assert!(
+            left.iter()
+                .any(|(id, time)| *id == other.id && *time == stamp(200 * day))
+        );
+        assert!(
+            left.iter()
+                .any(|(id, time)| *id == monitor.id && *time == stamp(day)),
+            "beats inside the retention window survive"
+        );
+
+        // The boundary sample keeps time-weighted uptime honest across the
+        // cut: the DOWN that was current when the window started still counts
+        // (29 days down, then 1 day up -> ~3.3%), instead of the window
+        // silently starting at the first retained beat and reporting a
+        // misleading 100%.
+        let uptime = uptime_window(&pool, monitor.id, 30 * day).await.unwrap();
+        let ratio = uptime.expect("retained beats cover the window");
+        assert!(
+            (ratio - 1.0 / 30.0).abs() < 0.01,
+            "expected ~0.033 from the boundary DOWN, got {ratio}"
+        );
+
+        // Zero retention means "keep everything".
+        assert_eq!(prune(&pool, 0).await.unwrap(), 0);
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM heartbeats")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 3);
     }
 
     #[tokio::test]
