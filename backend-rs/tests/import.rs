@@ -92,6 +92,12 @@ async fn old_database(path: &Path) -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    // A legacy row with timeout 0: the importer normalizes it to 80% of the
+    // interval, like the Node migration and runtime patch do.
+    sqlx::query("INSERT INTO monitor (id, name, type, active, interval, timeout) VALUES (55, 'legacy-zero', 'push', 1, 60, 0)")
+        .execute(&pool)
+        .await
+        .unwrap();
 
     for (monitor_id, status, ping) in [
         (8_i64, 1_i64, Some(42.0_f64)),
@@ -181,7 +187,7 @@ async fn imports_the_production_shape() {
     let data_dir = dir.path().join("data");
     let report = import::run(&old_path, &data_dir, false).await.unwrap();
 
-    assert_eq!(report.monitors, 4, "http + push + group + ping");
+    assert_eq!(report.monitors, 5, "http + push + group + ping + legacy zero-timeout");
     assert!(
         report.skipped_monitors.is_empty(),
         "{:?}",
@@ -232,6 +238,14 @@ async fn imports_the_production_shape() {
         .unwrap();
     assert_eq!(push_token, "e3STnnoFE_UMX1h6N1o7REA_THF9IIxL");
 
+    // A zero timeout imports as 80% of the interval in seconds, never as
+    // milliseconds or zero.
+    let legacy_timeout: i64 = sqlx::query_scalar("SELECT timeout FROM monitors WHERE id = 55")
+        .fetch_one(&new)
+        .await
+        .unwrap();
+    assert_eq!(legacy_timeout, 48);
+
     // Imported API keys still verify through the real auth path.
     assert!(auth::verify_token(&new, "uk7_secret").await);
     assert!(!auth::verify_token(&new, "wrong").await);
@@ -262,12 +276,12 @@ async fn imports_the_production_shape() {
     // Re-running without --force refuses; --force wipes and re-imports.
     assert!(import::run(&old_path, &data_dir, false).await.is_err());
     let second = import::run(&old_path, &data_dir, true).await.unwrap();
-    assert_eq!(second.monitors, 4);
+    assert_eq!(second.monitors, 5);
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM monitors")
         .fetch_one(&new)
         .await
         .unwrap();
-    assert_eq!(count, 4, "no duplicates after --force");
+    assert_eq!(count, 5, "no duplicates after --force");
 
     // The old database was opened read-only and never modified.
     let old_again = SqlitePoolOptions::new()
@@ -283,5 +297,5 @@ async fn imports_the_production_shape() {
         .fetch_one(&old_again)
         .await
         .unwrap();
-    assert_eq!(monitors, 4);
+    assert_eq!(monitors, 5);
 }

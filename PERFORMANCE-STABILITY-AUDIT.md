@@ -177,3 +177,37 @@ Validation performed:
 Existing tests passing does not contradict these findings: the isolated cases expose missing coverage for multi-monitor/older rollups, rejected buffered heads, hanging operations, and concurrent ingestion. Container-backed monitor integration tests, a full Docker image build, and production/fleet load tests were not run. Benchmark timings above are small local fixtures. Application source was not changed by this audit.
 
 Suggested implementation order: repair rollup completeness first while raw evidence still exists; fix buffered rejection handling and bounded check/notification/snapshot recovery next; then address leaks, retention/query scaling, and alert semantics. Each fix should add a regression test for the specific failing scenario rather than only the existing happy path.
+
+---
+
+# Resolution — 2026-10-14
+
+All 17 findings are fixed, one commit each, in the suggested order. Every
+commit adds a regression test for its failing scenario; new tests fail on the
+pre-fix code (verified where the failure is deterministic).
+
+| # | Commit | Summary |
+|---|---|---|
+| 1 | `8405901d` | Rollups judge coverage per (monitor, hour) from the raw counts; late samples leave dirty-hour markers; a repair pass runs before the raw prune. New `monitor_metric_rollup_dirty` / `metrics_rollup_dirty` tables and a time-leading raw index in both backends. |
+| 2 | `8f3185c8` | The Go agent classifies push failures: 400/413 are quarantined (`buffer/quarantine/`, newest 20 kept) and counted, 404/401/403 keep the backlog and log visibly, transient errors keep retrying. |
+| 3 | `ecbf397a` | Postgres gets connection/query deadlines and always releases its client; gRPC calls carry a real deadline (cancelling the RPC) plus a settle backstop. |
+| 4 | `c5a8a460` | Notification delivery is a bounded in-order queue; the beat path persists the heartbeat independently of delivery; axios requests carry a 30s deadline. |
+| 5 | `2e3ca665` | Dashboard snapshots get deadlines and cancellation, snapshots are coalesced, and stream recovery no longer depends on snapshot completion. |
+| 6 | `26a2d02f` | Docker entries with empty `Names` or short ids degrade instead of panicking; collector panics are contained and counted. |
+| 7 | `f8385d8c` | MongoDB clients close in a `finally`; selection and command are bounded by the monitor timeout. |
+| 8 | `94b6660a` | gRPC clients are closed after every check (success, failure, timeout). |
+| 9 | `52f4f1d0` | Heartbeat retention job (default 90 days, `FLATLINE_HEARTBEAT_RETENTION_DAYS`, 0 = keep) preserving one boundary sample per monitor. |
+| 10 | `028be9ab` | Latest heartbeats come from per-monitor indexed `LIMIT 1` lookups (103ms → 0.08ms on a 100k-row fixture) instead of a ranked scan. |
+| 11 | `ea28086c` | Rollup chunks are bounded in elapsed time (a gap splits them) and folded page by page (5000 rows/query) with incremental min/max/sum/count accumulators. |
+| 12 | `19a530ad` | Ingestion is serialized per monitor in both backends, so the 30s archive gate holds under concurrency. |
+| 13 | `2203c8cd` | Pre-alert sub-threshold time restarts the debounce; an observation gap longer than three monitor intervals (min 3 minutes) breaks continuity; hysteresis applies once alerted. |
+| 14 | `18ec501a` | Samples older than two monitor intervals (min 60s) are archived but pause the debounce instead of alerting/recovering; live readings resume it. |
+| 15 | `006854bf` | The dashboard keeps a session copy of the token; storage failures only cost persistence. Logout clears both. |
+| 16 | `39d9c8b4` | The legacy zero-timeout fallback assigns seconds (`interval * 0.8`, default 48); a migration normalizes stored zero/NULL rows. |
+| 17 | `7e100bb8` | Rust check/group/push loops schedule from the check start on a monotonic clock, with a 1ms floor and no overlapping checks. |
+
+Verification after the fixes: Node backend suite (`npm test`), Rust
+(`cargo test --locked`, 103 tests), Go (`go test -race -count=1 ./...`),
+dashboard (`node --test apps/dashboard/test/*.test.mjs`, 28 tests), and
+dashboard typecheck all pass. `npm run lint` reports only pre-existing
+warnings/errors in untouched files.

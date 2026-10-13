@@ -310,6 +310,17 @@ async fn import_monitors(
                 "monitor {id} ({name}): no accepted-status-codes column found; defaulted to 200-299"
             ));
         }
+        // Legacy rows can carry timeout 0 (created before the column was
+        // meaningful). The Node runtime patches that in memory to 80% of the
+        // interval in seconds, and its migration normalizes the stored value;
+        // import the same number so the API, the dashboard and the engine
+        // agree.
+        let interval = int_or(row, &cols, "interval", 60);
+        let timeout = match int_or(row, &cols, "timeout", 0) {
+            value if value > 0 => value,
+            _ => ((interval as f64) * 0.8).floor().max(1.0) as i64,
+        };
+
         // Parents are set in a second pass: children routinely have lower
         // ids than the group they hang under.
         sqlx::query(
@@ -326,10 +337,10 @@ async fn import_monitors(
         .bind(kind)
         .bind(int_or(row, &cols, "active", 1))
         .bind(text(row, &cols, "description"))
-        .bind(int_or(row, &cols, "interval", 60))
+        .bind(interval)
         .bind(int_or(row, &cols, "retry_interval", 60))
         .bind(int_or(row, &cols, "maxretries", 0))
-        .bind(int_or(row, &cols, "timeout", 48))
+        .bind(timeout)
         .bind(int_or(row, &cols, "resend_interval", 0))
         .bind(int_or(row, &cols, "upside_down", 0))
         .bind(Option::<i64>::None)
