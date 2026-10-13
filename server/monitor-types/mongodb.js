@@ -1,4 +1,4 @@
-const { MonitorType } = require("./monitor-type");
+const { MonitorType, operationTimeoutMs } = require("./monitor-type");
 const { UP } = require("../../src/util");
 const { MongoClient } = require("mongodb");
 const jsonata = require("jsonata");
@@ -15,7 +15,11 @@ class MongodbMonitorType extends MonitorType {
             command = JSON.parse(monitor.databaseQuery);
         }
 
-        let result = await this.runMongodbCommand(monitor.databaseConnectionString, command);
+        let result = await this.runMongodbCommand(
+            monitor.databaseConnectionString,
+            command,
+            operationTimeoutMs(monitor)
+        );
 
         if (result["ok"] !== 1) {
             throw new Error("MongoDB command failed");
@@ -49,16 +53,29 @@ class MongodbMonitorType extends MonitorType {
     }
 
     /**
-     * Connect to and run MongoDB command on a MongoDB database
+     * Connect to and run one command on a MongoDB database.
+     *
+     * The client is always closed, whatever the command does: a failed
+     * command used to skip close(), so every retry leaked a connected
+     * client with its pool and background activity. Selection and command
+     * timeouts come from the monitor timeout, so an unresponsive server
+     * cannot park the monitor loop either.
      * @param {string} connectionString The database connection string
      * @param {object} command MongoDB command to run on the database
+     * @param {number} timeoutMs Connection/selection/command deadline
      * @returns {Promise<(string[] | object[] | object)>} Response from server
      */
-    async runMongodbCommand(connectionString, command) {
-        let client = await MongoClient.connect(connectionString);
-        let result = await client.db().command(command);
-        await client.close();
-        return result;
+    async runMongodbCommand(connectionString, command, timeoutMs = undefined) {
+        const client = await MongoClient.connect(connectionString, {
+            serverSelectionTimeoutMS: timeoutMs,
+        });
+        try {
+            return await client.db().command(command, {
+                timeoutMS: timeoutMs,
+            });
+        } finally {
+            await client.close();
+        }
     }
 }
 
