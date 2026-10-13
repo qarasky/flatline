@@ -11,22 +11,41 @@ const BASE = (import.meta.env?.VITE_FLATLINE_URL as string | undefined) ?? "";
 const TOKEN_KEY = "flatline.token";
 
 /**
- * Read the operator's token from local storage.
+ * Session copy of the token.
+ *
+ * Storage can be unavailable or fail (private mode, blocked third-party
+ * storage, quota/security errors). The token must still work for the current
+ * session in that case — login succeeded, so the operator is authenticated —
+ * so it lives in memory as the fallback, and storage is only the
+ * persistence layer.
+ */
+let memoryToken: string | null = null;
+
+/**
+ * Read the operator's token: storage when it answers, the session copy
+ * otherwise.
  * @returns The token, or null
  */
 export function getToken(): string | null {
     try {
-        return window.localStorage.getItem(TOKEN_KEY);
+        const stored = window.localStorage.getItem(TOKEN_KEY);
+        if (stored !== null) {
+            // Keep the session copy warm for a later storage failure.
+            memoryToken = stored;
+            return stored;
+        }
     } catch {
-        return null;
+        // Storage unavailable; fall through to the session copy.
     }
+    return memoryToken;
 }
 
 /**
- * Persist the operator's token.
+ * Persist the operator's token and remember it for this session.
  * @param token Token to store, or null to forget it
  */
 export function setToken(token: string | null): void {
+    memoryToken = token;
     try {
         if (token) {
             window.localStorage.setItem(TOKEN_KEY, token);
@@ -34,8 +53,8 @@ export function setToken(token: string | null): void {
             window.localStorage.removeItem(TOKEN_KEY);
         }
     } catch {
-        // Storage can be unavailable (private mode); the app still works for
-        // the current session, the token just will not persist.
+        // Storage can be unavailable (private mode); the session continues
+        // on the in-memory copy, the token just will not persist.
     }
 }
 
