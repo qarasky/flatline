@@ -384,6 +384,107 @@ test("rollup work is bounded in elapsed time and rows", async (t) => {
     });
 });
 
+test("bucket integrity across the raw prune", async (t) => {
+    const { R } = require("redbean-node");
+    const { rollupMetrics, markRollupDirty, rawBoundaryHour, hourStart } = require("../../server/metrics-rollup");
+    let monitorID = 0;
+
+    t.before(async () => {
+        await testDb.create();
+        const { auth } = require("../../server/better-auth");
+        await auth();
+        await auth().api.createUser({
+            body: {
+                name: "admin", email: "admin@noreply.uptime-kuma.internal",
+                password: "Kuma-Test-8f4Q2xR9p", role: "admin", data: { username: "admin" },
+            },
+        });
+        const owner = await R.findOne("better_auth_user", " email = ? ", [ "admin@noreply.uptime-kuma.internal" ]);
+        const monitor = R.dispense("monitor");
+        monitor.user_id = owner.id;
+        monitor.name = "Integrity Host";
+        monitor.type = "push";
+        monitor.interval = 60;
+        monitor.retryInterval = 60;
+        monitor.timeout = 48;
+        monitor.active = 1;
+        await R.store(monitor);
+        monitorID = monitor.id;
+    });
+
+    t.after(async () => {
+        await testDb.destroy();
+    });
+
+    const insertRaw = async (monitorID: number, time: number, cpu: number) => {
+        const bean = R.dispense("monitor_metric");
+        bean.monitor_id = monitorID;
+        bean.time = sql(time);
+        bean.payload = JSON.stringify({ cpu: { percent: cpu }, mem: { percent: 50 } });
+        await R.store(bean);
+    };
+    const bucket = async (time: number) => R.getRow(
+        "SELECT samples, cpu_min, cpu_max, cpu_avg FROM monitor_metric_hourly WHERE monitor_id = ? AND time = ?",
+        [ monitorID, sql(time) ]);
+
+    await t.test("the raw prune removes whole hours, never half of one", async () => {
+        // The cutoff lands inside an hour; that hour must survive intact so
+        // its aggregate can never be rebuilt from a partial raw set.
+        const boundary = rawBoundaryHour(Date.now());
+        await insertRaw(monitorID, boundary + 60_000, 10);
+        await insertRaw(monitorID, boundary + 30 * 60_000, 20);
+        await insertRaw(monitorID, boundary - 3 * HOUR + 60_000, 30);
+
+        const { pruneMetrics } = require("../../server/monitor-metrics");
+        await pruneMetrics(30);
+
+        const kept = await R.getAll("SELECT time FROM monitor_metric WHERE monitor_id = ? ORDER BY time", [ monitorID ]);
+        assert.strictEqual(kept.length, 2, "both rows of the boundary hour survive");
+        assert.ok(kept.every((row: any) => Date.parse(row.time.replace(" ", "T") + "Z") >= boundary));
+    });
+
+    await t.test("a late sample never downgrades a bucket built from richer evidence", async () => {
+        // Reproduces the follow-up finding: an unaligned prune removed part of
+        // an hour's raw rows, then an accepted late sample marked it dirty and
+        // the rebuild replaced the complete bucket with a partial aggregate
+        // (peak 100 -> 0, mean 50 -> 0).
+        const now = Date.parse("2026-10-14T12:30:00Z");
+        // The hour the retention cutoff falls in: the only hour an unaligned
+        // prune could have split, and where a valid late sample can still land.
+        const hour = rawBoundaryHour(now);
+        await insertRaw(monitorID, hour + 60_000, 100);
+        await insertRaw(monitorID, hour + 30 * 60_000, 0);
+        await rollupMetrics(now);
+        assert.deepStrictEqual(await bucket(hour), { samples: 2, cpu_min: 0, cpu_max: 100, cpu_avg: 50 });
+
+        // A legacy unaligned prune: only the second row survives.
+        await R.exec("DELETE FROM monitor_metric WHERE monitor_id = ? AND time = ?", [ monitorID, sql(hour + 60_000) ]);
+        // And a late sample arrives for the same hour.
+        await insertRaw(monitorID, hour + 45 * 60_000, 0);
+        await markRollupDirty(monitorID, sql(hour + 45 * 60_000));
+
+        await rollupMetrics(now);
+        assert.deepStrictEqual(
+            await bucket(hour),
+            { samples: 2, cpu_min: 0, cpu_max: 100, cpu_avg: 50 },
+            "the complete bucket must not be replaced by a partial rebuild");
+        assert.strictEqual((await R.getAll("SELECT * FROM monitor_metric_rollup_dirty")).length, 0, "marker consumed");
+    });
+
+    await t.test("an old hour with no bucket is still folded from its survivors", async () => {
+        // Below the boundary an existing bucket is protected, but a missing
+        // one must still be built: those raw rows would otherwise never be
+        // folded and never prunable.
+        const now = Date.parse("2026-10-14T12:30:00Z");
+        const hour = hourStart(now) - 31 * 24 * HOUR;
+        await insertRaw(monitorID, hour + 5 * 60_000, 42);
+
+        const result = await rollupMetrics(now);
+        assert.ok(result.rolledUp >= 1, "the orphan hour folds");
+        assert.strictEqual((await bucket(hour)).cpu_avg, 42);
+    });
+});
+
 test("summary reads the long tier beyond a week", async (t) => {
     const express = require("express");
     const { R } = require("redbean-node");

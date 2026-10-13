@@ -55,6 +55,17 @@ pub fn hour_start(ms: i64) -> i64 {
     ms.div_euclid(3_600_000) * 3_600_000
 }
 
+/// The oldest hour that still has complete raw evidence.
+///
+/// Raw pruning removes whole hours (see [`prune_raw`]), so every hour at or
+/// after this boundary is untouched and therefore complete; only such hours
+/// may be (re)folded from raw rows. The boundary hour itself is the one an
+/// unaligned prune could have split before that rule existed, so an existing
+/// bucket there is kept rather than rebuilt from the survivors.
+pub fn raw_boundary_hour(now_ms: i64) -> i64 {
+    hour_start(now_ms - crate::metrics::METRICS_RETENTION_DAYS * 24 * 3_600_000)
+}
+
 /// One (monitor, hour) accumulator.
 ///
 /// Min/max/sum/count per metric instead of every reading: pages of one hour
@@ -230,21 +241,37 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
     .bind(&to_exclusive)
     .fetch_all(pool)
     .await?;
-    let mut evidence: HashSet<(i64, i64)> = HashSet::new();
+    let boundary_hour = raw_boundary_hour(now_ms);
+    let mut raw_counts: HashMap<(i64, i64), i64> = HashMap::new();
     let mut needs: HashSet<(i64, i64)> = HashSet::new();
     for (monitor_id, hour, samples) in &counts {
         let Some(hour) = metric_time(hour).map(hour_start) else {
             continue;
         };
         let key = (*monitor_id, hour);
-        evidence.insert(key);
-        if stored.get(&key).copied().unwrap_or(-1) < *samples {
+        raw_counts.insert(key, *samples);
+        let stored_samples = stored.get(&key).copied().unwrap_or(-1);
+        if hour <= boundary_hour && stored_samples >= 0 {
+            // The boundary hour is the one an unaligned prune could have
+            // split: a rebuild would replace a complete aggregate with the
+            // survivors. Keep the existing bucket; a *missing* bucket is
+            // different — the survivors are the only record left, so they
+            // are folded.
+            continue;
+        }
+        if stored_samples > *samples {
+            // The bucket covers more samples than the raw table still holds:
+            // its evidence was pruned away. A rebuild could only lose history.
+            tracing::debug!("rollup: keeping richer bucket for monitor {monitor_id} at {hour}");
+            continue;
+        }
+        if stored_samples < *samples {
             needs.insert(key);
         }
     }
 
     // Dirty markers: hours whose samples arrived after a run had already
-    // folded them. Only an hour that still has raw evidence can be
+    // folded them. Only an hour that still has complete raw evidence can be
     // re-folded; a marker whose raw rows were pruned is stale and just gets
     // dropped.
     let dirty: Vec<(i64, String)> =
@@ -254,10 +281,17 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
             .fetch_all(pool)
             .await?;
     for (monitor_id, hour) in &dirty {
-        if let Some(hour) = metric_time(hour).map(hour_start)
-            && evidence.contains(&(*monitor_id, hour))
-        {
-            needs.insert((*monitor_id, hour));
+        if let Some(hour) = metric_time(hour).map(hour_start) {
+            if hour <= boundary_hour {
+                // The boundary hour may hold partial raw evidence from an
+                // unaligned prune; never rebuild it over an existing bucket.
+                continue;
+            }
+            let key = (*monitor_id, hour);
+            let stored_samples = stored.get(&key).copied().unwrap_or(-1);
+            if raw_counts.get(&key).is_some_and(|raw| stored_samples <= *raw) {
+                needs.insert(key);
+            }
         }
     }
 
@@ -402,10 +436,18 @@ async fn prune_hourly(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<u64> {
 }
 
 /// Delete raw samples older than the retention window.
+///
+/// Whole hours only: a cutoff inside an hour leaves a partial hour behind,
+/// and a later late sample would re-fold that hour from the survivors,
+/// silently replacing a complete hourly bucket with a partial aggregate.
+/// With hour-aligned pruning an hour is either fully retained or fully
+/// deleted, so a rebuild always sees complete evidence.
 pub async fn prune_raw(pool: &SqlitePool, days: i64) -> sqlx::Result<u64> {
-    let cutoff = sql_time_millis(chrono::Utc::now().timestamp_millis() - days * 24 * 3_600_000);
+    let cutoff = hour_start(
+        chrono::Utc::now().timestamp_millis() - days * 24 * 3_600_000,
+    );
     let result = sqlx::query("DELETE FROM metrics_raw WHERE time < ?")
-        .bind(cutoff)
+        .bind(sql_time_millis(cutoff))
         .execute(pool)
         .await?;
     Ok(result.rows_affected())
@@ -706,6 +748,120 @@ mod tests {
         assert_eq!(samples, total, "every page must be folded");
         assert_eq!(min, 0.0);
         assert_eq!(max, 99.0);
+    }
+
+    #[tokio::test]
+    async fn prune_raw_keeps_whole_hours() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let pool = crate::db::connect(&path).await.unwrap();
+
+        let (monitor_id,): (i64,) =
+            sqlx::query_as("INSERT INTO monitors (name, type) VALUES ('m', 'push') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        // One row inside the hour the cutoff falls in, one three hours older.
+        let boundary = raw_boundary_hour(chrono::Utc::now().timestamp_millis());
+        for (offset, cpu) in [(-3 * 3_600_000 + 60_000_i64, 10.0), (60_000, 20.0)] {
+            sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
+                .bind(monitor_id)
+                .bind(sql_time_millis(boundary + offset))
+                .bind(json!({ "cpu": { "percent": cpu } }).to_string())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let deleted = prune_raw(&pool, 30).await.unwrap();
+        assert_eq!(deleted, 1, "only the whole hour before the boundary goes");
+        let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metrics_raw")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 1, "the boundary hour survives intact");
+    }
+
+    #[tokio::test]
+    async fn late_backfill_never_downgrades_a_complete_bucket() {
+        // The follow-up finding: an unaligned prune removed part of the
+        // boundary hour's raw rows, then an accepted late sample marked the
+        // hour dirty and the rebuild replaced the complete bucket with a
+        // partial aggregate (peak 100 -> 0, mean 50 -> 0).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let pool = crate::db::connect(&path).await.unwrap();
+
+        let (monitor_id,): (i64,) =
+            sqlx::query_as("INSERT INTO monitors (name, type) VALUES ('m', 'push') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let hour = raw_boundary_hour(now);
+        let payload = |cpu: f64| json!({ "cpu": { "percent": cpu } }).to_string();
+        let insert = |time: i64, payload: String| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
+                    .bind(monitor_id)
+                    .bind(sql_time_millis(time))
+                    .bind(payload)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+
+        insert(hour + 60_000, payload(100.0)).await;
+        insert(hour + 30 * 60_000, payload(0.0)).await;
+        rollup_metrics(&pool, now).await.unwrap();
+        let (samples, max, avg): (i64, f64, f64) = sqlx::query_as(
+            "SELECT samples, cpu_max, cpu_avg FROM metrics_hourly WHERE monitor_id = ? AND time = ?",
+        )
+        .bind(monitor_id)
+        .bind(sql_time_millis(hour))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((samples, max, avg), (2, 100.0, 50.0));
+
+        // A legacy unaligned prune leaves one row; a late sample arrives.
+        sqlx::query("DELETE FROM metrics_raw WHERE monitor_id = ? AND time = ?")
+            .bind(monitor_id)
+            .bind(sql_time_millis(hour + 60_000))
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert(hour + 45 * 60_000, payload(0.0)).await;
+        sqlx::query("INSERT INTO metrics_rollup_dirty (monitor_id, hour) VALUES (?, ?)")
+            .bind(monitor_id)
+            .bind(sql_time_millis(hour))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rollup_metrics(&pool, now).await.unwrap();
+        let (samples, max, avg): (i64, f64, f64) = sqlx::query_as(
+            "SELECT samples, cpu_max, cpu_avg FROM metrics_hourly WHERE monitor_id = ? AND time = ?",
+        )
+        .bind(monitor_id)
+        .bind(sql_time_millis(hour))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (samples, max, avg),
+            (2, 100.0, 50.0),
+            "the complete bucket must not be replaced by a partial rebuild"
+        );
+        let dirty: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metrics_rollup_dirty")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(dirty, 0, "marker consumed");
     }
 
     #[tokio::test]

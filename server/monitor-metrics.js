@@ -1,6 +1,5 @@
 const { R } = require("redbean-node");
 const { log } = require("../src/util");
-const dayjs = require("dayjs");
 const { publish } = require("./live-updates");
 const latest = new Map();
 const MAX_LATEST = 512;
@@ -8,7 +7,7 @@ const HISTORY_INTERVAL_MS = 30_000;
 const { recordCPU, currentPeak, forgetCPU, resetCPU } = require("./cpu-peak");
 const { asCounters, transformCounters } = require("./cpu-counters");
 const { netSnapshot, diskSnapshot, netRates, diskRates } = require("./io-rates");
-const { markRollupDirty } = require("./metrics-rollup");
+const { markRollupDirty, hourStart, METRICS_RETENTION_DAYS } = require("./metrics-rollup");
 
 /**
  * Parse a stored timestamp (SQL or ISO) into epoch millis.
@@ -108,12 +107,6 @@ function resetMetricsCache() {
  * @type {number}
  */
 const METRICS_MAX_BYTES = 64 * 1024;
-
-/**
- * How long raw samples are kept, in days.
- * @type {number}
- */
-const METRICS_RETENTION_DAYS = 30;
 
 /**
  * Validate a metrics payload without interpreting it.
@@ -371,13 +364,19 @@ async function storeMetricsNow(monitorID, time, payload, { live = false } = {}) 
 
 /**
  * Delete samples older than the retention window.
+ *
+ * Whole hours only: a cutoff inside an hour leaves a partial hour behind,
+ * and a later late sample would re-fold that hour from the survivors,
+ * silently replacing a complete bucket with a partial aggregate (lost
+ * peaks and means). With hour-aligned pruning an hour is either fully
+ * retained or fully deleted, so a rebuild always sees complete evidence.
  * @param {number} days Keep window in days
- * @returns {Promise<number>} Rows deleted (best effort; drivers differ)
+ * @returns {Promise<void>} Resolves when pruned
  */
 async function pruneMetrics(days = METRICS_RETENTION_DAYS) {
-    const cutoff = dayjs.utc().subtract(days, "day").format("YYYY-MM-DD HH:mm:ss");
-    await R.exec("DELETE FROM monitor_metric WHERE time < ?", [ cutoff ]);
-    log.debug("metrics", `Pruned metric samples older than ${days} days`);
+    const cutoff = hourStart(Date.now() - days * 24 * 3600_000);
+    await R.exec("DELETE FROM monitor_metric WHERE time < ?", [ sqlTimeMillis(cutoff) ]);
+    log.debug("metrics", `Pruned metric samples older than ${days} days (whole hours only)`);
 }
 
 module.exports = {

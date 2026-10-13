@@ -40,6 +40,32 @@ const { readingsFromPayload, timestamp } = require("./metrics-history");
 const HOURLY_RETENTION_DAYS = 730;
 
 /**
+ * How long raw samples are kept, in days.
+ *
+ * Defined here rather than in `monitor-metrics.js` because both the rollup
+ * and the raw prune need it, and `monitor-metrics` already depends on this
+ * module for `markRollupDirty` (the reverse require would be a cycle). It is
+ * re-exported from `monitor-metrics` for callers that know it from there.
+ */
+const METRICS_RETENTION_DAYS = 30;
+
+/**
+ * The oldest hour that still has complete raw evidence.
+ *
+ * Raw pruning removes whole hours (see `pruneRawMetrics`), so every hour at
+ * or after this boundary is untouched and therefore complete; only such
+ * hours may be (re)folded. An hour older than this can be missing part of
+ * its rows — the hours pruned with an unaligned cutoff before this rule
+ * existed — and rebuilding it from the survivors would replace a complete
+ * aggregate with a partial one.
+ * @param {number} now Current epoch millis
+ * @returns {number} Boundary hour start in millis
+ */
+function rawBoundaryHour(now) {
+    return hourStart(now - METRICS_RETENTION_DAYS * 24 * 3600_000);
+}
+
+/**
  * Widest span of elapsed time folded in one pass.
  *
  * It bounds elapsed time, not the number of missing hours: a single old gap
@@ -268,6 +294,7 @@ async function rollupMetrics(now = Date.now()) {
     // Raw rows are stamped inside their hour, so the window ends at the next
     // hour start; bucket keys are stamped at the hour start itself.
     const toExclusive = sqlTime(lastCompleteHour + 3600_000);
+    const boundaryHour = rawBoundaryHour(now);
 
     // Stored buckets inside the raw window: coverage is judged per monitor
     // and hour, because the durable bucket key is (monitor_id, time).
@@ -291,7 +318,7 @@ async function rollupMetrics(now = Date.now()) {
          FROM monitor_metric WHERE time >= ? AND time < ?
          GROUP BY monitor_id, hour`,
         [ from, toExclusive ]);
-    const evidence = new Set();
+    const rawCounts = new Map();
     const needs = new Set();
     for (const row of counts) {
         const hour = hourStart(timestamp(row.hour));
@@ -299,15 +326,32 @@ async function rollupMetrics(now = Date.now()) {
             continue;
         }
         const key = `${row.monitor_id}|${hour}`;
-        evidence.add(key);
-        if ((stored.get(key) ?? -1) < Number(row.samples)) {
+        const rawSamples = Number(row.samples);
+        rawCounts.set(key, rawSamples);
+        const storedSamples = stored.get(key) ?? -1;
+        if (hour <= boundaryHour && storedSamples >= 0) {
+            // The boundary hour is the one an unaligned prune could have
+            // split: a rebuild would replace a complete aggregate with the
+            // survivors. Keep the existing bucket; a *missing* bucket is
+            // different — the survivors are the only record left, so they
+            // are folded.
+            continue;
+        }
+        if (storedSamples > rawSamples) {
+            // The bucket covers more samples than the raw table still holds:
+            // its evidence was pruned away. A rebuild could only lose history.
+            log.debug("rollupMetrics", `Keeping richer bucket for ${key}: ${storedSamples} stored > ${rawSamples} raw`);
+            continue;
+        }
+        if (storedSamples < rawSamples) {
             needs.add(key);
         }
     }
 
     // Dirty markers: hours whose samples arrived after a run had already
-    // folded them. Only an hour that still has raw evidence can be re-folded;
-    // a marker whose raw rows were pruned is stale and just gets dropped.
+    // folded them. Only an hour that still has complete raw evidence can be
+    // re-folded; a marker whose raw rows were pruned is stale and just gets
+    // dropped.
     for (const row of await R.getAll(
         "SELECT monitor_id, hour FROM monitor_metric_rollup_dirty WHERE hour >= ? AND hour <= ?",
         [ from, to ])) {
@@ -315,8 +359,19 @@ async function rollupMetrics(now = Date.now()) {
         if (!Number.isFinite(hour)) {
             continue;
         }
+        if (hour < boundaryHour) {
+            continue;
+        }
         const key = `${row.monitor_id}|${hour}`;
-        if (evidence.has(key)) {
+        if (hour <= boundaryHour) {
+            // The boundary hour may hold partial raw evidence from an
+            // unaligned prune; never rebuild it over an existing bucket.
+            continue;
+        }
+        const rawSamples = rawCounts.get(key);
+        // Never rebuild from a partial raw set: a dirty hour whose bucket
+        // already covers more samples than the raw table holds keeps it.
+        if (rawSamples !== undefined && (stored.get(key) ?? -1) <= rawSamples) {
             needs.add(key);
         }
     }
@@ -428,7 +483,9 @@ module.exports = {
     bucketRow,
     hourStart,
     hourKeyExpression,
+    rawBoundaryHour,
     HOURLY_RETENTION_DAYS,
+    METRICS_RETENTION_DAYS,
     CHUNK_HOURS,
     ROWS_PER_PAGE,
 };
