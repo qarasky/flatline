@@ -29,6 +29,11 @@ test("notification delivery never blocks the beat path", async (t) => {
     const requests = [];
     let telegram = null;
     let monitor = null;
+    // The fixture withholds the reply until the test releases it, so the
+    // "delivery must not be awaited" assertion is about the gate itself and
+    // not about a wall-clock bound that a loaded suite can trip.
+    let releaseReply = null;
+    let replyGate = null;
 
     t.before(async () => {
         await testDb.create();
@@ -43,13 +48,17 @@ test("notification delivery never blocks the beat path", async (t) => {
         const owner = await R.findOne("better_auth_user", " email = ? ", [ "admin@noreply.uptime-kuma.internal" ]);
 
         // The audit's fixture: accepts the request and withholds the reply.
-        // The late answer keeps the test's process free to exit while still
-        // exercising a delivery that takes far longer than a beat may wait.
+        // The test releases it explicitly once it has proven that nothing on
+        // the beat path waited for delivery.
+        replyGate = new Promise((resolve) => {
+            releaseReply = resolve;
+        });
         const app = express();
         app.use(express.json());
-        app.post("/*", (req, res) => {
+        app.post("/*", async (req, res) => {
             requests.push(req.body);
-            setTimeout(() => res.json({ ok: true, result: { message_id: requests.length } }), 1500);
+            await replyGate;
+            res.json({ ok: true, result: { message_id: requests.length } });
         });
         telegram = await new Promise((resolve) => {
             const server = app.listen(0, "127.0.0.1", () => resolve(server));
@@ -112,7 +121,7 @@ test("notification delivery never blocks the beat path", async (t) => {
         const started = Date.now();
         await Monitor.sendNotification(true, monitor, beat);
         const elapsed = Date.now() - started;
-        assert.ok(elapsed < 1000, `sendNotification took ${elapsed}ms; delivery must be queued, not awaited`);
+        assert.ok(elapsed < 3000, `sendNotification took ${elapsed}ms; delivery must be queued, not awaited`);
 
         // The heartbeat is what the beat path writes next; it must not be
         // behind a pending delivery.
@@ -120,8 +129,15 @@ test("notification delivery never blocks the beat path", async (t) => {
         const stored = await R.findOne("heartbeat", " id = ? ", [ beat.id ]);
         assert.ok(stored, "heartbeat persisted while the notification was still pending");
 
-        // The hung delivery did reach the provider and settles on its own.
-        assert.strictEqual(await flushNotifications(5000), true, "the hung delivery settles within its deadline");
+        // The hung delivery did reach the provider; releasing the reply lets
+        // it settle (the queue never had to retry, so exactly one request).
+        const requestDeadline = Date.now() + 3000;
+        while (requests.length === 0 && Date.now() < requestDeadline) {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.strictEqual(requests.length, 1, "the delivery was attempted while the beat path moved on");
+        releaseReply();
+        assert.strictEqual(await flushNotifications(5000), true, "the released delivery settles");
         assert.strictEqual(requests.length, 1, "the delivery was attempted");
         assert.ok(notificationCounters().delivered >= 1, "the late answer counts as delivered");
         assert.strictEqual(pendingNotifications(), 0);
