@@ -128,6 +128,79 @@ test("notification delivery never blocks the beat path", async (t) => {
     });
 });
 
+test("transient delivery failures are retried, permanent ones are not", async () => {
+    const {
+        enqueueNotification,
+        flushNotifications,
+        notificationCounters,
+        classifyDeliveryFailure,
+        MAX_ATTEMPTS,
+    } = require("../../server/notification-queue");
+
+    // A transient failure (network error, timeout, 5xx) is retried in place
+    // until it succeeds; the follow-up finding reproduced a single timeout
+    // dropping the alert forever.
+    let attempts = 0;
+    const deliveredBefore = notificationCounters().delivered;
+    enqueueNotification("flaky", async () => {
+        attempts++;
+        if (attempts < 3) {
+            const error = new Error("read ETIMEDOUT");
+            throw error;
+        }
+    });
+    assert.strictEqual(await flushNotifications(10000), true);
+    assert.strictEqual(attempts, 3, "transient failures are retried");
+    assert.strictEqual(notificationCounters().delivered, deliveredBefore + 1);
+
+    // A permanent failure is one attempt: a bad token or chat id will fail
+    // identically forever.
+    let permanentAttempts = 0;
+    enqueueNotification("bad-chat", async () => {
+        permanentAttempts++;
+        const error = new Error("Request failed with status code 400");
+        error.response = { status: 400, data: { ok: false, description: "chat not found" } };
+        throw error;
+    });
+    assert.strictEqual(await flushNotifications(10000), true);
+    assert.strictEqual(permanentAttempts, 1, "a 4xx is not retried");
+
+    // Rate limits are retried and the provider's hint is honoured.
+    const limited = new Error("Request failed with status code 429");
+    limited.response = { status: 429, data: { parameters: { retry_after: 30 } } };
+    assert.deepStrictEqual(classifyDeliveryFailure(limited), { retryable: true, afterMs: 30_000 });
+    const timedOut = Object.assign(new Error("timeout of 30000ms exceeded"), { code: "ECONNABORTED" });
+    assert.deepStrictEqual(classifyDeliveryFailure(timedOut), { retryable: true, afterMs: null });
+
+    // And the counter arithmetic is visible for diagnostics.
+    const stats = require("../../server/notification-queue").notificationQueueStats();
+    assert.ok(stats.retries >= 1, "retries are counted");
+    assert.ok(stats.failed >= 1, "abandoned deliveries are counted");
+    assert.strictEqual(stats.pending, 0);
+    assert.strictEqual(stats.oldestAgeMs, null);
+    assert.ok(MAX_ATTEMPTS >= 2);
+});
+
+test("shutdown drains the queue instead of dropping accepted alerts", async () => {
+    const { enqueueNotification, flushNotifications } = require("../../server/notification-queue");
+
+    // The shutdown path calls flushNotifications() with a bounded timeout
+    // (server.js). Here: a delivery that takes a moment still completes, and
+    // the flush reports success; an unreachable provider cannot hang it past
+    // the bound.
+    let delivered = false;
+    enqueueNotification("slow-but-fine", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        delivered = true;
+    });
+    assert.strictEqual(await flushNotifications(2000), true, "a pending delivery drains");
+    assert.strictEqual(delivered, true, "and is not lost on the way out");
+
+    // A queue that cannot finish is reported, not awaited forever.
+    enqueueNotification("hangs", () => new Promise(() => {}));
+    assert.strictEqual(await flushNotifications(200), false, "the flush is bounded");
+});
+
 test("the notification queue is bounded and axios gets a deadline", async () => {
     const {
         enqueueNotification,
@@ -164,13 +237,19 @@ test("the notification queue is bounded and axios gets a deadline", async () => 
     }
 
     // One worker is parked on a delivery that never settles; the queue must
-    // still refuse to grow past its bound.
+    // still refuse to grow past its bound. Fill until the first refusal
+    // (earlier tests may have left a delivery waiting) and assert the bound
+    // and the drop count, not the absolute fill level.
     const droppedBefore = notificationCounters().dropped;
     enqueueNotification("hangs forever", () => new Promise(() => {}));
-    for (let i = 0; i < MAX_QUEUE; i++) {
-        assert.strictEqual(enqueueNotification(`filler ${i}`, async () => {}), true);
+    let accepted = 0;
+    while (enqueueNotification(`filler ${accepted}`, async () => {})) {
+        accepted++;
+        if (accepted > MAX_QUEUE + 5) {
+            break;
+        }
     }
-    assert.strictEqual(pendingNotifications(), MAX_QUEUE, "the queue fills to its bound");
-    assert.strictEqual(enqueueNotification("overflow", async () => {}), false, "overflow is dropped, not queued");
-    assert.strictEqual(notificationCounters().dropped, droppedBefore + 1, "drops are counted");
+    assert.ok(accepted > 0, "the queue accepts deliveries");
+    assert.ok(pendingNotifications() <= MAX_QUEUE, "never exceeds its bound");
+    assert.strictEqual(notificationCounters().dropped, droppedBefore + 1, "the overflow is dropped and counted");
 });

@@ -436,6 +436,15 @@ async function shutdownFunction(signal) {
         EmbeddedMariaDB.getInstance().stop();
     }
 
+    // Deliver whatever is still queued before the process exits (forceExit
+    // below kills it): a state-transition alert that was already accepted
+    // should not be lost to a restart. Bounded, so a hung provider cannot
+    // delay shutdown past its own deadline.
+    const { flushNotifications } = require("./notification-queue");
+    if (!(await flushNotifications(5000))) {
+        log.warn("server", "Notification queue did not drain before shutdown");
+    }
+
     stopBackgroundJobs();
     await cloudflaredStop();
     Settings.stopCacheCleaner();

@@ -15,12 +15,28 @@ const { log } = require("../src/util");
  * unreachable provider can back it up, but it can never exhaust memory, and
  * anything dropped is logged and counted instead of disappearing silently.
  * Each delivery is also bounded by the provider's own request deadline.
+ *
+ * Transient failures (network errors, timeouts, 5xx, provider rate limits)
+ * are retried a bounded number of times with backoff, honouring a
+ * `retry_after` hint when the provider sends one; permanent failures (a bad
+ * token, a wrong chat id) are not retried. Before this, a single timeout
+ * silently lost the alert — with periodic resend disabled, the operator
+ * never heard about the outage at all.
  */
 
 /** Maximum queued deliveries before new ones are dropped. */
 const MAX_QUEUE = 100;
 
-/** Queued deliveries, oldest first. */
+/** Delivery attempts per notification before giving up. */
+const MAX_ATTEMPTS = 3;
+
+/** Waits between attempts (ms); a provider retry hint wins when present. */
+const RETRY_BACKOFF_MS = [ 1000, 4000 ];
+
+/** Upper bound for a provider-supplied retry hint. */
+const MAX_RETRY_AFTER_MS = 60_000;
+
+/** Queued deliveries, oldest first, with their enqueue time. */
 const queue = [];
 
 /** Cumulative counters, for the log line and for tests. */
@@ -28,6 +44,7 @@ const counters = {
     delivered: 0,
     failed: 0,
     dropped: 0,
+    retries: 0,
 };
 
 let running = false;
@@ -48,9 +65,72 @@ function enqueueNotification(label, deliver) {
         log.error("notification", `Notification queue is full (${MAX_QUEUE}); dropping ${label}`);
         return false;
     }
-    queue.push({ label, deliver });
+    queue.push({ label, deliver, enqueuedAt: Date.now() });
     void drain();
     return true;
+}
+
+/**
+ * Classify a failed delivery: retry it or not, and how long to wait.
+ *
+ * Provider hints win over the fixed backoff: Telegram answers 429 with
+ * `parameters.retry_after` (seconds) when it is rate limiting us. Any other
+ * 4xx is the request's fault — a bad token, an unknown chat — and repeating
+ * it would just burn attempts.
+ * @param {*} error Error thrown by the delivery
+ * @returns {{retryable: boolean, afterMs: ?number}} Classification
+ */
+function classifyDeliveryFailure(error) {
+    const status = error?.response?.status ?? error?.status;
+    if (status === 429) {
+        const retryAfterSeconds = Number(error?.response?.data?.parameters?.retry_after);
+        return {
+            retryable: true,
+            afterMs: Number.isFinite(retryAfterSeconds)
+                ? Math.min(retryAfterSeconds * 1000, MAX_RETRY_AFTER_MS)
+                : null,
+        };
+    }
+    if (typeof status === "number" && status >= 400 && status < 500) {
+        return { retryable: false, afterMs: null };
+    }
+    return { retryable: true, afterMs: null };
+}
+
+/**
+ * Deliver one queued notification, retrying transient failures in place.
+ *
+ * In place on purpose: retrying through the queue would reorder a monitor's
+ * transitions behind later ones.
+ * @param {{label: string, deliver: () => Promise<void>}} item Queued delivery
+ * @returns {Promise<void>} Resolves when delivered or abandoned
+ */
+async function deliverWithRetries(item) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        try {
+            await item.deliver();
+            counters.delivered++;
+            return;
+        } catch (e) {
+            const { retryable, afterMs } = classifyDeliveryFailure(e);
+            if (!retryable || attempt + 1 >= MAX_ATTEMPTS) {
+                counters.failed++;
+                log.error(
+                    "notification",
+                    `Cannot deliver notification to ${item.label} after ${attempt + 1} attempt(s): ${e.message}`
+                );
+                return;
+            }
+
+            counters.retries++;
+            const wait = afterMs ?? RETRY_BACKOFF_MS[attempt];
+            log.warn(
+                "notification",
+                `Delivery to ${item.label} failed (attempt ${attempt + 1}/${MAX_ATTEMPTS}), retrying in ${wait}ms: ${e.message}`
+            );
+            await new Promise((resolve) => setTimeout(resolve, wait));
+        }
+    }
 }
 
 /**
@@ -65,13 +145,7 @@ async function drain() {
     try {
         while (queue.length > 0) {
             const item = queue.shift();
-            try {
-                await item.deliver();
-                counters.delivered++;
-            } catch (e) {
-                counters.failed++;
-                log.error("notification", `Cannot deliver notification to ${item.label}: ${e.message}`);
-            }
+            await deliverWithRetries(item);
         }
     } finally {
         running = false;
@@ -102,10 +176,25 @@ function pendingNotifications() {
 
 /**
  * Cumulative delivery counters.
- * @returns {{delivered: number, failed: number, dropped: number}} Counters
+ * @returns {{delivered: number, failed: number, dropped: number, retries: number}} Counters
  */
 function notificationCounters() {
     return { ...counters };
+}
+
+/**
+ * Queue health for diagnostics and the health endpoint: depth, age of the
+ * oldest waiting delivery, and the cumulative counters. The age is what
+ * tells an operator that a provider has been failing for a while.
+ * @returns {{pending: number, oldestAgeMs: ?number, delivered: number, failed: number, retries: number, dropped: number}} Queue stats
+ */
+function notificationQueueStats() {
+    const oldest = queue[0];
+    return {
+        pending: queue.length,
+        oldestAgeMs: oldest ? Date.now() - oldest.enqueuedAt : null,
+        ...counters,
+    };
 }
 
 module.exports = {
@@ -113,5 +202,8 @@ module.exports = {
     flushNotifications,
     pendingNotifications,
     notificationCounters,
+    notificationQueueStats,
+    classifyDeliveryFailure,
     MAX_QUEUE,
+    MAX_ATTEMPTS,
 };

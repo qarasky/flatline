@@ -1457,7 +1457,10 @@ router.get("/api/v1/health", tokenAuth("read"), async (req, res) => {
         // A single non-responding monitor makes the whole instance unhealthy.
         summary.status = summary.down > 0 ? "down" : "up";
 
-        res.json({ ok: true, health: summary });
+        // Delivery health rides along: a failing provider (or a queue that
+        // is not draining) is instance health, not just a log line.
+        const { notificationQueueStats } = require("../notification-queue");
+        res.json({ ok: true, health: summary, notifications: notificationQueueStats() });
     } catch (e) {
         log.error("api-v1", `GET /health failed: ${e.message}`);
         fail(res, 500, "server_error", e.message);

@@ -258,11 +258,41 @@ fn percent(value: f64) -> String {
 
 /// Send one Telegram message. Errors are returned for the caller to log; a
 /// failed notification must never fail a heartbeat.
-pub async fn send_telegram(
+/// Delivery attempts per provider before giving up.
+///
+/// Telegram is a side channel: three attempts over a few seconds covers a
+/// provider blip or a restart without holding an alert for minutes. Before
+/// this, a single timeout logged and dropped the alert — with periodic
+/// resend disabled the operator never heard about the outage at all.
+const DELIVERY_ATTEMPTS: usize = 3;
+
+/// Waits between attempts. A provider retry hint wins when it sends one.
+const RETRY_BACKOFF: [std::time::Duration; 2] = [
+    std::time::Duration::from_secs(1),
+    std::time::Duration::from_secs(4),
+];
+
+/// Upper bound for a provider-supplied retry hint.
+const MAX_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// One delivery attempt's classification.
+enum Attempt {
+    Delivered,
+    /// Worth retrying: a network error, a timeout, a 5xx, or a rate limit.
+    Retryable {
+        reason: String,
+        after: Option<std::time::Duration>,
+    },
+    /// Not worth retrying: the request itself is wrong (bad token, bad chat).
+    Permanent(String),
+}
+
+/// Send one Telegram message, classifying the outcome.
+async fn attempt_send_telegram(
     client: &reqwest::Client,
     config: &Telegram,
     text: &str,
-) -> anyhow::Result<()> {
+) -> Attempt {
     let mut body = serde_json::json!({
         "chat_id": config.chat_id,
         "text": text,
@@ -275,11 +305,97 @@ pub async fn send_telegram(
     }
 
     let url = format!("{}/bot{}/sendMessage", config.server_url, config.bot_token);
-    let response = client.post(url).json(&body).send().await?;
-    if !response.status().is_success() {
-        anyhow::bail!("telegram answered {}", response.status());
+    let response = match client.post(url).json(&body).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            return Attempt::Retryable {
+                reason: error.to_string(),
+                after: None,
+            };
+        }
+    };
+
+    let status = response.status();
+    if status.is_success() {
+        return Attempt::Delivered;
     }
-    Ok(())
+    let detail = response.text().await.unwrap_or_default();
+
+    if status.as_u16() == 429 {
+        // Telegram rate limiting: honour the hint it sends, bounded.
+        let after = serde_json::from_str::<serde_json::Value>(&detail)
+            .ok()
+            .and_then(|body| {
+                body.pointer("/parameters/retry_after")
+                    .and_then(serde_json::Value::as_f64)
+            })
+            .map(|seconds| {
+                std::time::Duration::from_secs_f64(seconds.clamp(0.0, MAX_RETRY_AFTER.as_secs_f64()))
+            });
+        return Attempt::Retryable {
+            reason: format!("telegram answered {status}: {detail}"),
+            after,
+        };
+    }
+    if status.is_client_error() {
+        return Attempt::Permanent(format!("telegram answered {status}: {detail}"));
+    }
+    Attempt::Retryable {
+        reason: format!("telegram answered {status}: {detail}"),
+        after: None,
+    }
+}
+
+/// Deliver one Telegram message with bounded retries for transient failures.
+pub async fn deliver_telegram(
+    client: &reqwest::Client,
+    name: &str,
+    config: &Telegram,
+    text: &str,
+) {
+    for attempt in 0..DELIVERY_ATTEMPTS {
+        match attempt_send_telegram(client, config, text).await {
+            Attempt::Delivered => return,
+            Attempt::Permanent(reason) => {
+                tracing::error!("notify: telegram send for {name} failed: {reason}");
+                return;
+            }
+            Attempt::Retryable { reason, after } => {
+                if attempt + 1 >= DELIVERY_ATTEMPTS {
+                    tracing::error!(
+                        "notify: telegram send for {name} failed after {DELIVERY_ATTEMPTS} attempts: {reason}"
+                    );
+                    return;
+                }
+                let wait = after.unwrap_or_else(|| {
+                    RETRY_BACKOFF
+                        .get(attempt)
+                        .copied()
+                        .unwrap_or(RETRY_BACKOFF[RETRY_BACKOFF.len() - 1])
+                });
+                tracing::warn!(
+                    "notify: telegram send for {name} failed (attempt {}/{DELIVERY_ATTEMPTS}), retrying in {}ms: {reason}",
+                    attempt + 1,
+                    wait.as_millis()
+                );
+                tokio::time::sleep(wait).await;
+            }
+        }
+    }
+}
+
+/// Send one Telegram message, without retries (tests and one-shot callers).
+pub async fn send_telegram(
+    client: &reqwest::Client,
+    config: &Telegram,
+    text: &str,
+) -> anyhow::Result<()> {
+    match attempt_send_telegram(client, config, text).await {
+        Attempt::Delivered => Ok(()),
+        Attempt::Permanent(reason) | Attempt::Retryable { reason, .. } => {
+            anyhow::bail!("{reason}")
+        }
+    }
 }
 
 /// Active notification rows linked to a monitor: `(name, type, config)`.
@@ -323,14 +439,14 @@ pub async fn dispatch_message(
             tracing::warn!("notify: {name} has no usable telegram config");
             continue;
         };
-        if let Err(error) = send_telegram(client, &telegram, &message).await {
-            tracing::error!("notify: telegram send for {name} failed: {error}");
-        }
+        deliver_telegram(client, &name, &telegram, &message).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     #[test]
@@ -350,6 +466,68 @@ mod tests {
         assert!(!parsed.disable_notification);
         assert!(!parsed.protect_content);
         assert!(parsed.message_thread_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn deliver_telegram_retries_transient_failures_and_stops_on_permanent() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // A stub bot API: the first `failures` answers are 500, then success.
+        async fn stub(failures: usize) -> (String, Arc<AtomicUsize>) {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let state = Arc::clone(&calls);
+            let app = axum::Router::new().route(
+                "/bot{token}/sendMessage",
+                axum::routing::post(move || {
+                    let state = Arc::clone(&state);
+                    async move {
+                        let call = state.fetch_add(1, Ordering::SeqCst);
+                        if call < failures {
+                            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom")
+                        } else {
+                            (axum::http::StatusCode::OK, "{\"ok\":true}")
+                        }
+                    }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+            (format!("http://{addr}"), calls)
+        }
+
+        let config = |base: &str| parse_telegram(&format!(
+            r#"{{"telegramServerUrl": "{base}", "telegramBotToken": "t", "telegramChatID": "1"}}"#
+        ))
+        .unwrap();
+
+        // Two transient failures, then delivered on the third attempt.
+        let (base, calls) = stub(2).await;
+        deliver_telegram(&reqwest::Client::new(), "stub", &config(&base), "hi").await;
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "transient failures are retried");
+
+        // A 4xx is permanent: no retry.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let state = Arc::clone(&calls);
+        let app = axum::Router::new().route(
+            "/bot{token}/sendMessage",
+            axum::routing::post(move || {
+                let state = Arc::clone(&state);
+                async move {
+                    state.fetch_add(1, Ordering::SeqCst);
+                    (axum::http::StatusCode::BAD_REQUEST, "bad chat")
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        deliver_telegram(&reqwest::Client::new(), "stub", &config(&format!("http://{addr}")), "hi").await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "a 4xx is not retried");
     }
 
     #[test]
