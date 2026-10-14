@@ -513,6 +513,8 @@ export interface MetricsPayload {
         stats?: { cpuPercent?: number; memUsed?: number; memLimit?: number; memPercent?: number };
     }[];
     dockerError?: string;
+    /** When the container list was last collected completely (RFC3339). */
+    dockerAt?: string;
     updates?: { total?: number; security?: number };
     load?: { avg1?: number; avg5?: number; avg15?: number };
     net?: { iface?: string; rxBytes?: number; txBytes?: number }[];

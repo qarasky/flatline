@@ -39,3 +39,6 @@ packages/*/node_modules
 .dev-data
 .dev-logs
 backend-rs/target/
+
+# Go agent build artifact (go build ./... inside superboard/).
+superboard/flatline-superboard

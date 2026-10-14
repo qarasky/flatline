@@ -44,6 +44,14 @@ the backlog — sampling continues, the failure is logged at most once per
 five minutes, and fixing the token delivers everything that accumulated.
 Transient failures (network, 5xx) still retry the same sample with backoff.
 
+Container collection is bounded and parallel: the per-container inspect and
+stats requests run on a small worker pool under one overall deadline (20s),
+against a daemon that can otherwise stall a sequential pass for minutes.
+A pass that fails or exceeds the deadline keeps the previous container list
+and reports how old it is (`dockerError` plus `dockerAt`, the time of the
+last complete collection) — the board shows "containers as of Xm ago"
+instead of either an empty list or old health that looks current.
+
 Every payload carries an `agent` self-report, Telegraf-style: version,
 process uptime, dropped samples, failed pushes with the last error reason,
 and per-collector error counts (only nonzero entries). Cards show the agent

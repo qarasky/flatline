@@ -1,6 +1,6 @@
 import { memo, type MouseEvent } from "react";
 import type { MonitorSummary, MetricsPayload, CPUPeak } from "@/lib/api";
-import { agentWarnings, fleetAttention, formatBytes, formatDuration, formatRate, percentage, sampleAgeMs, smartWarning, updatesStatus } from "@/lib/fleet-presentation";
+import { agentWarnings, containerAgeMs, fleetAttention, formatBytes, formatDuration, formatRate, percentage, sampleAgeMs, smartWarning, updatesStatus } from "@/lib/fleet-presentation";
 import { ContainerTiles } from "@/components/ContainerTiles";
 import { CoreSquares } from "@/components/CoreSquares";
 import { MetricBar, usageTone } from "@/components/MetricBar";
@@ -42,6 +42,10 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
     const gpu = metrics.gpu;
     const gpus = gpu?.gpus?.length ? gpu.gpus : gpu?.available ? [gpu] : [];
     const running = containers.filter(c => c.state === "running").length;
+    // The agent collects containers every 10s; past a minute the list is
+    // worth calling old, whatever the reason (slow daemon, error).
+    const dockerAgeMs = containerAgeMs(metrics, time);
+    const dockerAge = dockerAgeMs !== null && dockerAgeMs > 60_000 ? formatDuration(dockerAgeMs / 1000) : null;
     const hostname = metrics.host?.hostname;
     const displayName = monitor.name || hostname || "Unnamed server";
     const updates = updatesStatus(metrics.updates);
@@ -156,7 +160,13 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
                     <h3 className="fleet-label">Containers</h3>
                     <span className="fleet-secondary tnum">{running}/{containers.length} running</span>
                 </div>
-                {metrics.dockerError ? <p className="fleet-secondary text-warn" title={metrics.dockerError}>Collection unavailable — container health unknown</p> : null}
+                {metrics.dockerError ? (
+                    <p className="fleet-secondary text-warn" title={metrics.dockerError} role="status">
+                        {dockerAge ? `Collection failing — containers as of ${dockerAge} ago` : "Collection unavailable — container health unknown"}
+                    </p>
+                ) : dockerAge ? (
+                    <p className="fleet-secondary text-warn" role="status">Containers as of {dockerAge} ago</p>
+                ) : null}
                 {!containers.length && !metrics.dockerError ? <p className="fleet-secondary">No containers</p> : null}
                 {containers.length ? (
                     <ContainerTiles containers={containers} />

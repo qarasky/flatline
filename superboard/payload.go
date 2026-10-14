@@ -257,20 +257,24 @@ type Payload struct {
 	// time; the server validates it and falls back to receive time. The
 	// server stays the clock authority — this is an optimisation, never a
 	// requirement.
-	SampledAt   string         `json:"sampledAt,omitempty"`
-	Host        Host           `json:"host"`
-	CPU         CPU            `json:"cpu"`
-	Mem         Mem            `json:"mem"`
-	Disk        []Disk         `json:"disk"`
-	GPU         GPU            `json:"gpu"`
-	Docker      []Container    `json:"docker"`
-	DockerError string         `json:"dockerError,omitempty"`
-	Updates     *Updates       `json:"updates,omitempty"`
-	Agent       *AgentInfo     `json:"agent,omitempty"`
-	Load        *Load          `json:"load,omitempty"`
-	Net         []NetInterface `json:"net,omitempty"`
-	DiskIO      []DiskIO       `json:"diskIo,omitempty"`
-	Smart       *SMART         `json:"smart,omitempty"`
+	SampledAt   string      `json:"sampledAt,omitempty"`
+	Host        Host        `json:"host"`
+	CPU         CPU         `json:"cpu"`
+	Mem         Mem         `json:"mem"`
+	Disk        []Disk      `json:"disk"`
+	GPU         GPU         `json:"gpu"`
+	Docker      []Container `json:"docker"`
+	DockerError string      `json:"dockerError,omitempty"`
+	// DockerAt is when the container list was last collected completely
+	// (RFC3339, omitted when never). The board compares it with the sample
+	// timestamp so a list a stalling daemon left behind is visibly old.
+	DockerAt time.Time      `json:"dockerAt,omitzero"`
+	Updates  *Updates       `json:"updates,omitempty"`
+	Agent    *AgentInfo     `json:"agent,omitempty"`
+	Load     *Load          `json:"load,omitempty"`
+	Net      []NetInterface `json:"net,omitempty"`
+	DiskIO   []DiskIO       `json:"diskIo,omitempty"`
+	Smart    *SMART         `json:"smart,omitempty"`
 	// Server-derived rates (live samples only; absent from agent payloads).
 	NetRate    *NetRate    `json:"netRate,omitempty"`
 	DiskIoRate *DiskIoRate `json:"diskIoRate,omitempty"`

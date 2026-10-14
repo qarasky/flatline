@@ -11,13 +11,18 @@ import (
 )
 
 type liveCollector struct {
-	mu               sync.RWMutex
-	host             Host
-	started          time.Time
-	disk             []Disk
-	gpu              GPU
-	docker           []Container
-	dockerError      string
+	mu          sync.RWMutex
+	host        Host
+	started     time.Time
+	disk        []Disk
+	gpu         GPU
+	docker      []Container
+	dockerError string
+	// dockerAt is when the container list was last collected *completely*.
+	// The payload carries it so a stale list is not mistaken for current
+	// health: a slow or stalling daemon used to leave old container states
+	// published under every fresh sample's timestamp with nothing to say so.
+	dockerAt         time.Time
 	cpuTemp, memTemp float64
 	// cpu is the 30-second average utilization, refreshed from cumulative
 	// CPU-time counters (/proc/stat deltas) every cpuSampleInterval. Pushes
@@ -138,14 +143,10 @@ func newLiveCollector(ctx context.Context) (*liveCollector, error) {
 	})
 	go refreshLoop(ctx, 10*time.Second, "docker", func() {
 		containers, err := collectDocker()
-		errorText := ""
 		if err != nil {
-			errorText = err.Error()
 			log.Printf("docker: %v", err)
 		}
-		c.mu.Lock()
-		c.docker, c.dockerError = containers, errorText
-		c.mu.Unlock()
+		c.applyDocker(containers, err)
 	})
 	go refreshLoop(ctx, updatesInterval, "updates", func() {
 		updates, err := collectUpdates()
@@ -214,6 +215,29 @@ func (c *liveCollector) cachedCPU() (CPU, bool) {
 	return out, true
 }
 
+// applyDocker stores one collection result.
+//
+// A failed or incomplete pass keeps the previous list and says how old it is
+// instead of publishing an empty (or half-collected) list as current: the
+// board should show "containers as of 4m ago" rather than "no containers",
+// and never fresh-looking old health.
+func (c *liveCollector) applyDocker(containers []Container, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err != nil {
+		c.dockerError = err.Error()
+		if !c.dockerAt.IsZero() {
+			c.dockerError += fmt.Sprintf(" (showing containers from %s ago)", time.Since(c.dockerAt).Round(time.Second))
+		}
+		return
+	}
+
+	c.docker = containers
+	c.dockerError = ""
+	c.dockerAt = time.Now()
+}
+
 func (c *liveCollector) sample() (*Payload, error) {
 	cpuVal, ok := c.cachedCPU()
 	if !ok {
@@ -253,7 +277,7 @@ func (c *liveCollector) sample() (*Payload, error) {
 	payload := &Payload{V: payloadVersion, Host: h,
 		CPU:  cpuVal,
 		Mem:  Mem{Total: vm.Total, Used: vm.Used, Percent: vm.UsedPercent, Temp: c.memTemp},
-		Disk: c.disk, GPU: c.gpu, Docker: c.docker, DockerError: c.dockerError,
+		Disk: c.disk, GPU: c.gpu, Docker: c.docker, DockerError: c.dockerError, DockerAt: c.dockerAt,
 		Updates: c.updates, Agent: agentInfoSnapshot(),
 		Load: collectLoad(), Net: collectNet(), DiskIO: collectDiskIO(),
 		Smart: c.smart}

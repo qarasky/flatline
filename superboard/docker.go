@@ -21,6 +21,19 @@ import (
 // this will ask.
 const defaultSocketPath = "/var/run/docker.sock"
 
+// dockerCollectionWorkers bounds how many containers are inspected at once.
+// The per-request timeout is 10s and a pass used to walk containers
+// sequentially (inspect, then stats): ten running containers against a
+// stalling daemon kept one pass busy for roughly 200 seconds while the 10s
+// refresh loop republished the previous snapshot under a fresh timestamp.
+const dockerCollectionWorkers = 4
+
+// dockerCollectionBudget bounds one whole collection pass. A daemon that
+// cannot answer inside it is not providing current data; the collector keeps
+// the previous snapshot and says how old it is rather than pretending.
+// Variable so tests can shrink it.
+var dockerCollectionBudget = 20 * time.Second
+
 // dockerSocketPaths are tried in order. DOCKER_HOST wins when set
 // (unix:// only — TCP daemons are out of scope for v1); then the standard
 // location, then the rootless one. A hardcoded single path is how agents go
@@ -207,9 +220,9 @@ func pruneDockerStatsCache(seen map[string]bool) {
 }
 
 // containerStats fetches one one-shot stats read for a container.
-func (c *dockerClient) containerStats(id string) (*containerStatsRaw, error) {
+func (c *dockerClient) containerStats(ctx context.Context, id string) (*containerStatsRaw, error) {
 	var stats containerStatsRaw
-	if err := c.get("/v1.43/containers/"+id+"/stats?stream=false&one-shot=true", &stats); err != nil {
+	if err := c.get(ctx, "/v1.43/containers/"+id+"/stats?stream=false&one-shot=true", &stats); err != nil {
 		return nil, err
 	}
 	return &stats, nil
@@ -252,8 +265,8 @@ func newDockerClient(socketPath string) *dockerClient {
 	}
 }
 
-func (c *dockerClient) get(path string, out any) error {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://docker"+path, nil)
+func (c *dockerClient) get(ctx context.Context, path string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker"+path, nil)
 	if err != nil {
 		return err
 	}
@@ -342,82 +355,54 @@ func containerDisplayName(item dockerListItem) string {
 	return "unknown"
 }
 
+// collectDockerSocket lists containers and enriches them under one deadline.
+//
+// The whole pass is bounded (dockerCollectionBudget) and the per-container
+// inspect/stats work runs on a small worker pool, so a stalling daemon costs
+// one budget instead of 20s per container. Cancellation propagates into the
+// in-flight requests: on expiry this returns an error and the collector keeps
+// its previous snapshot rather than publishing a half-collected one as
+// current.
 func collectDockerSocket(socketPath string) ([]Container, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dockerCollectionBudget)
+	defer cancel()
+
 	client := newDockerClient(socketPath)
 	defer client.http.CloseIdleConnections()
 
 	var list []dockerListItem
-	if err := client.get("/v1.43/containers/json?all=1", &list); err != nil {
+	if err := client.get(ctx, "/v1.43/containers/json?all=1", &list); err != nil {
 		return nil, err
 	}
 
-	out := make([]Container, 0, len(list))
+	out := make([]Container, len(list))
 	seen := make(map[string]bool, len(list))
 	for _, item := range list {
-		name := containerDisplayName(item)
 		seen[item.ID] = true
+	}
 
-		c := Container{
-			Name:  name,
-			Image: item.Image,
-			State: item.State,
-		}
-
-		// Health, ports and uptime come from inspect; a failure for one
-		// container degrades that container, never the whole list.
-		var insp dockerInspect
-		if err := client.get("/v1.43/containers/"+item.ID+"/json", &insp); err != nil {
-			log.Printf("warning: docker inspect %s failed: %v", name, err)
-		} else {
-			// Health is meaningful only while running: a stopped container
-			// keeps its last health status, which would otherwise paint an
-			// exited box as "unhealthy" instead of merely stopped.
-			if insp.State.Status == "running" && insp.State.Health != nil {
-				c.Health = insp.State.Health.Status
+	// Each container's inspect and stats are independent; four workers keep
+	// the deadline meaningful on a multi-container host while staying gentle
+	// on the daemon.
+	work := make(chan int)
+	var wg sync.WaitGroup
+	for worker := 0; worker < dockerCollectionWorkers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range work {
+				out[index] = collectDockerContainer(ctx, client, list[index])
 			}
-			c.Uptime = containerUptime(insp.State.StartedAt)
-			for containerPort, bindings := range insp.NetworkSettings.Ports {
-				private := strings.Split(containerPort, "/")[0]
-				if len(bindings) == 0 {
-					c.Ports = append(c.Ports, private)
-					continue
-				}
-				for _, b := range bindings {
-					c.Ports = append(c.Ports, fmt.Sprintf("%s:%s", b.HostPort, private))
-				}
-			}
-		}
+		}()
+	}
+	for index := range list {
+		work <- index
+	}
+	close(work)
+	wg.Wait()
 
-		// CPU/memory stats for running containers, best-effort: a container
-		// that cannot be measured simply carries no stats block, and the
-		// first failure per container is logged once.
-		if item.State == "running" {
-			if raw, err := client.containerStats(item.ID); err == nil {
-				c.Stats = buildContainerStats(item.ID, raw)
-			} else {
-				dockerStatsWarned.mu.Lock()
-				if !dockerStatsWarned.seen[item.ID] {
-					dockerStatsWarned.seen[item.ID] = true
-					log.Printf("warning: docker stats %s failed (will not repeat): %v", name, err)
-				}
-				dockerStatsWarned.mu.Unlock()
-			}
-		}
-
-		// Fall back to the list-response ports when inspect gave nothing.
-		if len(c.Ports) == 0 {
-			for _, p := range item.Ports {
-				if p.PublicPort != 0 {
-					c.Ports = append(c.Ports, fmt.Sprintf("%d:%d", p.PublicPort, p.PrivatePort))
-				} else {
-					c.Ports = append(c.Ports, fmt.Sprintf("%d", p.PrivatePort))
-				}
-			}
-		}
-
-		c.Ports = dedupPorts(c.Ports)
-
-		out = append(out, c)
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("docker collection exceeded %s (%d containers listed)", dockerCollectionBudget, len(list))
 	}
 
 	pruneDockerStatsCache(seen)
@@ -427,6 +412,71 @@ func collectDockerSocket(socketPath string) ([]Container, error) {
 	}
 
 	return out, nil
+}
+
+// collectDockerContainer enriches one list entry: inspect for health, ports
+// and uptime, stats for a running container's CPU/memory. Failures degrade
+// that container, never the whole list.
+func collectDockerContainer(ctx context.Context, client *dockerClient, item dockerListItem) Container {
+	name := containerDisplayName(item)
+	c := Container{
+		Name:  name,
+		Image: item.Image,
+		State: item.State,
+	}
+
+	var insp dockerInspect
+	if err := client.get(ctx, "/v1.43/containers/"+item.ID+"/json", &insp); err != nil {
+		log.Printf("warning: docker inspect %s failed: %v", name, err)
+	} else {
+		// Health is meaningful only while running: a stopped container
+		// keeps its last health status, which would otherwise paint an
+		// exited box as "unhealthy" instead of merely stopped.
+		if insp.State.Status == "running" && insp.State.Health != nil {
+			c.Health = insp.State.Health.Status
+		}
+		c.Uptime = containerUptime(insp.State.StartedAt)
+		for containerPort, bindings := range insp.NetworkSettings.Ports {
+			private := strings.Split(containerPort, "/")[0]
+			if len(bindings) == 0 {
+				c.Ports = append(c.Ports, private)
+				continue
+			}
+			for _, b := range bindings {
+				c.Ports = append(c.Ports, fmt.Sprintf("%s:%s", b.HostPort, private))
+			}
+		}
+	}
+
+	// CPU/memory stats for running containers, best-effort: a container
+	// that cannot be measured simply carries no stats block, and the
+	// first failure per container is logged once.
+	if item.State == "running" {
+		if raw, err := client.containerStats(ctx, item.ID); err == nil {
+			c.Stats = buildContainerStats(item.ID, raw)
+		} else {
+			dockerStatsWarned.mu.Lock()
+			if !dockerStatsWarned.seen[item.ID] {
+				dockerStatsWarned.seen[item.ID] = true
+				log.Printf("warning: docker stats %s failed (will not repeat): %v", name, err)
+			}
+			dockerStatsWarned.mu.Unlock()
+		}
+	}
+
+	// Fall back to the list-response ports when inspect gave nothing.
+	if len(c.Ports) == 0 {
+		for _, p := range item.Ports {
+			if p.PublicPort != 0 {
+				c.Ports = append(c.Ports, fmt.Sprintf("%d:%d", p.PublicPort, p.PrivatePort))
+			} else {
+				c.Ports = append(c.Ports, fmt.Sprintf("%d", p.PrivatePort))
+			}
+		}
+	}
+
+	c.Ports = dedupPorts(c.Ports)
+	return c
 }
 
 // dedupPorts drops repeats while keeping order. Inspect reports one binding

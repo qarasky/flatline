@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, smartWarning, statusSlugFromPath, updatesStatus } from "../src/lib/fleet-presentation.ts";
+import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, smartWarning, statusSlugFromPath, updatesStatus, containerAgeMs } from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -181,4 +181,19 @@ test("high usage includes memory, disks and legacy GPU VRAM; unknown numbers sta
     for (const v of [undefined, NaN, Infinity]) { assert.equal(percentage(v), "—"); }
     assert.equal(percentage(0.1), "0.1%");
     assert.equal(percentage(110), "100%");
+});
+
+test("container freshness: old container lists are reported as old, never as current", () => {
+    // The agent collects containers every 10s. A stalling daemon used to keep
+    // republishing the previous snapshot under a fresh sample timestamp with
+    // nothing to distinguish it; `dockerAt` gives the card the age.
+    const sampledAt = "2026-10-14 12:00:00.000";
+    const fresh = { dockerAt: "2026-10-14T11:59:55.000Z" };
+    const aged = { dockerAt: "2026-10-14T11:55:00.000Z" };
+
+    assert.equal(containerAgeMs(fresh, sampledAt), 5000);
+    assert.equal(containerAgeMs(aged, sampledAt), 5 * 60_000);
+    assert.equal(containerAgeMs({}, sampledAt), null, "older agents carry no dockerAt");
+    assert.equal(containerAgeMs({ dockerAt: "not a time" }, sampledAt), null);
+    assert.equal(containerAgeMs(fresh, ""), null, "an unusable sample time says nothing");
 });

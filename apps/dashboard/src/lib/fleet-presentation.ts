@@ -1,9 +1,48 @@
 import type { MetricsPayload, MonitorSummary } from "./api";
 
+/**
+ * Parse a stored timestamp (SQL or ISO) into epoch millis.
+ * @param value Timestamp
+ * @returns Epoch millis, or NaN when unparseable
+ */
+export function parseTimestamp(value: string | null | undefined): number {
+    if (!value) {
+        return NaN;
+    }
+    const iso = value.replace(" ", "T");
+    return Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`);
+}
+
 export function sampleAgeMs(time: string, now = Date.now()): number {
-    const iso = time.replace(" ", "T");
-    const timestamp = Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`);
+    const timestamp = parseTimestamp(time);
     return Number.isFinite(timestamp) ? Math.max(0, now - timestamp) : Infinity;
+}
+
+/**
+ * How old the container list in one sample is, in milliseconds, or null when
+ * the payload predates `dockerAt` (older agents).
+ *
+ * `dockerAt` is the agent's collection time and `time` the sample's own
+ * timestamp, so this compares two clocks; both hosts are NTP-synced in
+ * practice, and the alternative — asking the agent to send an age — would be
+ * stale the moment the sample sat in a buffer. A list that is older than a
+ * few collection cycles matters: the agent refreshes containers every 10s, so
+ * a stalling daemon used to leave old health looking current under a fresh
+ * sample timestamp.
+ * @param metrics Sample payload
+ * @param time Sample timestamp
+ * @returns Age in milliseconds, or null when unknown
+ */
+export function containerAgeMs(metrics: MetricsPayload, time: string): number | null {
+    if (!metrics.dockerAt) {
+        return null;
+    }
+    const sampledAt = parseTimestamp(time);
+    if (!Number.isFinite(sampledAt)) {
+        return null;
+    }
+    const age = sampleAgeMs(metrics.dockerAt, sampledAt);
+    return Number.isFinite(age) ? age : null;
 }
 
 export function percentage(value: number | undefined): string {
