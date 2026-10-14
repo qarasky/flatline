@@ -113,3 +113,21 @@ pre-credentialed script:
 Office (43) runs 1.5.1 (updated through that script). The five client hosts
 stay on 1.5.0: the fix only affects non-systemd installs, and they can be
 updated with the same one-liner whenever convenient.
+
+## Agent 1.6.0 — 2026-10-14 (in the office image, not yet rolled out to hosts)
+
+Two delivery/collection fixes, both from the performance follow-up review:
+
+- a payload the server permanently refuses (HTTP 400/413) is quarantined
+  (`buffer/quarantine/`, newest 20) and counted instead of blocking every
+  healthy sample behind it; a credential/configuration answer (404/401/403)
+  keeps the backlog and is logged at most once per five minutes;
+- Docker collection runs under one 20s deadline on a 4-worker pool with
+  context cancellation; a failed or over-budget pass keeps the previous
+  container list, reports how old it is, and the payload carries `dockerAt`
+  so the board can show "containers as of Xm ago".
+
+Roll out per host with the same one-liner (the binary is built into the
+office image):
+
+    curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update

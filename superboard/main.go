@@ -20,7 +20,7 @@ import (
 	"os"
 )
 
-const version = "1.5.1"
+const version = "1.6.0"
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `superboard %s — Flatline fleet agent
