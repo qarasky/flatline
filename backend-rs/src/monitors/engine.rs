@@ -47,6 +47,9 @@ pub struct Engine {
     /// push is still in flight. Tests skip it to stay fast.
     boot_delay_push: bool,
     uptime: Mutex<HashMap<i64, (Instant, heartbeats::UptimeWindows)>>,
+    /// Monitors with an uptime refresh in flight, so concurrent readers
+    /// cannot duplicate the same 30-day scan.
+    refreshing_uptime: Mutex<std::collections::HashSet<i64>>,
 }
 
 impl Engine {
@@ -73,6 +76,7 @@ impl Engine {
             running: AtomicBool::new(false),
             boot_delay_push,
             uptime: Mutex::new(HashMap::new()),
+            refreshing_uptime: Mutex::new(std::collections::HashSet::new()),
         })
     }
 
@@ -148,18 +152,46 @@ impl Engine {
             .await
     }
 
-    /// Uptime ratios with a short TTL: the monitor list and the SSE patch
-    /// both read them, and a 30-day scan per read would be wasteful.
-    pub async fn uptime_windows(&self, monitor_id: i64) -> heartbeats::UptimeWindows {
-        {
-            let cache = self.uptime.lock().unwrap();
-            if let Some((at, windows)) = cache.get(&monitor_id)
-                && at.elapsed() < UPTIME_TTL
-            {
-                return *windows;
-            }
+    /// Uptime ratios with a short TTL, refreshed off the caller's path.
+    ///
+    /// The heartbeat publication path and the API both read these; waiting
+    /// for the 30-day scan after every cache expiry put that query on the
+    /// check loop (about 92ms per expiry for a 20s-interval monitor) and
+    /// concurrent misses could duplicate it. An expired entry is served as
+    /// is and refreshed in the background — one refresh per monitor at a
+    /// time — while a monitor with no cached value computes inline (its
+    /// first read; a fresh monitor has nothing to scan).
+    pub async fn uptime_windows(
+        self: &Arc<Self>,
+        monitor_id: i64,
+    ) -> heartbeats::UptimeWindows {
+        enum Cached {
+            Fresh(heartbeats::UptimeWindows),
+            Stale(heartbeats::UptimeWindows),
+            Missing,
         }
 
+        let cached = {
+            let cache = self.uptime.lock().unwrap();
+            match cache.get(&monitor_id) {
+                Some((at, windows)) if at.elapsed() < UPTIME_TTL => Cached::Fresh(*windows),
+                Some((_, windows)) => Cached::Stale(*windows),
+                None => Cached::Missing,
+            }
+        };
+
+        match cached {
+            Cached::Fresh(windows) => windows,
+            Cached::Stale(windows) => {
+                self.spawn_uptime_refresh(monitor_id);
+                windows
+            }
+            Cached::Missing => self.refresh_uptime_windows(monitor_id).await,
+        }
+    }
+
+    /// Recompute and cache one monitor's uptime windows.
+    async fn refresh_uptime_windows(&self, monitor_id: i64) -> heartbeats::UptimeWindows {
         let windows = heartbeats::uptime_windows(&self.pool, monitor_id)
             .await
             .unwrap_or_default();
@@ -168,6 +200,22 @@ impl Engine {
             .unwrap()
             .insert(monitor_id, (Instant::now(), windows));
         windows
+    }
+
+    /// Refresh a stale entry in the background, at most once per monitor.
+    fn spawn_uptime_refresh(self: &Arc<Self>, monitor_id: i64) {
+        {
+            let mut refreshing = self.refreshing_uptime.lock().unwrap();
+            if !refreshing.insert(monitor_id) {
+                return;
+            }
+        }
+
+        let engine = Arc::clone(self);
+        tokio::spawn(async move {
+            engine.refresh_uptime_windows(monitor_id).await;
+            engine.refreshing_uptime.lock().unwrap().remove(&monitor_id);
+        });
     }
 
     /// The next delay for a check loop: the configured interval minus the
@@ -683,6 +731,71 @@ mod tests {
                     \n--- 203.0.113.1 ping statistics ---\n\
                     1 packets transmitted, 0 received, 100% packet loss, time 0ms\n";
         assert_eq!(parse_reply_ms(dead), None);
+    }
+
+    #[tokio::test]
+    async fn uptime_windows_refresh_off_the_caller_path() {
+        // The follow-up finding: after the TTL expired, the 30-day scan ran
+        // on the heartbeat publication path (and concurrent misses could
+        // duplicate it). An expired entry is now served stale and refreshed
+        // in the background, one refresh per monitor at a time.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let pool = crate::db::connect(&path).await.unwrap();
+        let engine = Engine::new(pool.clone(), crate::events::Events::new());
+
+        let (monitor_id,): (i64,) =
+            sqlx::query_as("INSERT INTO monitors (name, type) VALUES ('m', 'push') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let now = chrono::Utc::now();
+        let stamp = |seconds_ago: i64| {
+            (now - chrono::Duration::seconds(seconds_ago))
+                .format("%Y-%m-%d %H:%M:%S%.3f")
+                .to_string()
+        };
+        // One hour UP, one hour DOWN, then UP until now: 2/3 up over the day.
+        for (seconds_ago, status) in [(3 * 3600, UP), (2 * 3600, DOWN), (3600, UP)] {
+            sqlx::query("INSERT INTO heartbeats (monitor_id, time, status) VALUES (?, ?, ?)")
+                .bind(monitor_id)
+                .bind(stamp(seconds_ago))
+                .bind(status)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        // First read computes inline.
+        let first = engine.uptime_windows(monitor_id).await;
+        assert!(first.day.is_some(), "the first read computes");
+
+        // Force the entry stale, then remove the evidence: a fresh
+        // computation would report nothing, the cached read must not.
+        {
+            let mut cache = engine.uptime.lock().unwrap();
+            let (_, windows) = *cache.get(&monitor_id).unwrap();
+            cache.insert(monitor_id, (Instant::now() - UPTIME_TTL * 2, windows));
+        }
+        sqlx::query("DELETE FROM heartbeats WHERE monitor_id = ?")
+            .bind(monitor_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let stale = engine.uptime_windows(monitor_id).await;
+        assert_eq!(stale.day, first.day, "a stale entry is served from cache");
+
+        // The background refresh catches up; the next read sees the new state.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let refreshed = engine.uptime_windows(monitor_id).await;
+        assert!(
+            refreshed.day.is_none(),
+            "the background refresh replaced the stale value"
+        );
+        let cached = engine.uptime.lock().unwrap().get(&monitor_id).cloned();
+        assert!(cached.is_some_and(|(at, _)| at.elapsed() < UPTIME_TTL), "cache is fresh again");
     }
 
     #[test]
