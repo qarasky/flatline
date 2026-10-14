@@ -447,7 +447,8 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
 
     let overlap_start =
         boundary_hour.max(last_complete_hour - (REPAIR_OVERLAP_HOURS - 1) * 3_600_000);
-    if overlap_start < sweep_start || overlap_start >= sweep_end {
+    let overlap_inside_sweep = overlap_start >= sweep_start && overlap_start < sweep_end;
+    if !overlap_inside_sweep {
         let overlap_rows = counts_in(pool, overlap_start, newest_hour).await?;
         mark_due_from_counts(
             &overlap_rows,
@@ -456,8 +457,8 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
             &mut raw_counts,
             &mut needs,
         );
+        verified_hours += REPAIR_OVERLAP_HOURS;
     }
-    verified_hours += REPAIR_OVERLAP_HOURS;
 
     // Process the due pairs in time order. Chunks are bounded in elapsed
     // time (a gap splits them) and each chunk is folded page by page, so no

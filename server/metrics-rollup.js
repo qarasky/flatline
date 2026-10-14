@@ -499,11 +499,10 @@ async function rollupMetrics(now = Date.now()) {
     const repairRows = await countsIn(sweep.start, sweep.end);
     markDueFromCounts(repairRows, boundaryHour, stored, rawCounts, needs);
     let verifiedHours = (sweep.end - sweep.start) / 3600_000;
-    if (overlapStart < sweep.start || overlapStart >= sweep.end) {
+    const overlapInsideSweep = overlapStart >= sweep.start && overlapStart < sweep.end;
+    if (!overlapInsideSweep) {
         const overlapRows = await countsIn(overlapStart, lastCompleteHour + 3600_000);
         markDueFromCounts(overlapRows, boundaryHour, stored, rawCounts, needs);
-        verifiedHours += REPAIR_OVERLAP_HOURS;
-    } else {
         verifiedHours += REPAIR_OVERLAP_HOURS;
     }
 

@@ -108,3 +108,35 @@ At the present 30-second archive interval, each host creates about 86,400 raw me
 - No production load, full Docker image build, external database container matrix, or long-running soak test was performed. Passing existing tests does not cover the newly reproduced edge cases.
 
 Only this report was added; application code was not changed. For the documented Rust deployment, address shared history preservation first, then notification reliability and historical-query costs. Address Node database-check deadlines before relying on those monitor types or rolling back to Node.
+
+---
+
+# Resolution — 2026-10-14
+
+All seven findings are fixed, one commit each, in the order the report
+suggested (maintenance pipeline first). Every commit adds a regression test for
+its failing scenario, and the two P1 reproductions in the report were re-run
+locally before fixing (finding 3's numbers came back identical: `samples=2,
+max=0, mean=0`; finding 1's raw and hourly tables both ended empty).
+
+Two findings needed slightly broader changes than the report's text implied,
+both documented in their commits:
+
+- Finding 3's fix also had to cover rows stored with second precision (`2000-01-01 00:00:00` sorts below `…00.000`, so the fold skipped them) — with the prune now verified, such a row would have been unprunable forever.
+- Finding 1's verified prune needed a reachable set: hours below the retention boundary still fold when they have no bucket, so orphaned raw rows stay prunable.
+
+| # | Commit | Summary |
+|---|---|---|
+| 1 | `e6c381ad` | Folding and the raw prune are one maintenance run: the prune moved inside the rollup, after the fold, and deletes only (monitor, hour) pairs an hourly bucket covers; unfolded pairs keep their evidence and are reported (`skippedRaw`) and pruned by the run that folds them. The separate daily prune job is gone in both backends. |
+| 2 | `eba4de9e` | Redis gets `socket.connectTimeout` plus a watchdog that destroys the client on expiry; MySQL gets `connectTimeout`, a per-query `{sql, timeout}` and a shared `runMysqlQuery()` that always destroys the connection on success, error and timeout. |
+| 3 | `00855842` | Raw pruning is hour-aligned (an hour is fully kept or fully deleted), the boundary hour is never rebuilt over an existing bucket, and a bucket richer than the remaining raw evidence is kept rather than downgraded. |
+| 4 | `f4b93e80` | Notification deliveries retry transient failures (3 attempts, 1s/4s backoff, Telegram's 429 `retry_after` honoured, other 4xx permanent) in both backends; Node's shutdown drains the queue (bounded); `/api/v1/health` exposes depth, oldest age, delivered/failed/retries/drops. |
+| 5 | `e81d9ba3` | Work selection is bounded per run: dirty hours resolve with one indexed count each, a durable repair cursor sweeps 24 hours per run plus a 2-hour overlap, and the whole-window comparison runs once after the upgrade (`resetRollupState()` forces it). Measured 735ms → 18.3ms + 1.5ms on the same 864k-row fixture. |
+| 6 | `337a200e` | Rust uptime reads are stale-while-revalidate with a single-flight background refresh per monitor, so the 30-day scan is off the heartbeat publication path and concurrent misses no longer duplicate it. |
+| 7 | `117a9040` | Docker collection runs under one 20s budget on a 4-worker pool with context cancellation; a failed/over-budget pass keeps the previous list, records the failure and the age of the kept data, and the payload carries `dockerAt`; the dashboard shows "containers as of Xm ago". |
+
+Verification after the fixes: Node backend suite (`npm test`), Rust
+(`cargo test --locked`, 67 tests), Go (`go test -race -count=1 ./...`),
+dashboard (`node --test apps/dashboard/test/*.test.mjs`, 29 tests), dashboard
+typecheck and production build all pass; `npm run lint` reports only
+pre-existing issues in untouched files.
