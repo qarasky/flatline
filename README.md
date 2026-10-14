@@ -108,8 +108,9 @@ operator dashboard and public status pages — on one origin.
 |---|---|---|---|
 | Backend + web app | `server/`, `apps/dashboard/` | 3001 | Monitors, checks, notifications, REST v1, and the built SPA (dashboard, `/status/:slug`, host-routed client domains). |
 
-The dashboard uses bearer-authenticated HTTP. Sign in with a username and
-password to obtain a browser token; integrations use per-user API keys from
+The dashboard uses bearer-authenticated HTTP. Sign in with the operator
+password to obtain a browser token — the username is only asked for when the
+instance has several accounts; integrations use per-user API keys from
 `POST /api/v1/api-keys` or the **Agents** panel. Public status pages are
 routes in the same app; they read the status-page API, and password-gated
 pages use page-scoped unlock cookies rather than granting visitors operator

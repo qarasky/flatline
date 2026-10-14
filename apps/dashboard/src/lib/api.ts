@@ -629,9 +629,10 @@ export function deleteApiKey(id: number): Promise<{ ok: true; deleted: number }>
 // ---------------------------------------------------------------------------
 // Authentication, setup, invites and account administration.
 //
-// The dashboard signs operators in with a username and password and stores
-// the minted bearer token — the same credential shape an agent uses. No
-// session cookie, no Socket.IO.
+// The dashboard signs operators in with a password — the username is only
+// asked for when the server needs it (multiple accounts, legacy account) —
+// and stores the minted bearer token, the same credential shape an agent
+// uses. No session cookie, no Socket.IO.
 // ---------------------------------------------------------------------------
 
 export interface AuthUser {
@@ -666,10 +667,12 @@ export interface LoginResult {
 
 /**
  * Password login. Mints a full-scope token returned exactly once — the
- * caller persists it via setToken. Throws an ApiError with code
+ * caller persists it via setToken. The username may be omitted: the server
+ * resolves the single account on its own and answers `username_required`
+ * (same ApiError code) when it cannot. Throws an ApiError with code
  * "two_factor_required" when the account needs a TOTP code; retry with it.
  */
-export function login(payload: { username: string; password: string; totp?: string }): Promise<LoginResult> {
+export function login(payload: { username?: string; password: string; totp?: string }): Promise<LoginResult> {
     return request("/api/v1/auth/login", {
         method: "POST",
         body: JSON.stringify(payload),

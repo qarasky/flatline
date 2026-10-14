@@ -71,6 +71,13 @@ router.get("/api/v1/auth/setup", async (req, res) => {
  * it and uses it as its only credential from then on; no session cookie is
  * involved, which keeps the browser flow identical to an agent's.
  *
+ * The dashboard's login form hides the username field, so `username` is
+ * optional here: without one, the account is resolved only when the instance
+ * has exactly one. Anything else (several accounts, or a legacy account that
+ * still needs migrating) answers `username_required`, and the form reveals
+ * the field. This keeps a password from ever being tried against multiple
+ * accounts.
+ *
  * 2FA: when the account has TOTP enabled the first call returns 401 with
  * `twoFactorRequired`, and the caller retries with the code. The code is
  * verified against the same secret and parameters the better-auth plugin
@@ -91,24 +98,56 @@ router.post("/api/v1/auth/login", async (req, res) => {
         const password = typeof req.body?.password === "string" ? req.body.password : "";
         const totp = typeof req.body?.totp === "string" ? req.body.totp.trim() : "";
 
-        if (!username || !password) {
-            fail(res, 400, "bad_request", "`username` and `password` are required.");
+        if (!password) {
+            fail(res, 400, "bad_request", "`password` is required.");
             return;
+        }
+
+        let account = username;
+        if (!account) {
+            if (!(await hasUser())) {
+                // A legacy `user`-table account migrates on first sign-in and
+                // needs the username to match on, so password-only cannot be
+                // used until it has signed in once.
+                const legacy = await R.getRow("SELECT COUNT(*) AS count FROM `user`");
+                if (Number(legacy.count) > 0) {
+                    fail(res, 400, "username_required", "This instance still signs in with a username.");
+                    return;
+                }
+                fail(res, 401, "unauthorized", "Invalid username or password.");
+                return;
+            }
+
+            // Password-only sign-in only makes sense against a single account;
+            // with several, the dashboard must ask for a username rather than
+            // try the password against each one.
+            const { count } = await R.getRow("SELECT COUNT(*) AS count FROM better_auth_user");
+            if (Number(count) !== 1) {
+                fail(res, 400, "username_required", "This instance has multiple accounts; sign in with a username.");
+                return;
+            }
+
+            const sole = await R.findOne("better_auth_user", " 1 = 1 ");
+            if (!sole?.username) {
+                fail(res, 401, "unauthorized", "Invalid username or password.");
+                return;
+            }
+            account = sole.username;
         }
 
         // Legacy `user`-table accounts migrate on first sign-in, mirroring the
         // better-auth before-hook. Only attempted when better-auth is empty.
         if (!(await hasUser())) {
-            await migrateUser(username, password);
+            await migrateUser(account, password);
         }
 
-        if (!(await checkPassword(username, password))) {
+        if (!(await checkPassword(account, password))) {
             // Same response as a missing account: no username oracle.
             fail(res, 401, "unauthorized", "Invalid username or password.");
             return;
         }
 
-        const user = await R.findOne("better_auth_user", " username = ? ", [ username ]);
+        const user = await R.findOne("better_auth_user", " username = ? ", [ account ]);
         if (!user) {
             fail(res, 401, "unauthorized", "Invalid username or password.");
             return;
@@ -135,7 +174,7 @@ router.post("/api/v1/auth/login", async (req, res) => {
                 const { symmetricDecrypt } = require("better-auth/crypto");
                 secret = await symmetricDecrypt({ key: getAuthSecret(), data: twoFactor.secret });
             } catch (e) {
-                log.error("auth", `TOTP secret decrypt failed for ${username}: ${e.message}`);
+                log.error("auth", `TOTP secret decrypt failed for ${account}: ${e.message}`);
                 fail(res, 500, "server_error", "Could not verify the second factor.");
                 return;
             }
@@ -170,7 +209,7 @@ router.post("/api/v1/auth/login", async (req, res) => {
 
         await Settings.set("apiKeysEnabled", true);
 
-        log.info("auth", `Password login for ${username}, minted API key ${bean.id}`);
+        log.info("auth", `Password login for ${account}, minted API key ${bean.id}`);
 
         res.json({
             ok: true,

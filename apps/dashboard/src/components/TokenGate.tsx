@@ -20,19 +20,25 @@ function errorMessage(e: unknown, fallback: string): string {
 }
 
 /**
- * Username + password form shared by sign-in and first-run setup.
+ * Password form shared by sign-in, first-run setup and invite redemption.
+ *
+ * Sign-in hides the username unless the server asks for it (multiple
+ * accounts, or a legacy account still to migrate) — see TokenGate. Setup and
+ * invites always show it: those flows create accounts and need a unique name.
  */
 function CredentialsForm({
     submitLabel,
     error,
     busy,
     showTotp,
+    showUsername,
     onSubmit,
 }: {
     submitLabel: string;
     error: string | null;
     busy: boolean;
     showTotp: boolean;
+    showUsername: boolean;
     onSubmit: (username: string, password: string, totp: string) => void;
 }) {
     const [username, setUsername] = useState("");
@@ -50,16 +56,18 @@ function CredentialsForm({
                 <div className="mb-3 rounded-md bg-destructive/12 px-2.5 py-2 text-xs text-destructive">{error}</div>
             ) : null}
 
-            <label className="mb-3 block">
-                <span className="mb-1 block text-xs text-muted-foreground">Username</span>
-                <Input
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    autoComplete="username"
-                    autoFocus
-                    required
-                />
-            </label>
+            {showUsername ? (
+                <label className="mb-3 block">
+                    <span className="mb-1 block text-xs text-muted-foreground">Username</span>
+                    <Input
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        autoComplete="username"
+                        autoFocus={!showTotp}
+                        required
+                    />
+                </label>
+            ) : null}
 
             <label className="mb-3 block">
                 <span className="mb-1 block text-xs text-muted-foreground">Password</span>
@@ -68,6 +76,7 @@ function CredentialsForm({
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     autoComplete={submitLabel === "Create account" ? "new-password" : "current-password"}
+                    autoFocus={!showUsername && !showTotp}
                     required
                 />
             </label>
@@ -109,6 +118,11 @@ export function TokenGate({ inviteToken, onSaved }: { inviteToken: string | null
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [totpRequired, setTotpRequired] = useState(false);
+    // Sign-in normally shows only the password: the server resolves the
+    // single account. It answers `username_required` when it can't (several
+    // accounts, or a legacy account still to migrate), which reveals the
+    // field rather than dead-ending the login.
+    const [usernameRequired, setUsernameRequired] = useState(false);
 
     useEffect(() => {
         let alive = true;
@@ -167,12 +181,16 @@ export function TokenGate({ inviteToken, onSaved }: { inviteToken: string | null
         setError(null);
         setBusy(true);
         try {
-            const res = await login({ username, password, ...(totp ? { totp } : {}) });
+            const res = await login({ ...(username ? { username } : {}), password, ...(totp ? { totp } : {}) });
             await saveToken(res.token);
         } catch (e) {
             if (e instanceof ApiError && e.code === "two_factor_required") {
                 setTotpRequired(true);
                 setError("Two-factor code required — enter it below and sign in again.");
+            } else if (e instanceof ApiError && e.code === "username_required") {
+                setToken(null);
+                setUsernameRequired(true);
+                setError(e.message);
             } else {
                 setToken(null);
                 setError(errorMessage(e, "Could not reach the Flatline server."));
@@ -225,7 +243,7 @@ export function TokenGate({ inviteToken, onSaved }: { inviteToken: string | null
                         <p className="mt-1 mb-4 text-xs text-muted-foreground">
                             No accounts exist yet. Create the first operator account.
                         </p>
-                        <CredentialsForm submitLabel="Create account" error={error} busy={busy} showTotp={false} onSubmit={doSetup} />
+                        <CredentialsForm submitLabel="Create account" error={error} busy={busy} showTotp={false} showUsername onSubmit={doSetup} />
                     </>
                 ) : mode === "invite" ? (
                     <>
@@ -242,15 +260,15 @@ export function TokenGate({ inviteToken, onSaved }: { inviteToken: string | null
                                 Back to sign in
                             </Button>
                         ) : (
-                            <CredentialsForm submitLabel="Accept invite" error={error} busy={busy} showTotp={false} onSubmit={doRedeem} />
+                            <CredentialsForm submitLabel="Accept invite" error={error} busy={busy} showTotp={false} showUsername onSubmit={doRedeem} />
                         )}
                     </>
                 ) : (
                     <>
                         <p className="mt-1 mb-4 text-xs text-muted-foreground">
-                            Sign in with your operator account. A token is minted for this browser.
+                            Sign in with your password. A token is minted for this browser.
                         </p>
-                        <CredentialsForm submitLabel="Sign in" error={error} busy={busy} showTotp={totpRequired} onSubmit={doLogin} />
+                        <CredentialsForm submitLabel="Sign in" error={error} busy={busy} showTotp={totpRequired} showUsername={usernameRequired} onSubmit={doLogin} />
                     </>
                 )}
             </div>

@@ -32,8 +32,10 @@ build is served by the backend itself (same origin), so no URL is stamped in.
   by slug (`Aiel Qorgan` → `aiel-qorgan`) or case-insensitive exact name;
   unknown scopes show an empty board rather than everything.
 
-Sign in with username/password (and TOTP when configured); first-run setup
-creates the initial account. REST snapshots and bearer-authenticated SSE keep
+Sign in with the operator password (and TOTP when configured). The username
+field stays hidden — the server resolves the single account — and appears
+automatically when the instance has several accounts. First-run setup creates
+the initial account. REST snapshots and bearer-authenticated SSE keep
 views current. Up to ten hosts remain on one default fleet page; smaller
 viewports scroll the board rather than rotating single rows.
 

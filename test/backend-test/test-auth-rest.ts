@@ -132,6 +132,19 @@ test("auth REST", async (t) => {
         assert.strictEqual((await get("/api/v1/auth/me")).status, 401);
     });
 
+    await t.test("login accepts the password alone when the instance has one account", async () => {
+        const { status, body } = await post("/api/v1/auth/login", { password: "Kuma-Test-8f4Q2xR9p" });
+        assert.strictEqual(status, 200);
+        assert.match(body.token, /^uk[0-9]+_.+/);
+        assert.strictEqual(body.user.username, "admin");
+    });
+
+    await t.test("login without a username still rejects a bad password", async () => {
+        const { status, body } = await post("/api/v1/auth/login", { password: "wrong-pass" });
+        assert.strictEqual(status, 401);
+        assert.strictEqual(body.message, "Invalid username or password.");
+    });
+
     await t.test("2FA: required without a code, verified with one", async () => {
         const { R } = require("redbean-node");
         const { symmetricEncrypt } = require("better-auth/crypto");
@@ -227,6 +240,34 @@ test("auth REST", async (t) => {
             headers: { Authorization: `Bearer ${adminToken}` },
         });
         assert.strictEqual(ghost.status, 404);
+    });
+
+    await t.test("password-only login asks for a username once a second account exists", async () => {
+        const minted = await post("/api/v1/invites", {}, adminToken);
+        const redeemed = await post(`/api/v1/auth/invites/${minted.body.token}/redeem`, {
+            username: "second.operator",
+            password: "Second-Operator-99",
+        });
+        assert.strictEqual(redeemed.status, 200);
+
+        // The password alone is ambiguous with several accounts, so the API
+        // asks for a username instead of trying it against each account.
+        const passwordOnly = await post("/api/v1/auth/login", { password: "Kuma-Test-8f4Q2xR9p" });
+        assert.strictEqual(passwordOnly.status, 400);
+        assert.strictEqual(passwordOnly.body.error, "username_required");
+
+        const withUsername = await post("/api/v1/auth/login", {
+            username: "admin",
+            password: "Kuma-Test-8f4Q2xR9p",
+        });
+        assert.strictEqual(withUsername.status, 200);
+
+        const users = await get("/api/v1/users", adminToken);
+        const extra = users.body.users.find((u: any) => u.username === "second.operator");
+        await fetch(`${base}/api/v1/users/${extra.id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${adminToken}` },
+        });
     });
 
     await t.test("invites: mint, list, check, double redeem fails", async () => {
