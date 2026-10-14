@@ -164,5 +164,8 @@ func collectSMART() *SMART {
 			out.Disks = append(out.Disks, parsed)
 		}
 	}
+	if len(out.Disks) > 0 {
+		stats.recordCollectorRecovered("smart")
+	}
 	return out
 }

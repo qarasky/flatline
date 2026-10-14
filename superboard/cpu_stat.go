@@ -198,6 +198,7 @@ func snapshotCPUCounters() (*CPUCounters, error) {
 		stats.recordCollectorError("cpu")
 		return nil, err
 	}
+	stats.recordCollectorRecovered("cpu")
 	out := &CPUCounters{Total: total.total, Idle: total.idle}
 	for _, c := range perCore {
 		out.PerCore = append(out.PerCore, CPUCounter{Total: c.total, Idle: c.idle})

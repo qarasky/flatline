@@ -327,6 +327,7 @@ func collectDocker() ([]Container, error) {
 
 	containers, err := collectDockerPS()
 	if err == nil {
+		stats.recordCollectorRecovered("docker")
 		return containers, nil
 	}
 	errs = append(errs, fmt.Sprintf("docker ps: %v", err))
@@ -406,6 +407,7 @@ func collectDockerSocket(socketPath string) ([]Container, error) {
 	}
 
 	pruneDockerStatsCache(seen)
+	stats.recordCollectorRecovered("docker")
 
 	if out == nil {
 		out = []Container{}

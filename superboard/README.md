@@ -59,6 +59,22 @@ version and an amber warning line when something has gone wrong; a clean
 agent adds no noise. Counts reset on agent restart and describe "has had
 trouble since start", not necessarily "failing right now".
 
+Two counter semantics keep that line honest rather than noisy:
+
+- **failedPushes** counts samples delivery *lost* — a payload the server
+  permanently refused (quarantined) or a failed push in the fallback
+  in-memory queue. A failure that is retried and eventually delivered only
+  sets `lastError`, so a backend restart, a tunnel blip or a transient 5xx
+  no longer makes the number climb.
+- **collectorErrors** counts failure *episodes* per collector: the first
+  failure after a healthy period. A collector that stays broken (a GPU
+  driver mismatch, a missing helper) contributes one, and the count rises
+  again only after it recovered and failed anew.
+
+The Docker and GPU collectors additionally back off while broken: the GPU
+poll retries every 5 minutes after three consecutive nvidia-smi failures and
+logs the reason on the first failure and then rarely, instead of every tick.
+
 Existing installs keep their explicit interval. To enable 1Hz, upgrade the
 **backend first**, set `interval_seconds` to `1` in the existing config, then
 restart `superboard`. Older backends accept the additive payload but persist

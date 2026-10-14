@@ -24,6 +24,7 @@ func collectLoad() *Load {
 		stats.recordCollectorError("load")
 		return nil
 	}
+	stats.recordCollectorRecovered("load")
 	return &Load{Avg1: avg.Load1, Avg5: avg.Load5, Avg15: avg.Load15}
 }
 
@@ -48,6 +49,7 @@ func collectNet() []NetInterface {
 			TxBytes: c.BytesSent,
 		})
 	}
+	stats.recordCollectorRecovered("net")
 	sort.Slice(out, func(i, j int) bool { return out[i].Iface < out[j].Iface })
 	return out
 }
@@ -67,6 +69,7 @@ func collectDiskIO() []DiskIO {
 		names = append(names, name)
 	}
 
+	stats.recordCollectorRecovered("diskio")
 	var out []DiskIO
 	for _, name := range wholeDisks(names) {
 		c := counters[name]

@@ -127,15 +127,17 @@ func runLoop(cfg *Config) error {
 		case payload := <-samples:
 			err := client.push(payload)
 			if err != nil {
-				stats.recordPushFailure(err)
 				var rejected *pushRejectedError
 				if errors.As(err, &rejected) {
 					// Newest-wins already replaced any older sample; this one
 					// is dead. Counting and moving on is all that is left.
-					stats.recordDrop()
+					stats.recordPushLost(err)
 					log.Printf("push rejected, sample dropped: %v", err)
 					continue
 				}
+				// The sample was consumed from the queue and is lost; the
+				// server's silence detection is the operator's signal.
+				stats.recordPushLost(err)
 				log.Printf("push failed: %v", err)
 				if !sleepBackoff(ctx, backoff) {
 					return nil
@@ -192,12 +194,14 @@ func deliverBuffered(ctx context.Context, buffer *sampleBuffer, client *pushClie
 			continue
 		}
 
-		stats.recordPushFailure(err)
+		stats.recordPushRetry(err)
 
 		var rejected *pushRejectedError
 		if errors.As(err, &rejected) {
 			buffer.quarantine(entry)
-			stats.recordDrop()
+			// The sample is gone for good: counted as a push failure, not as
+			// a drain drop (the two lines must not double-count it).
+			stats.recordPushLost(err)
 			log.Printf("push rejected, sample quarantined (%d still queued): %v", buffer.pending(), err)
 			backoff = interval
 			continue

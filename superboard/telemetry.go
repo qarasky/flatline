@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -14,7 +15,9 @@ import (
 //
 // Counters are cumulative since process start and reset on restart, so they
 // describe the current agent's behaviour. Types are atomic: collectors run in
-// independent goroutines.
+// independent goroutines. Collector counts are per failure *episode* and the
+// push counter counts lost samples, not retried attempts, so a recovered
+// agent's numbers stop moving (see the record* helpers below).
 
 // agentStarted approximates process start; it anchors the uptime field.
 var agentStarted = time.Now()
@@ -37,6 +40,11 @@ type telemetry struct {
 	diskioErrors   atomic.Uint64
 	smartErrors    atomic.Uint64
 	lastError      atomic.Pointer[string]
+
+	// collectorFailing tracks which collectors are in a failing episode, so
+	// repeat failures count once per episode instead of once per tick.
+	collectorMu      sync.Mutex
+	collectorFailing map[string]bool
 }
 
 // stats is the process-wide self-report. Package-level on purpose: the
@@ -50,14 +58,25 @@ func (t *telemetry) recordDrop() {
 	t.samplesDropped.Add(1)
 }
 
-// recordPushFailure counts one failed delivery and remembers the reason.
-func (t *telemetry) recordPushFailure(err error) {
-	t.failedPushes.Add(1)
+// recordPushRetry records a delivery failure that will be retried: the
+// reason is remembered (the board shows it while it is current), but the
+// failure counter is left alone. Retried-and-delivered is not a failure, and
+// counting every attempt made the counter climb on every backend restart,
+// tunnel blip or transient 5xx while no sample was actually lost.
+func (t *telemetry) recordPushRetry(err error) {
 	msg := err.Error()
 	if len(msg) > maxErrorLength {
 		msg = msg[:maxErrorLength]
 	}
 	t.lastError.Store(&msg)
+}
+
+// recordPushLost counts one sample that delivery lost for good: a payload the
+// server permanently refused (quarantined) or a failed push in the fallback
+// in-memory queue, where the sample is consumed and replaced.
+func (t *telemetry) recordPushLost(err error) {
+	t.failedPushes.Add(1)
+	t.recordPushRetry(err)
 }
 
 // recordPushOk clears the last-error string: the most recent state of the
@@ -66,9 +85,27 @@ func (t *telemetry) recordPushOk() {
 	t.lastError.Store(nil)
 }
 
-// recordCollectorError counts one collector failure by name. The names are
-// fixed so the payload map stays small and the board can label them.
+// recordCollectorError counts one collector failure *episode* by name: the
+// first failure after a healthy period. A collector that keeps failing (the
+// office host's nvidia-smi driver mismatch, a missing helper) is one problem,
+// not a per-tick event — the old counter grew every five seconds and made the
+// board's warning line climb forever. The count rises again only when a
+// collector recovered and failed anew.
+//
+// The names are fixed so the payload map stays small and the board can label
+// them.
 func (t *telemetry) recordCollectorError(name string) {
+	t.collectorMu.Lock()
+	if t.collectorFailing == nil {
+		t.collectorFailing = make(map[string]bool)
+	}
+	if t.collectorFailing[name] {
+		t.collectorMu.Unlock()
+		return
+	}
+	t.collectorFailing[name] = true
+	t.collectorMu.Unlock()
+
 	switch name {
 	case "cpu":
 		t.cpuErrors.Add(1)
@@ -89,6 +126,16 @@ func (t *telemetry) recordCollectorError(name string) {
 	case "smart":
 		t.smartErrors.Add(1)
 	}
+}
+
+// recordCollectorRecovered marks a collector healthy again, so its next
+// failure counts as a new episode. Collectors call it on their success path.
+func (t *telemetry) recordCollectorRecovered(name string) {
+	t.collectorMu.Lock()
+	if t.collectorFailing != nil {
+		delete(t.collectorFailing, name)
+	}
+	t.collectorMu.Unlock()
 }
 
 // collectorErrorNames is the stable, sorted order of collector keys.

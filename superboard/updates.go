@@ -30,7 +30,7 @@ const updatesTimeout = 30 * time.Second
 // dnf/yum/pacman/apk only query. Best-effort like the GPU collector —
 // unsupported distros and any failure yield an error and the caller omits
 // the field, so unknown never presents as "fully updated".
-func collectUpdates() (*Updates, error) {
+func collectUpdatesUncached() (*Updates, error) {
 	if total, security, ok := aptCheckUpdates(); ok {
 		return &Updates{Total: total, Security: security}, nil
 	}
@@ -45,6 +45,16 @@ func collectUpdates() (*Updates, error) {
 	}
 	stats.recordCollectorError("updates")
 	return nil, fmt.Errorf("no supported package manager found")
+}
+
+// collectUpdates wraps the package-manager probes: any success clears the
+// failure episode so a later break counts again.
+func collectUpdates() (*Updates, error) {
+	updates, err := collectUpdatesUncached()
+	if err == nil {
+		stats.recordCollectorRecovered("updates")
+	}
+	return updates, err
 }
 
 // runQuery executes a read-only query command, returning stdout. A dnf-style

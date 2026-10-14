@@ -131,3 +131,24 @@ Roll out per host with the same one-liner (the binary is built into the
 office image):
 
     curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
+
+## Agent 1.6.1 — 2026-10-14
+
+Counter semantics, after the board's warning lines climbed without anything
+actually wrong:
+
+- `failedPushes` is now "samples delivery lost" (quarantined rejects, failed
+  pushes in the in-memory fallback). A failure that is retried and delivered
+  only records `lastError` — the fleet's 36–201 counts came from backend
+  restarts, tunnel blips and the 2026-10-12 provider outage, and made the
+  amber line climb forever while no sample was lost. The counter resets on
+  restart (this update) and now moves only when data is actually lost.
+- `collectorErrors` counts failure *episodes* per collector instead of every
+  failed attempt. The office host's NVML driver/library mismatch failed every
+  five seconds (~17k counts/day) and pinned an amber warning on the card; it
+  now counts once. The GPU poll also backs off to one attempt per five
+  minutes while broken and logs the reason once instead of every tick.
+
+Ships in the office image; per-host update is the usual one-liner:
+
+    curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update

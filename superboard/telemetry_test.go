@@ -7,21 +7,52 @@ import (
 	"time"
 )
 
-func TestAgentInfoCountsErrors(t *testing.T) {
+func TestAgentInfoCountsCollectorEpisodes(t *testing.T) {
+	// A collector that keeps failing is one problem, not a per-tick event:
+	// repeat failures while it stays broken must not move the counter (the
+	// office host's nvidia-smi driver mismatch failed every 5s and made the
+	// board's warning line climb forever).
+	stats.recordCollectorRecovered("gpu")
+	stats.recordCollectorRecovered("updates")
 	before := agentInfoSnapshot()
+	stats.recordCollectorError("gpu")
 	stats.recordCollectorError("gpu")
 	stats.recordCollectorError("gpu")
 	stats.recordCollectorError("updates")
 	after := agentInfoSnapshot()
 
-	if after.CollectorErrors["gpu"] != before.CollectorErrors["gpu"]+2 {
-		t.Fatalf("gpu errors = %d, want +2", after.CollectorErrors["gpu"])
+	if after.CollectorErrors["gpu"] != before.CollectorErrors["gpu"]+1 {
+		t.Fatalf("gpu errors = %d, want +1 for one episode", after.CollectorErrors["gpu"])
 	}
 	if after.CollectorErrors["updates"] != before.CollectorErrors["updates"]+1 {
 		t.Fatalf("updates errors = %d, want +1", after.CollectorErrors["updates"])
 	}
+
+	// Recovery closes the episode; the next failure counts again.
+	stats.recordCollectorRecovered("gpu")
+	stats.recordCollectorError("gpu")
+	if got := agentInfoSnapshot().CollectorErrors["gpu"]; got != after.CollectorErrors["gpu"]+1 {
+		t.Fatalf("gpu errors after recovery = %d, want +1", got)
+	}
 	if _, ok := after.CollectorErrors["disk"]; ok && before.CollectorErrors["disk"] == 0 {
 		t.Fatal("zero counters must be omitted from the report")
+	}
+}
+
+func TestGPUBackoffAfterRepeatedFailures(t *testing.T) {
+	gpuNoteRecovered()
+	if !gpuAttemptDue() {
+		t.Fatal("a recovered GPU must be polled")
+	}
+	for i := 0; i < gpuBackoffAfterFailures; i++ {
+		gpuNoteFailure(errTest{})
+	}
+	if gpuAttemptDue() {
+		t.Fatal("a persistently failing nvidia-smi must back off")
+	}
+	gpuNoteRecovered()
+	if !gpuAttemptDue() {
+		t.Fatal("recovery must clear the backoff")
 	}
 }
 
@@ -31,12 +62,23 @@ func TestAgentInfoLastErrorRoundTrip(t *testing.T) {
 		t.Fatalf("clean pipeline must have no last error, got %q", got)
 	}
 
-	stats.recordPushFailure(errTest{})
+	stats.recordPushLost(errTest{})
 	if got := agentInfoSnapshot().LastError; got != "connection refused" {
 		t.Fatalf("last error = %q", got)
 	}
 	if failed := agentInfoSnapshot().FailedPushes; failed < 1 {
-		t.Fatal("failed pushes must be counted")
+		t.Fatal("lost samples must be counted")
+	}
+
+	// A retried failure is not a loss: it must set the reason without
+	// moving the counter.
+	lostBefore := agentInfoSnapshot().FailedPushes
+	stats.recordPushRetry(errTest{msg: "transient 503"})
+	if got := agentInfoSnapshot().FailedPushes; got != lostBefore {
+		t.Fatalf("a retried failure counted as lost: %d -> %d", lostBefore, got)
+	}
+	if got := agentInfoSnapshot().LastError; got != "transient 503" {
+		t.Fatalf("a retried failure must still be visible, got %q", got)
 	}
 
 	stats.recordPushOk()
@@ -46,7 +88,7 @@ func TestAgentInfoLastErrorRoundTrip(t *testing.T) {
 }
 
 func TestAgentInfoTruncatesLongErrors(t *testing.T) {
-	stats.recordPushFailure(errTest{msg: strings.Repeat("x", 500)})
+	stats.recordPushRetry(errTest{msg: strings.Repeat("x", 500)})
 	if got := len(agentInfoSnapshot().LastError); got != maxErrorLength {
 		t.Fatalf("error length = %d, want %d", got, maxErrorLength)
 	}

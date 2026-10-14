@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/disk"
@@ -173,7 +174,74 @@ func collectDisk() ([]Disk, error) {
 		})
 	}
 
+	stats.recordCollectorRecovered("disk")
 	return out, nil
+}
+
+// gpuHealth rate-limits a persistently broken nvidia-smi.
+//
+// The office host's NVML driver/library mismatch failed on every 5s poll:
+// the log filled with one warning per tick and the board's collector-error
+// counter climbed forever. After a few consecutive failures the poll backs
+// off (the GPU is unavailable either way) and the reason is logged on the
+// first failure and then rarely.
+var gpuHealth = struct {
+	mu          sync.Mutex
+	consecutive int
+	nextAttempt time.Time
+	lastLogged  time.Time
+}{}
+
+const (
+	// Consecutive failures before the poll backs off.
+	gpuBackoffAfterFailures = 3
+	// How long to wait between attempts while the GPU is unusable.
+	gpuBackoffInterval = 5 * time.Minute
+	// How often the same failure is re-logged while it persists.
+	gpuFailureLogInterval = 15 * time.Minute
+)
+
+// gpuAttemptDue reports whether nvidia-smi should be polled now.
+func gpuAttemptDue() bool {
+	gpuHealth.mu.Lock()
+	defer gpuHealth.mu.Unlock()
+	return !time.Now().Before(gpuHealth.nextAttempt)
+}
+
+// gpuNoteFailure records one failed poll: counts the episode (once), logs the
+// first failure and then at most one line per gpuFailureLogInterval, and backs
+// the poll off after gpuBackoffAfterFailures consecutive failures.
+func gpuNoteFailure(err error) {
+	gpuHealth.mu.Lock()
+	gpuHealth.consecutive++
+	consecutive := gpuHealth.consecutive
+	if consecutive >= gpuBackoffAfterFailures {
+		gpuHealth.nextAttempt = time.Now().Add(gpuBackoffInterval)
+	}
+	loggable := consecutive == 1 || time.Since(gpuHealth.lastLogged) >= gpuFailureLogInterval
+	if loggable {
+		gpuHealth.lastLogged = time.Now()
+	}
+	gpuHealth.mu.Unlock()
+
+	if loggable {
+		if consecutive == 1 {
+			log.Printf("warning: nvidia-smi failed: %v", err)
+		} else {
+			log.Printf("warning: nvidia-smi still failing after %d attempts (retrying every %s): %v",
+				consecutive, gpuBackoffInterval, err)
+		}
+	}
+	stats.recordCollectorError("gpu")
+}
+
+// gpuNoteRecovered clears the failure episode and the backoff.
+func gpuNoteRecovered() {
+	gpuHealth.mu.Lock()
+	gpuHealth.consecutive = 0
+	gpuHealth.nextAttempt = time.Time{}
+	gpuHealth.mu.Unlock()
+	stats.recordCollectorRecovered("gpu")
 }
 
 // collectGPU shells out to nvidia-smi and parses the CSV output.
@@ -183,8 +251,17 @@ func collectDisk() ([]Disk, error) {
 // null GPU and a broken collector must be distinguishable server-side, and
 // this is how.
 func collectGPU() GPU {
+	if !gpuAttemptDue() {
+		// Backing off from a persistently broken nvidia-smi (driver
+		// mismatch, no usable device): polling every 5s only spams the log
+		// and the error counter. The GPU stays honestly unavailable.
+		return GPU{Available: false}
+	}
+
 	path, err := exec.LookPath("nvidia-smi")
 	if err != nil {
+		// No tool at all: this box has no NVIDIA GPU, which is not a failure.
+		gpuNoteRecovered()
 		return GPU{Available: false}
 	}
 
@@ -197,15 +274,13 @@ func collectGPU() GPU {
 		"--format=csv,noheader,nounits")
 	out, err := cmd.Output()
 	if err != nil {
-		log.Printf("warning: nvidia-smi failed: %v", err)
-		stats.recordCollectorError("gpu")
+		gpuNoteFailure(err)
 		return GPU{Available: false}
 	}
 
 	records, err := csv.NewReader(strings.NewReader(strings.TrimSpace(string(out)))).ReadAll()
 	if err != nil || len(records) == 0 {
-		log.Printf("warning: nvidia-smi output unparseable: %v", err)
-		stats.recordCollectorError("gpu")
+		gpuNoteFailure(fmt.Errorf("nvidia-smi output unparseable: %v", err))
 		return GPU{Available: false}
 	}
 
@@ -237,9 +312,11 @@ func collectGPU() GPU {
 	}
 
 	if len(gpus) == 0 {
-		stats.recordCollectorError("gpu")
+		gpuNoteFailure(fmt.Errorf("nvidia-smi reported no GPUs"))
 		return GPU{Available: false}
 	}
+
+	gpuNoteRecovered()
 
 	// The scalar fields repeat the first GPU so old readers keep working;
 	// new readers use Gpus.
