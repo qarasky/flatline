@@ -126,6 +126,9 @@ class Monitor extends BeanModel {
             id: this.id,
             name: this.name,
             description: this.description,
+            // Hosting provider id (usually a domain). Display-only: the
+            // dashboard maps it to a logo; no server behaviour depends on it.
+            provider: this.provider,
             path,
             pathName,
             parent: this.parent,

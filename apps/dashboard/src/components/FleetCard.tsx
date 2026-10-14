@@ -4,6 +4,7 @@ import { agentWarnings, containerAgeMs, fleetAttention, formatBytes, formatDurat
 import { ContainerTiles } from "@/components/ContainerTiles";
 import { CoreSquares } from "@/components/CoreSquares";
 import { MetricBar, usageTone } from "@/components/MetricBar";
+import { ProviderLogo } from "@/components/ProviderLogo";
 
 export interface FleetServer {
     monitor: MonitorSummary;
@@ -85,8 +86,8 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
         >
             <header className="fleet-heading">
                 <div className="min-w-0">
-                    <h2 className="fleet-name truncate"><button type="button" className="fleet-history-link truncate max-w-full" onClick={() => onOpenHistory(monitor.id)}
-                        aria-label={`Open load history for ${displayName}`} title={hostname && hostname !== displayName ? `${displayName} · hostname ${hostname} · View history` : `${displayName} · View history`}>{displayName} <span aria-hidden="true" className="text-quiet">↗</span></button></h2>
+                    <h2 className="fleet-name truncate"><button type="button" className="fleet-history-link" onClick={() => onOpenHistory(monitor.id)}
+                        aria-label={`Open load history for ${displayName}`} title={hostname && hostname !== displayName ? `${displayName} · hostname ${hostname} · View history` : `${displayName} · View history`}><ProviderLogo provider={monitor.provider} /><span className="truncate">{displayName} <span aria-hidden="true" className="text-quiet">↗</span></span></button></h2>
                     <p className="fleet-secondary mt-1" title={agentTip}>
                         {metrics.host?.os ?? monitor.type}{cpu?.cores ? ` · ${cpu.cores} cores` : ""}
                         {metrics.host?.uptime ? ` · uptime ${formatDuration(metrics.host.uptime)}` : ""}

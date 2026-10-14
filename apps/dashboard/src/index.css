@@ -551,9 +551,14 @@ body {
     .status-page .beats { width: 100%; }
     .status-page .beat-time { display: none; }
 }
-.fleet-history-link { cursor: pointer; text-align: left; }
+/* The card title is a flex row so the provider symbol, the name and the
+   history arrow stay on one line; the name itself carries the truncation. */
+.fleet-history-link { display: inline-flex; align-items: center; gap: 0.45em; max-width: 100%; cursor: pointer; text-align: left; }
 .fleet-history-link:focus-visible { outline: 2px solid #9eb8cd; outline-offset: -2px; }
 .fleet-history-link:hover { text-decoration: underline; text-decoration-color: #ffffff50; text-underline-offset: 4px; }
+
+/* Provider symbol: sized to the title's font, transparent, no badge. */
+.provider-logo { height: 1.05em; width: auto; max-width: 1.6em; object-fit: contain; flex-shrink: 0; }
 .history-dialog { width: min(1040px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); margin: auto; padding: 0; color: #e8e3db; background: #171615; border: 1px solid #ffffff30; border-radius: 12px; overflow: auto; }
 .history-dialog::backdrop { background: #000b; }
 .history-panel { padding: 24px; }

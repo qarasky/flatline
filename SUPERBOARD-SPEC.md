@@ -327,6 +327,23 @@ distinct from the dense table: this is the NOC wall, not the operator desk.
 - Fullscreen-friendly: no header chrome in kiosk mode (`?kiosk=1` hides the nav),
   large type, high contrast, works at Full HD and 4K@150%.
 
+### Provider symbols
+
+- A monitor may carry a `provider` id — usually a domain (`ps.kz`,
+  `hoster.kz`, `hetzner.com`, `digitalocean.com`), set in the monitor edit
+  form or over the REST API. The card draws that provider's symbol directly
+  before the title: no badge, no background, transparent, sized with the
+  title text (`apps/dashboard/src/components/ProviderLogo.tsx`).
+- Bundled logos live in `apps/dashboard/public/providers/` and are listed in
+  `apps/dashboard/src/lib/providers.ts`; a provider the catalog does not know
+  but that looks like a domain falls back to the site's favicon, so a new
+  provider needs an edit, not a release. Unknown slugs draw nothing, and a
+  favicon that fails to load (offline kiosk) collapses to no logo rather than
+  a broken image.
+- The server stores the string only: lowercased, trimmed, nullable, no
+  validation against the catalog. That keeps the field reusable for a future
+  provider monitor type without a schema change.
+
 ### Auto-pagination
 
 - Pages of N cards (fit to viewport, default 6–8), rotating every **5s**
@@ -340,7 +357,8 @@ distinct from the dense table: this is the NOC wall, not the operator desk.
 ### Editing (mostly in the admin panel)
 
 - Pairing lives in the monitor edit flow: generate/rotate the push token, set
-  the expected interval, link the monitor to its client group.
+  the expected interval, link the monitor to its client group, and pick the
+  hosting provider drawn on the card.
 - The board's one control is rename: right-click a card for a custom menu,
   Rename edits the monitor's display name (card titles prefer it over the
   agent-reported hostname, which stays read-only). Rotation pauses while the

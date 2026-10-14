@@ -158,6 +158,14 @@ function normaliseMonitorPayload(payload) {
         out.port = isNaN(parsed) ? null : parsed;
     }
 
+    // Provider is a display id (usually a domain): lowercase, trimmed, and
+    // blank means "unset" rather than an empty string that would render a
+    // broken logo lookup.
+    if (out.provider !== undefined) {
+        const provider = typeof out.provider === "string" ? out.provider.trim().toLowerCase() : "";
+        out.provider = provider === "" ? null : provider.slice(0, 128);
+    }
+
     // Metric thresholds are integers 1-100; anything else (blank, zero,
     // out of range, garbage) stores as NULL = disabled. An operator's typo
     // must disable the alert, never fire it at the wrong bound.

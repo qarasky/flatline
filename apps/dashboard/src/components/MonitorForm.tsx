@@ -2,9 +2,13 @@ import { useEffect, useState } from "react";
 import type { SyntheticEvent } from "react";
 import { ApiError, createMonitor, fetchMonitorTypes, updateMonitor, type MonitorSummary } from "@/lib/api";
 import { ALERT_THRESHOLD_FIELDS, COMMON_FIELDS, SCHEDULING_FIELDS, TYPE_SCHEMAS, defaultsFor, fieldsFor, schemaFor, type FieldDef } from "@/lib/monitor-schema";
+import { PROVIDERS, resolveProvider } from "@/lib/providers";
 import type { GroupOption } from "@/lib/groups";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+
+/** Select sentinel that swaps the picker for free-text input. */
+const CUSTOM_PROVIDER = "__custom__";
 
 function FieldInput({
     field,
@@ -110,6 +114,68 @@ function FieldInput({
 }
 
 /**
+ * Provider picker: the known catalog, or any domain typed by hand.
+ *
+ * The stored value is the raw id/domain — the server lowercases and trims it,
+ * and the Superboard card resolves a logo. A value missing from the catalog
+ * opens the free-text input pre-filled, so editing a monitor made through the
+ * API keeps its provider visible instead of silently resetting it to none.
+ */
+function ProviderField({ value, onChange }: { value: unknown; onChange: (value: string | null) => void }) {
+    const current = typeof value === "string" ? value : "";
+    // Resolve first so an API-set spelling ("hetzner.com", "hetzner.de")
+    // preselects the catalog entry instead of opening the free-text box.
+    const resolved = resolveProvider(current);
+    const knownId = resolved && !resolved.custom ? resolved.id : "";
+    // Local "Other…" mode, not derived from the value: picking the option
+    // must stay selected while the text box is still empty.
+    const [customMode, setCustomMode] = useState(current !== "" && knownId === "");
+    const [custom, setCustom] = useState(customMode ? current : "");
+
+    return (
+        <div>
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">Provider</span>
+            <div className="flex gap-2">
+                <select
+                    value={customMode ? CUSTOM_PROVIDER : knownId}
+                    onChange={(e) => {
+                        const next = e.target.value;
+                        if (next === CUSTOM_PROVIDER) {
+                            setCustomMode(true);
+                            onChange(custom === "" ? null : custom);
+                        } else {
+                            setCustomMode(false);
+                            onChange(next === "" ? null : next);
+                        }
+                    }}
+                    className="h-8 w-full rounded-md border border-border bg-surface-2 px-2 text-sm"
+                >
+                    <option value="">— none —</option>
+                    {PROVIDERS.map((p) => (
+                        <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                    <option value={CUSTOM_PROVIDER}>Other…</option>
+                </select>
+                {customMode ? (
+                    <Input
+                        value={custom}
+                        placeholder="domain, e.g. vultr.com"
+                        aria-label="Custom provider domain"
+                        onChange={(e) => {
+                            setCustom(e.target.value);
+                            onChange(e.target.value.trim() === "" ? null : e.target.value);
+                        }}
+                    />
+                ) : null}
+            </div>
+            <span className="mt-1 block text-[11px] text-quiet">
+                Symbol before the name on Superboard cards. Any domain works; unknown ones fall back to the site favicon.
+            </span>
+        </div>
+    );
+}
+
+/**
  * Compact monitor form: type picker + universal basics + type basics.
  * Advanced lives behind a toggle and on a separate view by design.
  *
@@ -203,6 +269,12 @@ export function MonitorForm({
             payload[field.key] = values[field.key] ?? null;
         }
 
+        // Provider clears the same way: "none" must send null, not omit the
+        // key. The server lowercases and trims it.
+        payload.provider = typeof values.provider === "string" && values.provider.trim() !== ""
+            ? values.provider.trim().toLowerCase()
+            : null;
+
         try {
             if (isEdit && initial?.id) {
                 const res = await updateMonitor(initial.id, payload);
@@ -262,6 +334,7 @@ export function MonitorForm({
                 {COMMON_FIELDS.map((f) => (
                     <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => setField(f, v)} />
                 ))}
+                <ProviderField value={values.provider} onChange={(v) => set("provider", v)} />
             </div>
 
             {basics.length > 0 ? (

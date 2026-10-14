@@ -104,6 +104,17 @@ test("monitor-service normalisation", async (t) => {
         assert.strictEqual(service().normaliseMonitorPayload({ proxyId: 3 }).proxyId, 3);
     });
 
+    await t.test("normalises the provider id used for Superboard logos", () => {
+        assert.strictEqual(service().normaliseMonitorPayload({ provider: "  HETZNER.com " }).provider, "hetzner.com");
+        assert.strictEqual(service().normaliseMonitorPayload({ provider: "" }).provider, null);
+        assert.strictEqual(service().normaliseMonitorPayload({ provider: "   " }).provider, null);
+        assert.strictEqual(service().normaliseMonitorPayload({ provider: 42 }).provider, null);
+        assert.strictEqual(service().normaliseMonitorPayload({ provider: "x".repeat(200) }).provider.length, 128);
+
+        // Absent stays absent, so a partial PATCH never clears it.
+        assert.strictEqual("provider" in service().normaliseMonitorPayload({ name: "x" }), false);
+    });
+
     await t.test("repairs retryInterval and timeout like the UI does", () => {
         const out = service().applyIntervalDefaults({ interval: 60 });
 

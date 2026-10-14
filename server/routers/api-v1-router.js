@@ -47,6 +47,9 @@ const MONITOR_WRITABLE_FIELDS = new Set([
     "name",
     "type",
     "description",
+    // Hosting provider id (usually a domain). The catalog that turns it into
+    // a logo lives in the dashboard; the server stores the raw string only.
+    "provider",
     "parent",
     "weight",
     "interval",
@@ -354,6 +357,8 @@ async function monitorToJSON(monitor, withUptime = true) {
     // round trip per monitor. Both are non-sensitive layout metadata.
     obj.weight = monitor.weight ?? 0;
     obj.parent = monitor.parent ?? null;
+    // Hosting provider (Superboard logos): a free-form id, null when unset.
+    obj.provider = monitor.provider ?? null;
     // Metric threshold alerts (Phase 5): exposed so the edit form can
     // prefill and API consumers can read the configuration.
     obj.metricCpuThreshold = monitor.metric_cpu_threshold ?? null;

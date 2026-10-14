@@ -88,6 +88,13 @@ known failure, yellow a transition/unknown state, green running/healthy, and
 black exited/removed with unknown stop intent. Symbols and tooltips supplement
 color. Container uptime is intentionally omitted; no manual list scrollbars.
 
+Cards show the hosting provider's symbol before the title when a monitor has
+one: a bundled transparent logo for the providers in
+`src/lib/providers.ts` (PS.kz, Hoster.kz, Hetzner, DigitalOcean), or the
+site's favicon for any other domain. Set it as **Provider** in the monitor
+edit form — the select offers the catalog plus an **Other…** box for a
+domain. No provider set means no logo, and an unknown slug draws nothing.
+
 ## Verify
 
 ```sh

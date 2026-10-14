@@ -114,6 +114,13 @@
                     "type": {
                         "type": "string"
                     },
+                    "provider": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Hosting provider id, usually a domain (e.g. \"hetzner.com\"). Display-only: the dashboard draws its logo on Superboard cards."
+                    },
                     "status": {
                         "type": "integer",
                         "description": "1 = up, 0 = down, 2 = pending, 3 = maintenance"
@@ -231,6 +238,13 @@
                     "type": {
                         "type": "string",
                         "description": "See GET /api/v1/monitor-types"
+                    },
+                    "provider": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Hosting provider id, usually a domain. Stored lowercased and trimmed; null clears it."
                     },
                     "url": {
                         "type": "string"

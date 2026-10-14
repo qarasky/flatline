@@ -124,6 +124,8 @@ export interface MonitorSummary {
     interval: number;
     weight?: number;
     parent?: number | null;
+    /** Hosting provider id (usually a domain) drawn as a logo on Superboard cards. */
+    provider?: string | null;
     // Server-side metric alert thresholds (Superboard Phase 5), null when disabled.
     metricCpuThreshold?: number | null;
     metricRamThreshold?: number | null;
