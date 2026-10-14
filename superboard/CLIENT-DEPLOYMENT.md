@@ -152,3 +152,19 @@ actually wrong:
 Ships in the office image; per-host update is the usual one-liner:
 
     curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
+
+## Agent 1.6.0/1.6.1 rollout — 2026-10-14
+
+All five client hosts (46–50) and the office host (43) run **1.6.1**, updated
+in place through `/agent/install.sh --update` (config and push tokens kept,
+services active, `superboard version` verified per host). Server-side check
+of the whole fleet's self-report after the update: every agent reports
+1.6.1, no `failedPushes`, no `samplesDropped`, and no collector errors —
+the office's `gpu: 1` is the one real defect below.
+
+Open item (office, 43): `nvidia-smi` fails with
+`Failed to initialize NVML: Driver/library version mismatch` (NVML library
+595.99 vs the running driver) — the card needs a reboot (or a driver
+reload) to recover. Until then the agent reports `gpu.available=false`,
+counts a single failure episode, retries the poll every five minutes, and
+logs once: no board warning that climbs and no journal spam.

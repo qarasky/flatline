@@ -65,6 +65,32 @@ Flatline backend. Stop one monitoring backend before enabling another to avoid
 duplicate alerts. Do not start the old Mac backend after production cutover
 unless its notification links have first been disabled.
 
+## Performance follow-up release — 2026-10-14
+
+Image rebuilt on the office from the synced tree
+(`/home/office/flatline-src`, master `4eb22da2`) and the stack recreated
+(`docker compose -f compose.rust.yaml up -d`), image
+`artchsh/flatline-rust:office-live` → `07e4e97b609d`. What shipped: the seven
+`PERFORMANCE-STABILITY-FOLLOWUP.md` fixes (rollup/prune coordination, bounded
+rollup work selection, Redis/MySQL deadlines, notification retries + shutdown
+drain, uptime off the publication path, Docker collection bounds) plus agent
+**1.6.0/1.6.1**. A consistent DB backup was taken first
+(`backups/pre-1.6.0-20261014-003310.db`, `integrity_check: ok`).
+
+Verified after the switch: container healthy, migrations 0007/0008 applied,
+heartbeat retention ran at startup (222 rows), API 36/36 monitors up with live
+uptime windows, dashboard bundle serving, `/agent/version` → 1.6.1 with
+matching checksums, public origin 200 through the tunnel, and the office agent
+updated to 1.6.1 pushing normally.
+
+Open item: the office GPU is unusable until the host is rebooted —
+`nvidia-smi` reports `Failed to initialize NVML: Driver/library version
+mismatch` (NVML 595.99 vs the running driver), which failed on every 5s poll
+before 1.6.1. The agent now counts it as one failure episode, backs the poll
+off to one attempt per five minutes and logs the reason once; the card shows
+a single `gpu` collector error until the host is rebooted. No GPU data is
+lost — the office's emulator workloads do not use it.
+
 ## Move to rootful Docker — 2026-10-11
 
 - Stack moved from the `office` user's rootless daemon to the system
