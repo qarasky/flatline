@@ -368,6 +368,9 @@ async function deleteMonitor(monitorID, deleteChildren = false) {
     }
 
     await Monitor.deleteMonitor(monitorID);
+    // Links outlive the database's cascade where enforcement is off, so clear
+    // both directions explicitly: this monitor as server and as target.
+    await require("./monitor-links").deleteLinksFor(monitorID);
     require("./monitor-metrics").forgetMetrics(monitorID);
     publish({ type: "invalidate" });
     deleted.push(monitorID);

@@ -166,6 +166,23 @@ body {
 @keyframes container-loop { to { transform: translateY(-50%); } }
 @media (prefers-reduced-motion: reduce) { .fleet-container-loop[data-looping] { animation: none; } }
 
+/* Websites hosted on a server: one chip per linked monitor, worst-first. */
+.fleet-links { border-top: 1px solid #ffffff18; padding-top: 0.75rem; min-width: 0; }
+.fleet-link-grid { display: flex; flex-wrap: wrap; gap: 0.25rem; max-height: 6rem; overflow: hidden; }
+.fleet-link-chip {
+    display: inline-flex; align-items: center; gap: 0.35rem; min-width: 0; max-width: 100%;
+    padding: 0.12rem 0.45rem; border: 1px solid #ffffff18; border-radius: 4px;
+    background: #ffffff05; font-size: var(--fleet-small); font-weight: 500;
+}
+.fleet-link-chip[data-tone="bad"] { border-color: #a54a4a; background: #532323; color: #ffd2d2; }
+.fleet-link-chip[data-tone="pending"] { border-color: #79632d; background: #443715; color: #f5d989; }
+.fleet-link-chip[data-tone="maintenance"] { border-color: #3a4a63; background: #1a2436; color: #b9c9e6; }
+.fleet-link-dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; flex-shrink: 0; background: #b0aba6; }
+.fleet-link-dot[data-tone="up"] { background: var(--color-ok); }
+.fleet-link-dot[data-tone="bad"] { background: var(--color-bad); }
+.fleet-link-dot[data-tone="pending"] { background: var(--color-warn); }
+.fleet-link-dot[data-tone="maintenance"] { background: #7ea6e0; }
+
 /* ------------------------------------------------------------ status page
  *
  * Ported from the standalone status site (v2 consolidation). Everything is

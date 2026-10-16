@@ -577,6 +577,73 @@ export function fetchLatestMetricsBulk(ids: number[], signal?: AbortSignal): Pro
     return request(`/api/v1/monitors/metrics/latest?ids=${ids.join(",")}`, { signal });
 }
 
+/** A raw stored link: an ordinary monitor, or a group to expand on the card. */
+export interface MonitorLinkTarget {
+    linkedMonitorId: number;
+    name: string;
+    type: string;
+    status: number;
+    ping: number | null;
+}
+
+/** A linked website after group expansion, with its current status. */
+export interface ResolvedMonitorLink {
+    id: number;
+    name: string;
+    type: string;
+    status: number;
+    ping: number | null;
+    url: string | null;
+    lastCheck: string | null;
+    /** The raw link that pulled this monitor in (itself, or a group id). */
+    via: number;
+}
+
+/** Raw and resolved links for one server. */
+export interface MonitorLinks {
+    raw: MonitorLinkTarget[];
+    resolved: ResolvedMonitorLink[];
+}
+
+/**
+ * Fetch one server's linked websites.
+ * @param id Server monitor id
+ * @param signal Cancels the request when the caller's deadline fires
+ * @returns Raw and resolved links
+ */
+export function fetchMonitorLinks(id: number, signal?: AbortSignal): Promise<{ ok: true; monitorId: number } & MonitorLinks> {
+    return request(`/api/v1/monitors/${id}/links`, { signal });
+}
+
+/**
+ * Fetch links for many servers at once for the Superboard.
+ *
+ * Servers without links are absent from `servers`, keyed by monitor id.
+ * @param ids Server monitor ids (max 200)
+ * @param signal Cancels the request when the caller's deadline fires
+ * @returns Links keyed by server id
+ */
+export function fetchBulkMonitorLinks(ids: number[], signal?: AbortSignal): Promise<{
+    ok: true;
+    count: number;
+    servers: Record<string, MonitorLinks>;
+}> {
+    return request(`/api/v1/monitors/links?ids=${ids.join(",")}`, { signal });
+}
+
+/**
+ * Replace a server's linked websites with exactly the supplied ids.
+ * @param id Server monitor id
+ * @param linkedMonitorIds Desired linked monitor ids
+ * @returns The server's links after the update
+ */
+export function replaceMonitorLinks(id: number, linkedMonitorIds: number[]): Promise<{ ok: true; monitorId: number } & MonitorLinks> {
+    return request(`/api/v1/monitors/${id}/links`, {
+        method: "PUT",
+        body: JSON.stringify({ linkedMonitorIds }),
+    });
+}
+
 export interface ApiKeySummary {
     id: number;
     name: string;
@@ -587,7 +654,6 @@ export interface ApiKeySummary {
     status: "active" | "inactive" | "expired";
     scopes: string[];
 }
-
 /**
  * List this token's sibling tokens (same user). Secrets are never returned.
  */

@@ -16,6 +16,7 @@ import { MonitorForm } from "@/components/MonitorForm";
 import { MonitorDetail } from "@/components/MonitorDetail";
 import { DeleteGroupDialog, MoveDialog, RenameDialog, ServerMenu, type MenuAnchor, type MenuItem } from "@/components/ServerMenu";
 import { directChildren, groupOptions, groupPath, subtreeMonitorCount } from "@/lib/groups";
+import { buildLinkCandidates } from "@/lib/links";
 import { AgentPanel } from "@/components/AgentPanel";
 import { UsersPanel } from "@/components/UsersPanel";
 import { TokenGate } from "@/components/TokenGate";
@@ -732,6 +733,13 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
         [ monitors, formState ]
     );
 
+    // Link targets for the form's "Linked websites" picker: groups and
+    // monitors, never the server being edited itself.
+    const linkCandidates = useMemo(
+        () => buildLinkCandidates(monitors, formState?.mode === "edit" ? formState.monitor.id : null),
+        [ monitors, formState ]
+    );
+
     // Right-click/⋯ menu contents: groups manage the tree, monitors move
     // through it. Built per anchor so it always sees the current roster.
     const menuItems: MenuItem[] = useMemo(() => {
@@ -1031,6 +1039,7 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
                         <MonitorForm
                             initial={formState.mode === "edit" ? formState.monitor : (formState.initial ?? null)}
                             groupChoices={groupChoices}
+                            linkCandidates={linkCandidates}
                             onSaved={() => {
                                 setFormState(null);
                                 void load();

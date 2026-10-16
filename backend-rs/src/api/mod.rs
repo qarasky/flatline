@@ -3,6 +3,7 @@
 pub mod api_keys;
 pub mod auth;
 pub mod badges;
+pub mod links;
 pub mod metrics;
 pub mod monitors;
 pub mod notifications;
@@ -168,6 +169,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/monitors/{id}/push-failures/clear",
             post(monitors::clear_push_failures),
+        )
+        .route("/api/v1/monitors/links", get(links::bulk))
+        .route(
+            "/api/v1/monitors/{id}/links",
+            get(links::single).put(links::replace).delete(links::clear),
         )
         .route("/api/v1/monitors/metrics/latest", get(metrics::latest_bulk))
         .route(

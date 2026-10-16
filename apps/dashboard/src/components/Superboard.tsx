@@ -2,17 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ApiError,
     clearPushFailures,
+    fetchBulkMonitorLinks,
     fetchLatestMetricsBulk,
     fetchAllMonitors,
     watchLive,
     getToken,
     setToken,
+    type MonitorLinks,
     type MonitorSummary,
+    type ResolvedMonitorLink,
 } from "@/lib/api";
 import { navigate } from "@/lib/router";
 import { TokenGate } from "@/components/TokenGate";
 import { FleetCard, type FleetServer } from "@/components/FleetCard";
 import { RenameDialog, ServerMenu, type MenuAnchor, type MenuItem } from "@/components/ServerMenu";
+import { WebsiteLinkDialog } from "@/components/WebsiteLinks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fleetAttention, matchGroups } from "@/lib/fleet-presentation";
@@ -120,6 +124,7 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
     // pauses rotation like an open history dialog does.
     const [menu, setMenu] = useState<MenuAnchor | null>(null);
     const [renaming, setRenaming] = useState<{ monitor: MonitorSummary; name: string } | null>(null);
+    const [linkServer, setLinkServer] = useState<MonitorSummary | null>(null);
     const openMenu = useCallback((e: React.MouseEvent, monitor: MonitorSummary) => {
         e.preventDefault();
         setMenu({ x: e.clientX, y: e.clientY, monitor });
@@ -140,6 +145,13 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
                 onSelect: () => {
                     const name = server ? server.monitor.name || server.metrics.host?.hostname || "Unnamed server" : menu.monitor.name;
                     setRenaming({ monitor: menu.monitor, name });
+                    setMenu(null);
+                },
+            },
+            {
+                label: "Manage websites…",
+                onSelect: () => {
+                    setLinkServer(menu.monitor);
                     setMenu(null);
                 },
             },
@@ -211,6 +223,16 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
                     (!scopeIds || (m.parent != null && scopeIds.has(m.parent))));
                 const next = await toFleetServers(candidates, signal);
 
+                // Hosted-website links, fetched in the same batches as metrics:
+                // one request per 200 servers, never one per card.
+                const linkBatches = Array.from({ length: Math.ceil(next.length / 200) }, (_, index) =>
+                    fetchBulkMonitorLinks(next.slice(index * 200, (index + 1) * 200).map(s => s.monitor.id), signal));
+                const linkServers: Record<string, MonitorLinks> = {};
+                for (const batch of await Promise.all(linkBatches)) { Object.assign(linkServers, batch.servers); }
+                for (const server of next) {
+                    server.links = linkServers[String(server.monitor.id)]?.resolved ?? [];
+                }
+
                 if (!alive) {
                     return;
                 }
@@ -256,11 +278,26 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
                 }
                 setServers(previous => {
                     if (event.type === "metrics" && !previous.some(s => s.monitor.id === event.monitorId) && monitor?.active && monitor.type !== "group") {
-                        return [...previous, { monitor, time: event.time, metrics: event.metrics, cpuPeak10m: event.cpuPeak10m }].sort(order);
+                        return [ ...previous, { monitor, time: event.time, metrics: event.metrics, cpuPeak10m: event.cpuPeak10m, links: [] } ].sort(order);
                     }
-                    return previous.map(server => server.monitor.id !== event.monitorId ? server :
-                        event.type === "metrics" ? { ...server, time: event.time, metrics: event.metrics, cpuPeak10m: event.cpuPeak10m } :
-                            { ...server, monitor: { ...server.monitor, ...event.patch } });
+                    return previous.map(server => {
+                        let next = server;
+                        if (server.monitor.id === event.monitorId) {
+                            next = event.type === "metrics"
+                                ? { ...server, time: event.time, metrics: event.metrics, cpuPeak10m: event.cpuPeak10m }
+                                : { ...server, monitor: { ...server.monitor, ...event.patch } };
+                        }
+                        // A linked website's heartbeat updates its chip on every
+                        // server that hosts it, without refetching the links.
+                        if (event.type === "heartbeat" && next.links?.some(link => link.id === event.monitorId)) {
+                            const patch = event.patch;
+                            const links: ResolvedMonitorLink[] = next.links.map(link => link.id === event.monitorId
+                                ? { ...link, status: patch.status ?? link.status, ping: patch.ping ?? link.ping, lastCheck: patch.lastCheck ?? link.lastCheck }
+                                : link);
+                            next = { ...next, links };
+                        }
+                        return next;
+                    });
                 });
                 setError(null);
             },
@@ -325,12 +362,12 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
     // -- rotation -----------------------------------------------------------
 
     useEffect(() => {
-        if (paused || !visible || pageCount <= 1 || historyId !== null || menu !== null || renaming !== null) {
+        if (paused || !visible || pageCount <= 1 || historyId !== null || menu !== null || renaming !== null || linkServer !== null) {
             return;
         }
         const timer = window.setInterval(() => setPage((p) => (p + 1) % pageCount), rotateMs);
         return () => window.clearInterval(timer);
-    }, [ paused, visible, pageCount, rotateMs, historyId, menu, renaming ]);
+    }, [ paused, visible, pageCount, rotateMs, historyId, menu, renaming, linkServer ]);
 
     /** Any interaction pauses rotation for a while, so investigation is possible. */
     function noteInteraction() {
@@ -344,7 +381,8 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
     const down = servers.filter((s) => s.monitor.status === 0).length;
     const attentionCount = servers.filter(s => {
         const state = fleetAttention(s.metrics, s.time, s.monitor.interval || 60);
-        return s.monitor.status === 0 || s.monitor.status === 2 || state.stale || state.issues > 0 || state.hot;
+        const websiteDown = s.links?.some(link => link.status === 0) ?? false;
+        return s.monitor.status === 0 || s.monitor.status === 2 || state.stale || state.issues > 0 || state.hot || websiteDown;
     }).length;
     const rotated = pageCount > 1;
 
@@ -454,6 +492,9 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
             ) : null}
             {renaming ? (
                 <RenameDialog monitor={renaming.monitor} currentName={renaming.name} onClose={() => setRenaming(null)} />
+            ) : null}
+            {linkServer ? (
+                <WebsiteLinkDialog server={linkServer} onClose={() => setLinkServer(null)} />
             ) : null}
         </div>
     );

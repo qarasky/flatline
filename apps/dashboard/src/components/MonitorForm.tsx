@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import type { SyntheticEvent } from "react";
-import { ApiError, createMonitor, fetchMonitorTypes, updateMonitor, type MonitorSummary } from "@/lib/api";
+import { ApiError, createMonitor, fetchMonitorLinks, fetchMonitorTypes, replaceMonitorLinks, updateMonitor, type MonitorSummary } from "@/lib/api";
 import { ALERT_THRESHOLD_FIELDS, COMMON_FIELDS, SCHEDULING_FIELDS, TYPE_SCHEMAS, defaultsFor, fieldsFor, schemaFor, type FieldDef } from "@/lib/monitor-schema";
 import { PROVIDERS, resolveProvider } from "@/lib/providers";
+import type { LinkCandidate } from "@/lib/links";
+import { LinkPicker } from "@/components/WebsiteLinks";
 import type { GroupOption } from "@/lib/groups";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -186,11 +188,14 @@ function ProviderField({ value, onChange }: { value: unknown; onChange: (value: 
 export function MonitorForm({
     initial,
     groupChoices,
+    linkCandidates,
     onSaved,
     onCancel,
 }: {
     initial?: (Partial<MonitorSummary> & Record<string, unknown>) | null;
     groupChoices?: GroupOption[];
+    /** Groups and monitors offered as link targets when editing a server. */
+    linkCandidates?: LinkCandidate[];
     onSaved: () => void;
     onCancel: () => void;
 }) {
@@ -209,11 +214,37 @@ export function MonitorForm({
     const [ignored, setIgnored] = useState<string[]>([]);
     const [saving, setSaving] = useState(false);
 
+    // Server monitors host websites. `linksReady` gates the link write on an
+    // edit: if loading the existing links failed, saving must not wipe them.
+    const linkable = Boolean(linkCandidates) && (type === "push" || type === "manual");
+    const [linkSelection, setLinkSelection] = useState<Set<number>>(() => new Set());
+    const [linksReady, setLinksReady] = useState(!isEdit);
+    const [linkError, setLinkError] = useState<string | null>(null);
+
     useEffect(() => {
         fetchMonitorTypes()
             .then((r) => setServerTypes(Object.keys(r.types).sort()))
             .catch(() => setServerTypes(null));
     }, []);
+
+    useEffect(() => {
+        if (!isEdit || !linkable || !initial?.id) {
+            setLinksReady(!isEdit);
+            return;
+        }
+        let cancelled = false;
+        fetchMonitorLinks(initial.id as number)
+            .then((r) => {
+                if (cancelled) { return; }
+                setLinkSelection(new Set(r.raw.map((link) => link.linkedMonitorId)));
+                setLinksReady(true);
+                setLinkError(null);
+            })
+            .catch((e) => {
+                if (!cancelled) { setLinkError(e instanceof Error ? e.message : "Could not load linked websites."); }
+            });
+        return () => { cancelled = true; };
+    }, [ isEdit, linkable, initial?.id ]);
 
     // When the type changes on create, reset to that type's defaults.
     // On edit the type is locked (server rejects type changes).
@@ -276,12 +307,21 @@ export function MonitorForm({
             : null;
 
         try {
+            let savedId: number | null = null;
             if (isEdit && initial?.id) {
                 const res = await updateMonitor(initial.id, payload);
                 setIgnored(res.ignoredFields ?? []);
+                savedId = res.monitor.id ?? (initial.id as number);
             } else {
                 const res = await createMonitor(payload);
                 setIgnored(res.ignoredFields ?? []);
+                savedId = res.monitor.id;
+            }
+            // Websites are a separate resource, written once the monitor
+            // exists. On an edit, skip when the existing links never loaded so
+            // a failed read cannot silently clear them.
+            if (linkable && savedId != null && (!isEdit || linksReady)) {
+                await replaceMonitorLinks(savedId, [ ...linkSelection ]);
             }
             onSaved();
         } catch (e) {
@@ -377,6 +417,30 @@ export function MonitorForm({
                     </div>
                 ) : null}
             </div>
+
+            {linkable && linkCandidates ? (
+                <div className="rounded-md border border-border p-3">
+                    <p className="mb-2 text-xs font-semibold tracking-wide text-quiet uppercase">Linked websites</p>
+                    <LinkPicker
+                        candidates={linkCandidates}
+                        selected={linkSelection}
+                        disabled={saving}
+                        onToggle={(id) => setLinkSelection((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(id)) {
+                                next.delete(id);
+                            } else {
+                                next.add(id);
+                            }
+                            return next;
+                        })}
+                    />
+                    <p className="mt-2 text-xs text-quiet">
+                        Their status appears on this server's Superboard card. Pick a group to include every website inside it.
+                    </p>
+                    {linkError ? <p className="mt-2 text-xs text-bad" role="alert">{linkError}</p> : null}
+                </div>
+            ) : null}
 
             {ignored.length > 0 ? (
                 <div className="rounded-md bg-warn/10 px-2.5 py-2 text-xs text-warn">

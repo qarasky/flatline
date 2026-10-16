@@ -20,6 +20,8 @@ const { UptimeKumaServer } = require("../uptime-kuma-server");
 const { UptimeCalculator } = require("../uptime-calculator");
 const Monitor = require("../model/monitor");
 const monitorService = require("../monitor-service");
+const monitorLinks = require("../monitor-links");
+const { publish } = require("../live-updates");
 const { getLatestMetrics } = require("../monitor-metrics");
 const openApiDocument = require("./openapi.json");
 const { UP, DOWN, PENDING, MAINTENANCE, flipStatus } = require("../../src/util");
@@ -411,6 +413,8 @@ router.get("/api/v1", (req, res) => {
             metrics: "/api/v1/monitors/{id}/metrics",
             latestMetrics: "/api/v1/monitors/{id}/metrics/latest",
             latestMetricsBulk: "/api/v1/monitors/metrics/latest?ids={ids}",
+            monitorLinks: "/api/v1/monitors/{id}/links",
+            monitorLinksBulk: "/api/v1/monitors/links?ids={ids}",
             events: "/api/v1/events",
             incidents: "/api/v1/incidents",
             statusPages: "/api/v1/status-pages",
@@ -606,6 +610,143 @@ router.post("/api/v1/monitors", tokenAuth("write"), async (req, res) => {
         });
     } catch (e) {
         log.error("api-v1", `POST /monitors failed: ${e.message}`);
+        fail(res, 500, "server_error", e.message);
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Monitor links (server -> hosted website monitors)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate a desired set of link target ids.
+ * @param {unknown} value Raw `linkedMonitorIds` body value
+ * @returns {?number[]} Deduplicated positive integers, or null when invalid
+ */
+function parseLinkedMonitorIds(value) {
+    if (!Array.isArray(value) || value.length > 200) {
+        return null;
+    }
+    const ids = [];
+    const seen = new Set();
+    for (const entry of value) {
+        const id = Number(entry);
+        if (!Number.isInteger(id) || id <= 0) {
+            return null;
+        }
+        if (!seen.has(id)) {
+            seen.add(id);
+            ids.push(id);
+        }
+    }
+    return ids;
+}
+
+/**
+ * Links for several servers at once, for the Superboard.
+ *
+ * Registered before `/monitors/:id` on purpose: otherwise Express reads
+ * "links" as a monitor id. Unknown ids and servers without links are simply
+ * absent from `servers`.
+ * @param {express.Request} req Express request
+ * @param {express.Response} res Express response
+ * @returns {Promise<void>}
+ */
+router.get("/api/v1/monitors/links", tokenAuth("read"), async (req, res) => {
+    try {
+        const parts = String(req.query.ids ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+        if (parts.length === 0 || parts.length > 200) {
+            fail(res, 400, "bad_request", "`ids` must be a comma-separated list of 1 to 200 monitor ids.");
+            return;
+        }
+
+        const ids = [];
+        for (const part of parts) {
+            const id = parseId(part);
+            if (id === null) {
+                fail(res, 400, "bad_request", "`ids` must be a comma-separated list of positive integers.");
+                return;
+            }
+            ids.push(id);
+        }
+
+        const { count, servers } = await monitorLinks.getLinksForMany(ids);
+        res.json({ ok: true, count, servers });
+    } catch (e) {
+        log.error("api-v1", `GET /monitors/links failed: ${e.message}`);
+        fail(res, 500, "server_error", e.message);
+    }
+});
+
+/**
+ * A server's linked websites, resolved to concrete monitors with status.
+ * @param {express.Request} req Express request
+ * @param {express.Response} res Express response
+ * @returns {Promise<void>}
+ */
+router.get("/api/v1/monitors/:id/links", tokenAuth("read"), async (req, res) => {
+    try {
+        const monitor = await loadMonitor(req, res, req.params.id);
+        if (!monitor) {
+            return;
+        }
+        const { raw, resolved } = await monitorLinks.getResolvedLinks(monitor.id);
+        res.json({ ok: true, monitorId: monitor.id, raw, resolved });
+    } catch (e) {
+        log.error("api-v1", `GET /monitors/:id/links failed: ${e.message}`);
+        fail(res, 500, "server_error", e.message);
+    }
+});
+
+/**
+ * Replace a server's linked websites with the supplied set.
+ * @param {express.Request} req Express request
+ * @param {express.Response} res Express response
+ * @returns {Promise<void>}
+ */
+router.put("/api/v1/monitors/:id/links", tokenAuth("write"), async (req, res) => {
+    try {
+        const monitor = await loadMonitor(req, res, req.params.id);
+        if (!monitor) {
+            return;
+        }
+
+        const ids = parseLinkedMonitorIds((req.body ?? {}).linkedMonitorIds);
+        if (ids === null) {
+            fail(res, 400, "bad_request", "`linkedMonitorIds` must be an array of up to 200 positive integers.");
+            return;
+        }
+
+        await monitorLinks.replaceLinks(monitor.id, ids);
+        publish({ type: "invalidate" });
+
+        const { raw, resolved } = await monitorLinks.getResolvedLinks(monitor.id);
+        res.json({ ok: true, monitorId: monitor.id, raw, resolved });
+    } catch (e) {
+        log.error("api-v1", `PUT /monitors/:id/links failed: ${e.message}`);
+        fail(res, 500, "server_error", e.message);
+    }
+});
+
+/**
+ * Remove every linked website from a server.
+ * @param {express.Request} req Express request
+ * @param {express.Response} res Express response
+ * @returns {Promise<void>}
+ */
+router.delete("/api/v1/monitors/:id/links", tokenAuth("write"), async (req, res) => {
+    try {
+        const monitor = await loadMonitor(req, res, req.params.id);
+        if (!monitor) {
+            return;
+        }
+
+        await monitorLinks.clearLinks(monitor.id);
+        publish({ type: "invalidate" });
+
+        res.json({ ok: true, monitorId: monitor.id, raw: [], resolved: [] });
+    } catch (e) {
+        log.error("api-v1", `DELETE /monitors/:id/links failed: ${e.message}`);
         fail(res, 500, "server_error", e.message);
     }
 });

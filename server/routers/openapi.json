@@ -1251,6 +1251,108 @@
                     }
                 }
             }
+        },
+        "/api/v1/monitors/links": {
+            "get": {
+                "summary": "Linked websites, batched",
+                "description": "Requires the `read` scope. One query for up to 200 servers; each entry holds the raw stored links and their resolved monitors with current status. Servers without links are absent. Register before /monitors/{id} so Express does not read \"links\" as an id.",
+                "parameters": [
+                    {
+                        "name": "ids",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "example": "4,5,6"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Links keyed by server id"
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    }
+                }
+            }
+        },
+        "/api/v1/monitors/{id}/links": {
+            "get": {
+                "summary": "A server's linked websites",
+                "description": "Requires the `read` scope. `raw` is the stored links (each may be a group); `resolved` expands groups to their non-group descendants, deduplicated, each with current status and the link it came through (`via`).",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Raw and resolved links"
+                    },
+                    "404": {
+                        "description": "No such monitor"
+                    }
+                }
+            },
+            "put": {
+                "summary": "Replace a server's linked websites",
+                "description": "Requires the `write` scope. Body `{ linkedMonitorIds: number[] }` (up to 200). The ids become the server's links exactly; unknown ids are skipped, self-links and duplicates dropped. Publishing an `invalidate` event refreshes every open board.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": [
+                                    "linkedMonitorIds"
+                                ],
+                                "properties": {
+                                    "linkedMonitorIds": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "integer"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Raw and resolved links after the update"
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "404": {
+                        "description": "No such monitor"
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Clear a server's linked websites",
+                "description": "Requires the `write` scope. Removes every link for the server.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Empty raw and resolved links"
+                    },
+                    "404": {
+                        "description": "No such monitor"
+                    }
+                }
+            }
         }
     }
 }

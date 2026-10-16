@@ -1,16 +1,20 @@
 import { memo, type MouseEvent } from "react";
-import type { MonitorSummary, MetricsPayload, CPUPeak } from "@/lib/api";
+import type { MonitorSummary, MetricsPayload, CPUPeak, ResolvedMonitorLink } from "@/lib/api";
 import { agentWarnings, containerAgeMs, fleetAttention, formatBytes, formatDuration, formatRate, percentage, sampleAgeMs, smartWarning, updatesStatus } from "@/lib/fleet-presentation";
+import { linkStatusLabel, linkTone, sortLinks } from "@/lib/links";
 import { ContainerTiles } from "@/components/ContainerTiles";
 import { CoreSquares } from "@/components/CoreSquares";
 import { MetricBar, usageTone } from "@/components/MetricBar";
 import { ProviderLogo } from "@/components/ProviderLogo";
+import { LinkStatusDot } from "@/components/WebsiteLinks";
 
 export interface FleetServer {
     monitor: MonitorSummary;
     time: string;
     metrics: MetricsPayload;
     cpuPeak10m?: CPUPeak | null;
+    /** Linked websites hosted on this server, resolved worst-first on render. */
+    links?: ResolvedMonitorLink[];
 }
 
 export function ageOf(value: string | null | undefined): string {
@@ -34,8 +38,14 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
     const { stale, containers, issues, hot } = fleetAttention(metrics, time, monitor.interval || 60, now);
     const down = monitor.status === 0;
     const hostLabel = ({ 0: "Host down", 1: "Host up", 2: "Pending", 3: "Maintenance" } as Record<number, string>)[monitor.status] ?? "Unknown";
-    const attention = down ? "bad" : stale || issues > 0 || hot || monitor.status === 2 ? "warn" : "normal";
-    const headline = down ? "Host down" : stale ? "Stale data" : issues > 0 ? `${issues} ${issues === 1 ? "issue" : "issues"}` : hot ? "High usage" : hostLabel;
+    // A hosted website's trouble degrades the server card too: the operator
+    // watching the wall should see it without opening anything.
+    const links = sortLinks(server.links ?? []);
+    const websitesDown = links.filter((link) => link.status === 0).length;
+    const websitesPending = links.filter((link) => link.status === 2).length;
+    const websitesUp = links.filter((link) => link.status === 1).length;
+    const attention = down || websitesDown > 0 ? "bad" : stale || issues > 0 || hot || monitor.status === 2 || websitesPending > 0 ? "warn" : "normal";
+    const headline = down ? "Host down" : websitesDown > 0 ? `${websitesDown} website${websitesDown === 1 ? "" : "s"} down` : stale ? "Stale data" : issues > 0 ? `${issues} ${issues === 1 ? "issue" : "issues"}` : hot ? "High usage" : websitesPending > 0 ? `${websitesPending} website${websitesPending === 1 ? "" : "s"} pending` : hostLabel;
     const cpu = metrics.cpu;
     const mem = metrics.mem;
     const peak = server.cpuPeak10m && sampleAgeMs(server.cpuPeak10m.at, now) <= 10 * 60_000 ? server.cpuPeak10m.percent : undefined;
@@ -173,6 +183,31 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
                     <ContainerTiles containers={containers} />
                 ) : null}
             </section>
+
+            {links.length ? (
+                <section className="fleet-links" aria-label="Hosted websites">
+                    <div className="mb-2 flex items-baseline justify-between gap-2">
+                        <h3 className="fleet-label">Websites</h3>
+                        <span className="fleet-secondary tnum">
+                            {websitesDown > 0 ? <span className="text-bad">{websitesDown} down · </span> : null}
+                            {websitesUp}/{links.length} up
+                        </span>
+                    </div>
+                    <div className="fleet-link-grid">
+                        {links.map((link) => (
+                            <span
+                                key={link.id}
+                                className="fleet-link-chip"
+                                data-tone={linkTone(link.status)}
+                                title={`${link.name} — ${linkStatusLabel(link.status)}${link.ping != null ? ` · ${Math.round(link.ping)}ms` : ""}${link.lastCheck ? ` · last check ${link.lastCheck}` : ""}`}
+                            >
+                                <LinkStatusDot status={link.status} />
+                                <span className="truncate">{link.name}</span>
+                            </span>
+                        ))}
+                    </div>
+                </section>
+            ) : null}
         </article>
     );
 });
