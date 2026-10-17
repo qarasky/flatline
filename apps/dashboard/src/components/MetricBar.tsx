@@ -31,6 +31,28 @@ const FILL: Record<BarTone, string> = {
 };
 
 /**
+ * A bare horizontal usage track: label and number belong to the caller.
+ *
+ * Same contract as MetricBar — the number is printed by the caller, the fill
+ * is decoration on top of it, never the only signal. RAM and Disk each render
+ * their figure on their own line above one of these.
+ */
+export function UsageBar({ percent, tone, label }: { percent: number | undefined; tone?: BarTone; label?: string }) {
+    const safe = percent === undefined || !Number.isFinite(percent) ? null : Math.max(0, Math.min(100, percent));
+    const resolved = tone ?? usageTone(percent);
+    const text = safe === null ? "unknown" : `${safe.toFixed(safe < 10 ? 1 : 0)}%`;
+
+    return (
+        <div className="fleet-meter-track" role="img" aria-label={label ? `${label}: ${text}` : text} title={text}>
+            <div
+                className={cn("fleet-meter-fill transition-[width] duration-300 motion-reduce:transition-none", FILL[resolved])}
+                style={{ width: safe === null ? "0%" : `${safe}%` }}
+            />
+        </div>
+    );
+}
+
+/**
  * A labelled usage bar: label, the number, and a proportional fill.
  *
  * The percentage is always printed next to the bar, never conveyed by colour

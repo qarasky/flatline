@@ -7,8 +7,8 @@ Public origin: `https://uptime.mediaboost.kz`, existing Cloudflare Tunnel to
 (`artchsh/flatline-rust:office-live`) serves the API and the web app —
 operator dashboard and public status pages — on one origin. Compose:
 `/home/office/flatline/compose.rust.yaml` (project `flatline-rust`); data:
-`data-rust/`. The Node stack is stopped and kept for rollback; see the
-cutover record further down.
+`data-rust/`. The Node backend is **retired** — its code no longer exists in
+the repository and no rollback path is maintained.
 
 Historical: the Node deployment ran as a standalone
 `compose.production.yaml` deployed as `/home/office/flatline/compose.yaml`.
@@ -42,22 +42,14 @@ alone does not mute upstream monitor delivery). Restore links and original
 notification activation only after stopping other active monitoring backends.
 
 Cutover requires stopping `uptime-kuma` to release port 3001, then setting
-`FLATLINE_PORT=3001` in `.env` and recreating the stack. The original
-container/image/data remain available for rollback. Agent configs must also
-be redirected to office. The system Docker daemon starts at boot via systemd;
-user linger for the `office` account is no longer required for this stack.
+`FLATLINE_PORT=3001` in `.env` and recreating the stack. Agent configs must
+also be redirected to office. The system Docker daemon starts at boot via
+systemd; user linger for the `office` account is no longer required for this
+stack.
 
-Rollback (office, as root):
-
-```sh
-cd /home/office/flatline
-sudo docker compose stop
-sudo docker start uptime-kuma
-```
-
-The stopped `uptime-kuma` container must exist in the system daemon for the
-last line to work — import it there first if it still lives only in the old
-rootless daemon.
+The former Node rollback (stop the Rust stack, start the old container) is
+**gone**: the Node backend has been deleted from the repository, so there is
+nothing to roll back to and no image is built for it any more.
 
 This restores the original public application without modifying either DB.
 Restore saved pre-cutover agent configs separately if returning to the Mac
@@ -108,19 +100,16 @@ lost — the office's emulator workloads do not use it.
 
 **Deployed.** The public origin is served by the Rust backend
 (`artchsh/flatline-rust:office-live`, one container, one origin — API and
-web app). The Node stack (gateway, dashboard, status-site, flatline) is
-**stopped but kept** for rollback; its `./data` is untouched.
+web app). The Node backend has since been **retired** (deleted from the
+repository), so this is the only stack; no rollback is maintained.
 
 - Compose: `/home/office/flatline/compose.rust.yaml` (project
-  `flatline-rust`, port 3001). The old `compose.yaml` is the rollback
-  stack.
+  `flatline-rust`, port 3001).
 - Data: `/home/office/flatline/data-rust/flatline.db` (imported from a
-  consistent copy of the pre-cutover database; verified by
-  `docker/parity-contract.py`, 115/115).
+  consistent copy of the pre-cutover database; parity was verified 115/115
+  against the Node backend before it was removed).
 - **Admin token** (dashboard sign-in: use it as the password):
   `data-rust/initial-token.txt` (0600, root-owned; `sudo cat`).
-- Rollback: `sudo docker compose -f compose.rust.yaml down && sudo docker
-  compose up -d` — the Node stack and its original database return.
 - The importer run surfaced one cutover-blocking bug, fixed and verified
   in staging: the old schema stores accepted status codes in
   `accepted_statuscodes_json`; the importer read the wrong name and

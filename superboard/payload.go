@@ -77,9 +77,16 @@ type CPU struct {
 // Security is present only when the platform exposes severity (Ubuntu
 // update-notifier, dnf security metadata) — 0 there means none detected,
 // while a total-only platform reports no security field at all.
+//
+// RebootRequired means the host must restart to finish applying updates it
+// has already downloaded or staged (a new kernel, a libc, a firmware blob).
+// It is orthogonal to the counts: a host can need a reboot with zero pending
+// updates. The board treats it as the loudest state, because no amount of
+// package checking will clear it.
 type Updates struct {
-	Total    int `json:"total"`
-	Security int `json:"security,omitempty"`
+	Total          int  `json:"total"`
+	Security       int  `json:"security,omitempty"`
+	RebootRequired bool `json:"rebootRequired,omitempty"`
 }
 
 // Load is the 1/5/15-minute load average, a gauge. It is sent as-is; there

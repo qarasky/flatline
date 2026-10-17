@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -31,20 +32,50 @@ const updatesTimeout = 30 * time.Second
 // unsupported distros and any failure yield an error and the caller omits
 // the field, so unknown never presents as "fully updated".
 func collectUpdatesUncached() (*Updates, error) {
+	// A pending reboot is independent of the counts below, so probe it once
+	// and attach it to whichever package manager answers.
+	reboot := rebootRequired()
 	if total, security, ok := aptCheckUpdates(); ok {
-		return &Updates{Total: total, Security: security}, nil
+		return &Updates{Total: total, Security: security, RebootRequired: reboot}, nil
 	}
 	if total, security, ok := dnfCheckUpdates(); ok {
-		return &Updates{Total: total, Security: security}, nil
+		return &Updates{Total: total, Security: security, RebootRequired: reboot}, nil
 	}
 	if total, ok := pacmanCheckUpdates(); ok {
-		return &Updates{Total: total}, nil
+		return &Updates{Total: total, RebootRequired: reboot}, nil
 	}
 	if total, ok := apkCheckUpdates(); ok {
-		return &Updates{Total: total}, nil
+		return &Updates{Total: total, RebootRequired: reboot}, nil
 	}
 	stats.recordCollectorError("updates")
 	return nil, fmt.Errorf("no supported package manager found")
+}
+
+// rebootRequired reports whether the host must restart to finish applying
+// updates it has already installed or staged.
+//
+// Debian/Ubuntu drop /run/reboot-required (a legacy /var/run path is
+// symlinked on older releases); the RHEL family answers `needs-restarting -r`
+// with exit code 1 when a restart is needed. Best-effort by contract: a
+// probe that cannot run reports false, so a missing tool never fabricates a
+// pending reboot. Read-only — nothing here restarts anything.
+func rebootRequired() bool {
+	for _, path := range []string{"/run/reboot-required", "/var/run/reboot-required"} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	if path, err := exec.LookPath("needs-restarting"); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), updatesTimeout)
+		defer cancel()
+		// Exit 0 = no restart needed, 1 = restart needed.
+		if err := exec.CommandContext(ctx, path, "-r").Run(); err != nil {
+			if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // collectUpdates wraps the package-manager probes: any success clears the

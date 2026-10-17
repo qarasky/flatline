@@ -41,14 +41,62 @@ const LLMS: &str = "\
 - [Agent downloads]({{ORIGIN}}/agent/version?token={{TOKEN}}): latest agent version, checksums and URLs.
 ";
 
-/// Agent binaries built into the image, in checksums-file order.
-const AGENT_FILES: &[(&str, &str)] = &[
-    ("linux-amd64", "superboard-linux-amd64"),
-    ("linux-arm64", "superboard-linux-arm64"),
-];
+/// Prefix for agent build file names served under `/agent/`.
+const AGENT_PREFIX: &str = "superboard-";
+
+/// One agent build found in the agent directory.
+struct AgentAsset {
+    /// Target id derived from the file name, e.g. "linux-amd64".
+    platform: String,
+    file: String,
+    bytes: Vec<u8>,
+}
+
+/// Whether a path segment names an agent build (and nothing else).
+fn is_agent_file(name: &str) -> bool {
+    let Some(platform) = name.strip_prefix(AGENT_PREFIX) else {
+        return false;
+    };
+    !platform.is_empty()
+        && platform
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Every agent build on disk, named `superboard-<os>-<arch>`.
+///
+/// The platform is derived from the file name rather than a hardcoded list,
+/// so an image (or a developer machine, which builds only its own target)
+/// serves whatever it actually ships.
+async fn agent_assets(dir: &std::path::Path) -> Vec<AgentAsset> {
+    let mut out = Vec::new();
+    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+        return out;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let file = entry.file_name().to_string_lossy().to_string();
+        if !is_agent_file(&file) {
+            continue;
+        }
+        let Ok(bytes) = tokio::fs::read(entry.path()).await else {
+            continue;
+        };
+        out.push(AgentAsset {
+            platform: file.trim_start_matches(AGENT_PREFIX).to_string(),
+            file,
+            bytes,
+        });
+    }
+    out.sort_by(|a, b| a.file.cmp(&b.file));
+    out
+}
 
 /// The provisioning token: `?token=` first, then `Authorization: Bearer`.
-/// Validated against the tokens table, so it is any active API key.
+///
+/// Two credentials are accepted: an operator API key (what the runbook links
+/// use) and a monitor push token (what a provisioned agent carries). The
+/// push-token path is what makes self-update possible without handing every
+/// host an operator key.
 async fn authorize(
     state: &AppState,
     params: &HashMap<String, String>,
@@ -69,9 +117,12 @@ async fn authorize(
                 .map(str::to_string)
         })?;
 
-    crate::auth::verify_token(&state.pool, &token)
-        .await
-        .then_some(token)
+    if crate::auth::verify_token(&state.pool, &token).await
+        || crate::auth::verify_push_token(&state.pool, &token).await
+    {
+        return Some(token);
+    }
+    None
 }
 
 /// Public origin for rendered links: the configured `FLATLINE_PUBLIC_URL`
@@ -186,11 +237,12 @@ pub async fn installer(
     let Some(token) = authorize(&state, &params, &headers).await else {
         return crate::auth::unauthorized();
     };
-    let body = render(INSTALLER, &state, &headers, &token, "unknown");
+    let version = agent_version(&state).await.unwrap_or_else(|| "unknown".to_string());
+    let body = render(INSTALLER, &state, &headers, &token, &version);
     text_response("text/x-shellscript; charset=utf-8", body)
 }
 
-/// GET /agent/sha256sums — checksums for the binaries in this image.
+/// GET /agent/sha256sums — checksums for the agent binaries on disk.
 pub async fn checksums(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
@@ -199,35 +251,38 @@ pub async fn checksums(
     if authorize(&state, &params, &headers).await.is_none() {
         return crate::auth::unauthorized();
     }
-    match tokio::fs::read_to_string(state.config.agent_dir.join("sha256sums")).await {
-        Ok(body) => text_response("text/plain; charset=utf-8", body),
-        Err(_) => missing_agent(),
+    let assets = agent_assets(&state.config.agent_dir).await;
+    if assets.is_empty() {
+        return missing_agent();
     }
+    let body = assets
+        .iter()
+        .map(|asset| format!("{}  {}\n", hex::encode(Sha256::digest(&asset.bytes)), asset.file))
+        .collect::<String>();
+    text_response("text/plain; charset=utf-8", body)
 }
 
-/// GET /agent/superboard-linux-amd64
-pub async fn agent_amd64(
+/// GET /agent/{file} — one agent build, whatever platform it was built for.
+pub async fn agent_file(
     State(state): State<AppState>,
+    axum::extract::Path(file): axum::extract::Path<String>,
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    agent_binary(&state, &params, &headers, "superboard-linux-amd64").await
-}
-
-/// GET /agent/superboard-linux-arm64
-pub async fn agent_arm64(
-    State(state): State<AppState>,
-    Query(params): Query<HashMap<String, String>>,
-    headers: HeaderMap,
-) -> Response {
-    agent_binary(&state, &params, &headers, "superboard-linux-arm64").await
+    if authorize(&state, &params, &headers).await.is_none() {
+        return crate::auth::unauthorized();
+    }
+    if !is_agent_file(&file) {
+        return missing_agent();
+    }
+    agent_binary(&state, &params, &headers, &file).await
 }
 
 async fn agent_binary(
     state: &AppState,
     params: &HashMap<String, String>,
     headers: &HeaderMap,
-    file: &'static str,
+    file: &str,
 ) -> Response {
     if authorize(state, params, headers).await.is_none() {
         return crate::auth::unauthorized();
@@ -254,7 +309,7 @@ async fn agent_binary(
         .into_response()
 }
 
-/// GET /agent/version — what this image ships, with hashes and URLs.
+/// GET /agent/version — what this deployment ships, with hashes and URLs.
 pub async fn version(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
@@ -265,19 +320,19 @@ pub async fn version(
     }
 
     let origin = origin(&state, &headers);
-    let mut agents = Vec::new();
-    for (platform, file) in AGENT_FILES {
-        let Ok(bytes) = tokio::fs::read(state.config.agent_dir.join(file)).await else {
-            continue;
-        };
-        agents.push(json!({
-            "platform": platform,
-            "file": file,
-            "size": bytes.len(),
-            "sha256": hex::encode(Sha256::digest(&bytes)),
-            "url": format!("{origin}/agent/{file}"),
-        }));
-    }
+    let agents: Vec<_> = agent_assets(&state.config.agent_dir)
+        .await
+        .into_iter()
+        .map(|asset| {
+            json!({
+                "platform": asset.platform,
+                "file": asset.file,
+                "size": asset.bytes.len(),
+                "sha256": hex::encode(Sha256::digest(&asset.bytes)),
+                "url": format!("{origin}/agent/{}", asset.file),
+            })
+        })
+        .collect();
 
     Json(json!({
         "ok": true,

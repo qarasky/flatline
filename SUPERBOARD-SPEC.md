@@ -70,7 +70,7 @@ Migration: `db/knex_migrations/2026-10-0X-0000-monitor-metric.js`
           "stats": { "cpuPercent": 42.5, "memUsed": 536870912, "memLimit": 2147483648, "memPercent": 25 } }
     ],
     "dockerError": "no docker access (...)", // only when collection failed
-    "updates": { "total": 70, "security": 8 }, // absent when unknown, never zero-filled
+    "updates": { "total": 70, "security": 8, "rebootRequired": true }, // absent when unknown, never zero-filled
     "agent": { "version": "1.5.0", "uptime": 86400, "samplesDropped": 2,
                "failedPushes": 0, "collectorErrors": { "gpu": 1 } },
     "load": { "avg1": 0.42, "avg5": 0.51, "avg15": 0.60 },
@@ -105,7 +105,11 @@ Notes:
   Absent means unknown (unsupported distro, failed check) and the board shows
   nothing; present with `total: 0` means fully updated. `security` appears
   only when the platform exposes severity — total-only platforms report no
-  security field rather than a fabricated zero.
+  security field rather than a fabricated zero. `rebootRequired` (agent 1.6+)
+  is sent only when true: Debian/Ubuntu's `/run/reboot-required` marker, or
+  the RHEL family's `needs-restarting -r`. It is orthogonal to the counts — a
+  staged kernel can need a restart with zero pending updates — and the board
+  treats it as the loudest state.
 - `agent` is the agent's self-report, modelled on Telegraf's internal metrics
   input: `version` and `uptime` (drift and restart/crash-loop detection),
   plus counters since process start — `samplesDropped`, `failedPushes`,
@@ -124,6 +128,9 @@ Notes:
   throughput the server excludes virtual interfaces (`veth`, `docker`,
   `br-`, `virbr`, `vnet`, `tap`, `tun`, `wg`) so container traffic is not
   double counted; if a host has only virtual interfaces, all are summed.
+  The card does not currently show throughput — the data is still collected,
+  stored and derivable (the basis for later traffic statistics), the card just
+  keeps to CPU/RAM/disk for now.
 - `container.uptime` is seconds since start, 0 when unknown.
 - `smart` is disk health (agent 1.5+), best-effort like the GPU block:
   `available: false` is explicit ("no smartctl / no readable device"), never
@@ -248,6 +255,31 @@ Single static binary (`CGO_ENABLED=0`), linux/amd64. No runtime dependencies.
 - `superboard check`: one collection + one push to stdout, exit code tells you
   if the server accepted it. For provisioning and debugging without journald.
 
+### Self-update (agent 1.7+)
+
+- The agent asks the server what it ships (`GET /agent/version`) on startup
+  (2-minute stagger) and every `self_update_interval_hours` (default 24),
+  authenticated with its **push token** — the fleet whitelist: only an
+  already-provisioned monitor can fetch a release. On by default; an explicit
+  `"self_update": false` in the config disables it per host.
+- A newer release is downloaded for `<goos>-<goarch>`, its sha256 verified
+  against the manifest, and the staged binary is executed once to confirm it
+  reports the expected version before anything is replaced. Transfers require
+  HTTPS (plain HTTP only with `allow_insecure`, i.e. dev).
+- The swap is performed by a **detached helper** — a copy of the running
+  binary, so it survives the binary it is replacing being overwritten. It
+  keeps the previous build at `/usr/local/bin/superboard.bak`, restarts the
+  service, and if the unit is not active within 45s restores the backup and
+  restarts. A bad release rolls back rather than bricking a client.
+- Requires systemd: without it the agent cannot restart itself, so it logs
+  the available release and takes no action (`install.sh --update` for those
+  hosts). Downgrades are refused unless `self_update_allow_downgrade`.
+- Failure isolation: the check runs beside the push loop; any error is logged
+  and retried next interval, and telemetry is never delayed.
+- `superboard self-update [--check]`: report-only with `--check`, otherwise
+  apply now. The server side is `backend-rs/src/api/provisioning.rs`, whose
+  `/agent/*` gate accepts an operator API key **or** a monitor push token.
+
 ### Live transport (agent 1.2+)
 
 - Live payloads add `sampleInterval`; POST `/api/push/:token?telemetry=1`
@@ -317,13 +349,21 @@ distinct from the dense table: this is the NOC wall, not the operator desk.
 ### Layout
 
 - One card per server (one card per monitor with metrics; group monitors excluded).
-- Each compact card: hostname, host/workload status, pending-update line
-  (`No updates` green, `Updates: N` yellow/red at 50+, `Security Updates: N`
-  dark red; nothing when unknown), CPU total + intensity-based
-  per-core squares, RAM / disk / GPU / VRAM bars, and a container name/state/
-  uptime list. Healthy readings stay neutral; real issues stand out. Exited
-  containers are not failures without an expected-running policy.
+- Each compact card: hostname, uptime and agent version (nothing else — OS and
+  core count are noise the operator can get from the machine), host/workload
+  status, pending-update line (`No updates` green, `Updates: N` quiet grey
+  below 50 and yellow at 50+, `Security Updates: N` dark red, and a flashing
+  red label whenever a reboot is required; nothing when unknown). Below that
+  CPU (per-core squares with the load printed inside each one), then RAM and
+  disk, each on its own full-width row: `RAM · 24 / 36 (GB)` with a slim bar
+  underneath. Finally up to two container rows. Healthy readings stay neutral;
+  real issues stand out.
+- Cards are square-cornered with a 1px border. Attention is the border colour
+  alone — no thicker accent, so a troubled card is not heavier than its
+  neighbours. The grid gap between cards is 8px.
 - Bars are width + number, never colour alone — same rule as everywhere else.
+  The RAM/disk rows carry their figures on the line above the bar and the
+  percentage in the tooltip.
 - Fullscreen-friendly: no header chrome in kiosk mode (`?kiosk=1` hides the nav),
   large type, high contrast, works at Full HD and 4K@150%.
 
@@ -407,23 +447,26 @@ distinct from the dense table: this is the NOC wall, not the operator desk.
   together; narrow screens scroll rather than auto-rotating a small fleet.
   Explicit `perPage` query overrides remain supported for custom kiosks.
 
-### Compact container tiles
+### Compact container rows
 
-- Container view uses three columns and three visible rows (nine name-only
-  tiles); container uptime is omitted. Full names, state/health and image are
-  available in tooltips. Symbols and accessible labels supplement color:
-  muted green = running/healthy (or running without a reported health check),
-  black = exited/removed with **unknown stop intent**, red = restarting/dead/
-  running-unhealthy, yellow = starting/created/paused/unknown transitions.
-- Nine or fewer containers remain static. Larger lists loop vertically and
-  seamlessly at roughly four seconds per row, without manual scrolling or
-  scrollbars on either axis. Hover/focus pauses motion; reduced-motion users
-  get a static view. Duplicate loop tiles are hidden from assistive technology.
-- Up to six failing containers are pinned, reserving at least one rotating row.
-  When more than six fail, remaining failures lead the rotating list; no
-  containers are dropped. Docker collection errors remain explicit.
-- Current agent payloads do not establish manual stop intent or exit codes.
-  Do not infer a crash from `exited`, or label a stop as definitely manual.
+- Container view is a short list, at most two rows, one container per row:
+  the full name is never truncated, and the row's right side carries either
+  the failing state (`running · unhealthy`, `restarting`, `dead`) or, for a
+  healthy row, the live CPU/memory reading. Full image, stats and state are in
+  the tooltip. Symbols and accessible labels supplement color: green =
+  running/healthy, red = restarting/dead/running-unhealthy, yellow =
+  starting/created/paused/unknown transitions.
+- Real failures fill the rows first and always lead, whatever else is running.
+  Stopped containers (`exited`/`removed`) are never listed — without an
+  expected-running policy they express intent, not failure, and they would
+  crowd out live signal. When nothing is failing, the two busiest running
+  containers (CPU first, memory as the tie-break) take the rows, so a healthy
+  card still says something about the host.
+- A card with no running containers shows no container section at all. Docker
+  collection errors remain explicit (the section stays, with the error).
+- Current agent payloads do not establish manual stop intent, exit codes, or
+  when a container began failing; the row therefore shows the failing state,
+  not a failure timestamp. Do not infer a crash from `exited`.
 
 ### Host updates (agent 1.3+)
 
@@ -433,18 +476,22 @@ distinct from the dense table: this is the NOC wall, not the operator desk.
   read existing package lists (`apt-get -s`, `check-update` query mode) and
   never fetch or modify anything.
 - Card line, counts only: `No updates` green when total is 0; `Updates: N`
-  yellow below 50, red at 50 or more; `Security Updates: N` dark red whenever
-  any are reported, taking precedence over the total. Absent field means
-  unknown (unsupported distro, failed check) and renders nothing — a blind
-  agent never reads as fully updated.
+  quiet grey below 50, yellow at 50 or more; `Security Updates: N` dark red
+  whenever any are reported, taking precedence over the total. Absent field
+  means unknown (unsupported distro, failed check) and renders nothing — a
+  blind agent never reads as fully updated.
 - Severity comes from OS advisory metadata only: Ubuntu update-notifier
   reports exact security counts, dnf filters `--security` best-effort, and
   total-only platforms (pacman, apk, plain apt simulation) report no
   security field rather than a fabricated zero. Unsupported OSes, stale
   results, permissions failures, or failed refreshes stay unknown, never
   `No updates`.
-- A pending-reboot indicator is still future work: long uptime alone does
-  not prove that a server is unpatched.
+- `rebootRequired` (agent 1.6+) is the loudest state and outranks the counts:
+  the card labels it (`Reboot required`, or `Updates: N · reboot required`)
+  and pulses it red, because no package check will clear it — the host must
+  restart. Detection is read-only: the Debian/Ubuntu `/run/reboot-required`
+  marker, or `needs-restarting -r` on the RHEL family; a probe that cannot run
+  reports nothing rather than fabricating a pending reboot.
 
 ### Server load history
 

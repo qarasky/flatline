@@ -107,8 +107,16 @@ If it stays pending, see §8.
 
 ### 1.5 Update the agent on an existing host
 
-Same URL, `--update`: config and push token stay, only the binary is
-replaced and the service restarted.
+Agents **1.7 and newer update themselves**: once a day (default), and on
+start, they ask the server for the latest release and install it — checksum
+verified, previous binary kept, service restarted, and an automatic rollback
+if the new build does not come up. Updates require systemd; agents on hosts
+without it log the available release and wait for a manual update. Check
+what a host would do with `sudo superboard self-update --check`.
+
+To update by hand (or to force it on a non-systemd host), use the same URL
+with `--update`: config and push token stay, only the binary is replaced and
+the service restarted.
 
 ```bash
 curl -fsSL '{{ORIGIN}}/agent/install.sh?token={{TOKEN}}' | sudo bash -s -- --update

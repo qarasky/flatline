@@ -4,20 +4,12 @@ The Rust backend was compared against the Node backend serving from copies
 of the same database — the real production data — with every read response
 diffed field by field and the write paths exercised on both sides.
 
-## How to run it
+## How it was run
 
-```sh
-# A consistent copy of the production database (SQLite backup API):
-#   docker exec flatline-flatline-1 sqlite3 /app/data/kuma.db ".backup /tmp/kuma.db"
-
-python3 docker/parity-contract.py --prod-db /path/to/kuma.db
-```
-
-The script builds a workdir, copies the database twice, deactivates
-monitors and notifications in the copies (no live checks, no duplicate
-alerts), starts the Node backend on :3990, imports the same database with
-`flatline-backend import`, starts the Rust backend on :3991, runs ~115
-checks, prints a report and exits non-zero on any failure.
+The comparison script (`parity-contract.py`) and the Node backend it launched
+have been removed from the repository: the Node backend is retired and there
+is nothing left to diff against. The results below are kept as the record of
+what was verified before the cutover.
 
 ## Result (2026-10-13, production copy)
 

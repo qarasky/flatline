@@ -1,17 +1,18 @@
-# Production stack (v2 consolidation): one process serves the API and the
-# web app — operator dashboard and public status pages.
+# Production stack: one process serves the API, the web app (operator
+# dashboard and public status pages) and the agent downloads.
 #
-# First run: the dashboard shows first-run setup — create the operator
-# account there. No token pasting, no seed scripts.
+# The backend is the Rust service in backend-rs/; docker/rust.dockerfile also
+# builds the dashboard and the Go agent into the same image.
 #
-# One origin by design: the password unlock posts same-origin, so the
-# browser keeps the unlock cookie with no CORS or proxy configuration.
+# First run: the operator token is written to
+# ./data/initial-token.txt (mode 0600) — use it to sign in. There is no
+# account setup, no seed script and no Node runtime.
 
 services:
   flatline:
     build:
       context: .
-      dockerfile: docker/dockerfile
+      dockerfile: docker/rust.dockerfile
       target: release
     image: artchsh/flatline:2
     restart: unless-stopped
@@ -19,4 +20,4 @@ services:
       - ./data:/app/data
     ports:
       - "3001:3001"
-    # Healthcheck comes from the image (curl against the API index).
+    # Healthcheck comes from the image (curl against the setup endpoint).

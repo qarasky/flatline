@@ -30,6 +30,16 @@ type Config struct {
 	// BufferMaxBytes caps that directory; oldest samples are dropped first
 	// when full, so an endless outage cannot fill the disk.
 	BufferMaxBytes int64 `json:"buffer_max_bytes,omitempty"`
+	// SelfUpdate lets the agent replace its own binary when the server ships
+	// a newer release (verified by sha256 over the same authenticated
+	// channel). Default ON — an agent that cannot be updated is a fleet of
+	// stale root daemons; set it false on a host you update by hand.
+	SelfUpdate *bool `json:"self_update,omitempty"`
+	// SelfUpdateIntervalHours paces the version check (default 24h).
+	SelfUpdateIntervalHours int `json:"self_update_interval_hours,omitempty"`
+	// SelfUpdateAllowDowngrade permits installing an older release, for
+	// recovering a bad rollout without operator access to the host.
+	SelfUpdateAllowDowngrade bool `json:"self_update_allow_downgrade,omitempty"`
 }
 
 // Fast live telemetry; existing explicitly configured intervals are preserved.

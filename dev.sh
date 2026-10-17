@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 #
-# Start the two Flatline dev servers, detached so they survive the shell that
+# Start the Flatline dev servers, detached so they survive the shell that
 # launched them.
+#
+# The backend is the Rust service in backend-rs/ (the Node backend has been
+# retired). The operator dashboard is the Vite app in apps/dashboard; Vite
+# dev-serves it and proxies nothing — the app talks to the backend origin
+# directly.
+#
+# Mock data: the Go mock agent (superboard/mockagent) creates a demo fleet
+# through the public API and pushes telemetry for it, so the Superboard shows
+# every card state without any real hosts.
 #
 # Servers started in the foreground die whenever the session hosting them
 # restarts, which makes them useless for hand-testing. These bind to 0.0.0.0 and
@@ -9,26 +18,27 @@
 # machine on the LAN.
 #
 # Usage:
-#   ./dev.sh            start (or restart) both
-#   ./dev.sh stop       stop both
+#   ./dev.sh            start (or restart) everything
+#   ./dev.sh stop       stop everything
 #   ./dev.sh status     show what is listening
-#   ./dev.sh logs       tail both logs
+#   ./dev.sh logs       tail all logs
 #
-# Node >= 26.2.0 is required by the backend.
+# Requires: cargo (Rust backend), go (agent + mock agent), node (Vite only).
 
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOGS="$ROOT/.dev-logs"
 DATA_DIR="${FLATLINE_DATA_DIR:-$ROOT/.dev-data}"
+AGENT_DIR="$DATA_DIR/agent"
 
 BACKEND_PORT="${FLATLINE_BACKEND_PORT:-3001}"
 DASH_PORT="${FLATLINE_DASHBOARD_PORT:-3003}"
 
-mkdir -p "$LOGS" "$DATA_DIR"
+mkdir -p "$LOGS" "$DATA_DIR" "$AGENT_DIR"
 
-# Node 26 lives under nvm on this machine; prefer it if the caller's PATH is
-# still on an older version, since the backend refuses to boot otherwise.
+# Node is only needed for Vite here. Prefer a modern Node from nvm if the
+# caller's PATH is still on an older one.
 if [ -d "$HOME/.nvm/versions/node" ]; then
     NEWEST="$(ls -1 "$HOME/.nvm/versions/node" | sort -V | tail -1)"
     if [ -n "$NEWEST" ]; then
@@ -47,8 +57,7 @@ stop_one() {
 start_one() {
     local name="$1"
     shift
-    # setsid detaches from this shell's process group; nohup ignores HUP, so the
-    # server outlives the terminal that started it.
+    # nohup ignores HUP so the server outlives the terminal that started it.
     ( nohup "$@" >"$LOGS/$name.log" 2>&1 & echo $! >"$LOGS/$name.pid" ) >/dev/null 2>&1
     disown 2>/dev/null || true
 }
@@ -56,14 +65,15 @@ start_one() {
 case "${1:-start}" in
     stop)
         echo "Stopping Flatline dev servers:"
-        stop_one "dashboard" "vite --port $DASH_PORT"
-        stop_one "backend" "tsx server/server.js"
+        stop_one "dashboard" "vite.*--port $DASH_PORT"
+        stop_one "backend" "flatline-backend"
+        stop_one "mock-agent" "mockagent"
         sleep 1
+        exit 0
         ;;
     status)
-        for port in "$BACKEND_PORT" "$DASH_PORT"; do
-            printf '%s: %s\n' "$port" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/" 2>/dev/null || echo down)"
-        done
+        printf '%s: %s\n' "backend" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$BACKEND_PORT/api/v1/auth/setup" 2>/dev/null || echo down)"
+        printf '%s: %s\n' "dashboard" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$DASH_PORT/" 2>/dev/null || echo down)"
         exit 0
         ;;
     logs)
@@ -74,50 +84,85 @@ esac
 
 echo "Starting Flatline dev servers (logs in .dev-logs/):"
 
-# Hitting an unseeded backend just yields the first-run setup screen, which
-# serves this server's HTML to every API call and makes the frontends fail with
-# confusing JSON parse errors. Seed instead, so the documented tokens exist and
-# there is something to look at.
-if [ ! -f "$DATA_DIR/kuma.db" ]; then
-    echo "  seeding $DATA_DIR …"
-    if ! node --import=tsx "$ROOT/extra/seed-dev-data.ts" "$DATA_DIR" >"$LOGS/seed.log" 2>&1; then
-        echo "  seeding failed; see .dev-logs/seed.log"
-        tail -n 5 "$LOGS/seed.log"
-        exit 1
-    fi
+# --- build -----------------------------------------------------------------
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "  cargo not found: the Rust backend is required" >&2
+    exit 1
 fi
 
-# Backend. UPTIME_KUMA_HOST=0.0.0.0 is required: the default binds to localhost,
-# which is unreachable from another machine.
+echo "  building backend …"
+if ! cargo build --quiet --manifest-path "$ROOT/backend-rs/Cargo.toml" >"$LOGS/backend-build.log" 2>&1; then
+    echo "  backend build failed; see .dev-logs/backend-build.log"
+    tail -n 10 "$LOGS/backend-build.log"
+    exit 1
+fi
+BACKEND_BIN="$ROOT/backend-rs/target/debug/flatline-backend"
+
+# The agent binaries the download endpoints serve, plus the mock agent.
+if command -v go >/dev/null 2>&1; then
+    AGENT_GOOS="$(go env GOOS)"
+    AGENT_GOARCH="$(go env GOARCH)"
+    if ( cd "$ROOT/superboard" && CGO_ENABLED=0 go build -trimpath -o "$AGENT_DIR/superboard-$AGENT_GOOS-$AGENT_GOARCH" . ) >"$LOGS/agent-build.log" 2>&1; then
+        "$AGENT_DIR/superboard-$AGENT_GOOS-$AGENT_GOARCH" version | awk '{print $2}' >"$AGENT_DIR/VERSION"
+        echo "  built agent superboard-$AGENT_GOOS-$AGENT_GOARCH $(cat "$AGENT_DIR/VERSION")"
+    else
+        echo "  agent build failed; see .dev-logs/agent-build.log"
+    fi
+    if ( cd "$ROOT/superboard" && go build -o "$DATA_DIR/mockagent" ./mockagent ) >"$LOGS/mockagent-build.log" 2>&1; then
+        echo "  built mock agent"
+    else
+        echo "  mock agent build failed; see .dev-logs/mockagent-build.log"
+    fi
+else
+    echo "  go not found: skipping the agent and mock-data builds"
+fi
+
+# --- backend ---------------------------------------------------------------
+
 (
     cd "$ROOT"
     DATA_DIR="$DATA_DIR" \
     PORT="$BACKEND_PORT" \
     UPTIME_KUMA_HOST=0.0.0.0 \
-    UPTIME_KUMA_HIDE_LOG=info_db,info_server \
-    start_one "backend" npx tsx server/server.js
+    FLATLINE_AGENT_DIR="$AGENT_DIR" \
+    start_one "backend" "$BACKEND_BIN"
 )
 
-# Wait for the backend before starting the dashboard: it proxies to it, so the
-# first requests would fail on boot otherwise.
+# Wait for the backend: it runs migrations and writes the operator token on
+# first boot, and everything below depends on both.
 for _ in $(seq 1 40); do
-    if curl -s -m 2 -o /dev/null "http://127.0.0.1:$BACKEND_PORT/api/v1"; then
+    if curl -s -m 2 -o /dev/null "http://127.0.0.1:$BACKEND_PORT/api/v1/auth/setup"; then
         break
     fi
     sleep 1
 done
 
-# Operator dashboard and public status pages in one Vite app. --host is
-# required: Vite binds to localhost by default, which is unreachable from
-# another machine. VITE_FLATLINE_URL is baked in at start, so it must be an
-# address the browser can reach: the LAN IP, which works from this machine and
-# every other machine on the network. A hostname does not resolve reliably
-# (notably on macOS), and 127.0.0.1 would break LAN browsers, so neither is
-# used.
-LAN_IP_NOW="$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")"
+# The operator token is this instance's sign-in credential (mode 0600).
+TOKEN=""
+if [ -f "$DATA_DIR/initial-token.txt" ]; then
+    TOKEN="$(tr -d '\r\n' <"$DATA_DIR/initial-token.txt")"
+fi
+
+# --- mock fleet ------------------------------------------------------------
+
+if [ -x "$DATA_DIR/mockagent" ]; then
+    if [ -n "$TOKEN" ]; then
+        start_one "mock-agent" "$DATA_DIR/mockagent" \
+            --server "http://127.0.0.1:$BACKEND_PORT" --token "$TOKEN" --interval 3s
+    else
+        echo "  no operator token found; skipping the mock fleet"
+    fi
+fi
+
+# --- dashboard -------------------------------------------------------------
+
+# Same-origin in dev: Vite proxies /api and /agent to the backend (see
+# vite.config.ts), so the app talks to its own origin exactly as it does in
+# production. No CORS, no origin baked into the bundle.
 (
     cd "$ROOT/apps/dashboard"
-    VITE_FLATLINE_URL="http://$LAN_IP_NOW:$BACKEND_PORT" \
+    FLATLINE_DEV_BACKEND="http://127.0.0.1:$BACKEND_PORT" \
     start_one "dashboard" npx vite --host 0.0.0.0 --port "$DASH_PORT"
 )
 
@@ -128,7 +173,14 @@ LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || echo "this-host")"
 echo
 echo "  backend     http://$LAN_IP:$BACKEND_PORT"
 echo "  dashboard   http://$LAN_IP:$DASH_PORT"
-echo "  status page http://$LAN_IP:$DASH_PORT/status/northwind"
+echo "  superboard  http://$LAN_IP:$DASH_PORT/superboard   (kiosk: /superboard/kiosk, scope: /superboard/kiosk/work)"
+echo "  status page http://$LAN_IP:$DASH_PORT/status/clients"
+echo
+if [ -n "$TOKEN" ]; then
+    echo "  operator token: $TOKEN"
+else
+    echo "  operator token: see $DATA_DIR/initial-token.txt"
+fi
 echo
 echo "  ./dev.sh status   check health"
 echo "  ./dev.sh logs     follow logs"

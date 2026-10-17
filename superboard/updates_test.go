@@ -72,7 +72,7 @@ func TestPayloadUpdatesOmittedWhenUnknown(t *testing.T) {
 }
 
 func TestPayloadUpdatesRoundTrip(t *testing.T) {
-	p := Payload{V: 1, Updates: &Updates{Total: 70, Security: 8}}
+	p := Payload{V: 1, Updates: &Updates{Total: 70, Security: 8, RebootRequired: true}}
 	data, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
@@ -81,8 +81,25 @@ func TestPayloadUpdatesRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(data, &back); err != nil {
 		t.Fatal(err)
 	}
-	if back.Updates == nil || back.Updates.Total != 70 || back.Updates.Security != 8 {
+	if back.Updates == nil || back.Updates.Total != 70 || back.Updates.Security != 8 || !back.Updates.RebootRequired {
 		t.Fatalf("round trip lost updates: %+v", back.Updates)
+	}
+}
+
+func TestPayloadRebootOmittedWhenNotRequired(t *testing.T) {
+	// A false reboot flag must not travel: absent means "not needed", and a
+	// field that appears with false on every push is noise on the wire.
+	data, err := json.Marshal(Payload{V: 1, Updates: &Updates{Total: 3}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back map[string]any
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatal(err)
+	}
+	updates, _ := back["updates"].(map[string]any)
+	if _, ok := updates["rebootRequired"]; ok {
+		t.Fatal("rebootRequired must be omitted when false")
 	}
 }
 

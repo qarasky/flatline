@@ -93,15 +93,11 @@ pub fn router(state: AppState) -> Router {
         .route("/llms.txt", get(provisioning::llms))
         .route("/agent/install.sh", get(provisioning::installer))
         .route("/agent/sha256sums", get(provisioning::checksums))
-        .route(
-            "/agent/superboard-linux-amd64",
-            get(provisioning::agent_amd64),
-        )
-        .route(
-            "/agent/superboard-linux-arm64",
-            get(provisioning::agent_arm64),
-        )
         .route("/agent/version", get(provisioning::version))
+        // Serves whatever builds the deployment ships (name: superboard-<os>-<arch>).
+        // Static routes above win over this parameter, so version/checksums
+        // and the installer are never shadowed.
+        .route("/agent/{file}", get(provisioning::agent_file))
         .route(
             "/api/status-page/resolve-host",
             get(status_pages::resolve_host),

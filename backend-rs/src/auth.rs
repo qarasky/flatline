@@ -53,6 +53,23 @@ fn token_valid(row: &TokenRow) -> bool {
     true
 }
 
+/// Verify a monitor push token.
+///
+/// Agents carry a push token, not an operator API key, so this doubles as the
+/// fleet whitelist for `/agent/*`: only a host already provisioned to report
+/// can fetch a binary. The token must belong to an active monitor.
+pub async fn verify_push_token(pool: &SqlitePool, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let found: Result<Option<(i64,)>, _> =
+        sqlx::query_as("SELECT id FROM monitors WHERE push_token = ? AND active = 1 LIMIT 1")
+            .bind(token)
+            .fetch_optional(pool)
+            .await;
+    matches!(found, Ok(Some(_)))
+}
+
 /// Verify a bearer token against the token table.
 ///
 /// Two schemes coexist: sha256 for tokens minted here, bcrypt for API keys
@@ -266,5 +283,33 @@ mod tests {
         assert!(second.is_none());
 
         assert!(verify_token(&pool, &first.unwrap()).await);
+    }
+
+    #[tokio::test]
+    async fn push_tokens_are_the_agent_whitelist() {
+        let pool = test_pool().await;
+        for (name, active, token) in [
+            ("edge-01", 1, "mocksb-edge-01"),
+            ("retired", 0, "inactive-token"),
+        ] {
+            sqlx::query(
+                "INSERT INTO monitors (name, type, active, push_token) VALUES (?, 'push', ?, ?)",
+            )
+            .bind(name)
+            .bind(active)
+            .bind(token)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        assert!(verify_push_token(&pool, "mocksb-edge-01").await);
+        // An inactive monitor must not hand out binaries.
+        assert!(!verify_push_token(&pool, "inactive-token").await);
+        assert!(!verify_push_token(&pool, "nope").await);
+        assert!(!verify_push_token(&pool, "").await);
+        // An operator API key is not a push token: the two credentials stay
+        // distinguishable even though both unlock `/agent/*`.
+        assert!(!verify_push_token(&pool, "flatline_deadbeef").await);
     }
 }

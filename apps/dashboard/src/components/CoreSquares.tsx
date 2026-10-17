@@ -1,21 +1,22 @@
+import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 import { usageTone } from "@/components/MetricBar";
 
-const SQUARE: Record<ReturnType<typeof usageTone>, string> = {
-    ok: "bg-ok",
-    warn: "bg-warn",
-    bad: "bg-bad",
-    muted: "bg-quiet",
+const TONE_TEXT: Record<ReturnType<typeof usageTone>, string> = {
+    ok: "text-ok",
+    warn: "text-warn",
+    bad: "text-bad",
+    muted: "text-quiet",
 };
 
 /**
- * One filled square per unit (CPU thread, GPU): green → red by load.
+ * One square per core, each carrying its own load inside.
  *
- * Squares are deliberately number-free at a glance — twenty numbers would be
- * noise, not signal. The numbers live in two places instead: a tooltip per
- * square with the exact value, and a peak figure printed next to the total
- * by the caller. Colour alone would strand a colourblind operator; the peak
- * number is the mitigation that survives the wall.
+ * The number is the signal; the fill rising from the bottom and the colour
+ * are reinforcement for the eye across a wall. A number-free grid forced the
+ * eye to a separate total, and a total hides which core is pinned — so each
+ * square shows its own percentage and the card shows no aggregate at all.
+ * The container's tooltip still spells out every core for a screen reader.
  */
 export function CoreSquares({ values, label }: { values?: number[]; label: string }) {
     if (!values || values.length === 0) {
@@ -24,19 +25,26 @@ export function CoreSquares({ values, label }: { values?: number[]; label: strin
 
     return (
         <div
-            className="core-squares flex flex-wrap gap-1.5"
+            className="core-squares flex flex-wrap gap-1"
             role="img"
             aria-label={`${label} loads: ${values.map((v, i) => `${i}: ${Number.isFinite(v) ? `${Math.round(v)}%` : "unknown"}`).join(", ")}`}
         >
             {values.map((value, i) => {
-                const safe = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
+                const known = Number.isFinite(value);
+                const safe = known ? Math.max(0, Math.min(100, value)) : 0;
                 return (
-                    <div
+                    <span
                         key={i}
-                        title={`${label} ${i}: ${Number.isFinite(value) ? `${safe.toFixed(1)}%` : "unknown"}`}
-                        className={cn("core-square size-4 rounded-[3px] transition-opacity duration-300 motion-reduce:transition-none", SQUARE[usageTone(value)])}
-                        style={{ opacity: Number.isFinite(value) ? 0.18 + safe / 100 * 0.82 : 0.18 }}
-                    />
+                        title={`${label} ${i}: ${known ? `${safe.toFixed(1)}%` : "unknown"}`}
+                        className={cn(
+                            "core-square inline-flex items-center justify-center overflow-hidden rounded-[4px] border border-white/10 bg-white/5",
+                            TONE_TEXT[usageTone(value)]
+                        )}
+                        style={{ "--load": known ? safe : 0 } as CSSProperties}
+                    >
+                        <span className="core-square-fill" aria-hidden="true" />
+                        <span className="core-square-value">{known ? Math.round(safe) : "—"}</span>
+                    </span>
                 );
             })}
         </div>

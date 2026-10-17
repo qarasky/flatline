@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, smartWarning, statusSlugFromPath, updatesStatus, containerAgeMs } from "../src/lib/fleet-presentation.ts";
+import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatBytesPair, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, smartWarning, statusSlugFromPath, updatesStatus, containerAgeMs } from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -29,21 +29,32 @@ test("issues sort first without mutating the payload; collection failures are vi
     assert.equal(state.containers[0].name, "b");
     assert.equal(docker[0].name, "a");
 });
-test("pending-update counts map to green/yellow/red/dark-red; unknown stays silent", () => {
+test("pending-update counts stay quiet until the backlog threshold; unknown stays silent", () => {
     assert.equal(updatesStatus(undefined), null);
     assert.equal(updatesStatus({}), null);
     assert.equal(updatesStatus({ total: -1 }), null);
     assert.deepEqual(updatesStatus({ total: 0 })?.label, "No updates");
     assert.deepEqual(updatesStatus({ total: 0 })?.tone, "ok");
-    assert.deepEqual(updatesStatus({ total: 20 })?.tone, "warn");
-    assert.deepEqual(updatesStatus({ total: 49 })?.tone, "warn");
-    assert.deepEqual(updatesStatus({ total: 50 })?.tone, "bad");
+    assert.deepEqual(updatesStatus({ total: 20 })?.tone, "quiet");
+    assert.deepEqual(updatesStatus({ total: 49 })?.tone, "quiet");
+    assert.deepEqual(updatesStatus({ total: 50 })?.tone, "warn");
     assert.deepEqual(updatesStatus({ total: 70 })?.label, "Updates: 70");
+    assert.deepEqual(updatesStatus({ total: 70 })?.tone, "warn");
     // Any reported security updates dominate, whatever the total.
     assert.deepEqual(updatesStatus({ total: 80, security: 8 })?.tone, "critical");
     assert.deepEqual(updatesStatus({ total: 80, security: 8 })?.label, "Security Updates: 8");
     assert.deepEqual(updatesStatus({ total: 3, security: 1 })?.tone, "critical");
-    assert.deepEqual(updatesStatus({ total: 5, security: 0 })?.tone, "warn");
+    assert.deepEqual(updatesStatus({ total: 5, security: 0 })?.tone, "quiet");
+});
+
+test("a required reboot outranks the counts and names what is pending", () => {
+    assert.deepEqual(updatesStatus({ total: 0, rebootRequired: true })?.tone, "reboot");
+    assert.equal(updatesStatus({ total: 0, rebootRequired: true })?.label, "Reboot required");
+    assert.equal(updatesStatus({ total: 12, rebootRequired: true })?.label, "Updates: 12 · reboot required");
+    assert.equal(updatesStatus({ total: 80, security: 8, rebootRequired: true })?.label, "Security Updates: 8 · reboot required");
+    assert.equal(updatesStatus({ total: 80, security: 8, rebootRequired: true })?.tone, "reboot");
+    // An explicit false is just the ordinary mapping, not a reboot.
+    assert.equal(updatesStatus({ total: 12, rebootRequired: false })?.tone, "quiet");
 });
 test("board routes resolve kiosk and group scopes; nothing else is a board", () => {
     assert.deepEqual(boardRouteFrom("/superboard"), { kiosk: false, filter: null });
@@ -114,6 +125,14 @@ test("bytes and rates format compactly; a real zero rate stays visible", () => {
     assert.equal(formatRate(-1), null);
     assert.equal(formatRate(0), "0 B/s", "an idle interface is data, not missing");
     assert.equal(formatRate(2_500_000), "2.4 MB/s");
+});
+test("paired figures share one unit, and never fake it across units", () => {
+    assert.equal(formatBytesPair(24 * 1024 ** 3, 36 * 1024 ** 3), "24 / 36 (GB)");
+    assert.equal(formatBytesPair(15 * 1024 ** 3, 16 * 1024 ** 3), "15 / 16 (GB)");
+    assert.equal(formatBytesPair(1.5 * 1024 ** 3, 2 * 1024 ** 3), "1.5 / 2 (GB)");
+    assert.equal(formatBytesPair(900 * 1024 ** 3, 2 * 1024 ** 4), "900 GB / 2.0 TB");
+    assert.equal(formatBytesPair(undefined, 100), null);
+    assert.equal(formatBytesPair(100, undefined), null);
 });
 test("container stats stay honest: no stats means no label, zero CPU is a reading", () => {
     assert.equal(containerStatsSummary(undefined), null);

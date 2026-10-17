@@ -213,5 +213,6 @@ Validated by the review — keep these decisions, they are not gaps:
 - **Dependency advisories** — inherited from upstream (12 in production);
   separate hardening pass with tests, not a blind `npm audit fix --force`.
 - **Private aggregate saved views** — still specced, not scheduled.
-- **Pending reboot indicator** — long uptime proves nothing; needs its own
-  semantics before implementation (see SUPERBOARD-SPEC).
+- **Pending reboot indicator** — done for the two common families (the
+  Debian/Ubuntu `/run/reboot-required` marker and `needs-restarting -r`);
+  distros with neither still report nothing rather than guessing.

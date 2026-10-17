@@ -113,6 +113,11 @@ func runLoop(cfg *Config) error {
 	client := newPushClient(cfg)
 	client.http.Timeout = min(30*time.Second, max(2*time.Second, interval))
 	log.Printf("superboard: live samples every %s; slow collectors run independently", interval)
+
+	// Self-update runs beside the push loop: a version check must never block
+	// or delay telemetry, and every failure degrades to "keep pushing".
+	go selfUpdateLoop(ctx, cfg)
+
 	backoff := interval
 	lastLog := time.Time{}
 

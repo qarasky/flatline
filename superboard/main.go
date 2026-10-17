@@ -14,13 +14,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 )
 
-const version = "1.6.1"
+// version is a var, not a const, so release builds can stamp it with
+// -ldflags "-X main.version=..." (the Dockerfile also derives the VERSION
+// file from `superboard version`).
+var version = "1.7.0"
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `superboard %s — Flatline fleet agent
@@ -30,6 +34,8 @@ Usage:
       Collect and push forever.
   superboard check [--config PATH] [--verbose]
       Collect and push once, printing the outcome. Exit 0 on accept.
+  superboard self-update [--config PATH] [--check]
+      Install a newer agent release the server ships. --check only reports.
   superboard install --server URL --token TOKEN [--interval SECS] [--insecure] [--config PATH]
       Write config, install as a service (systemd, or cron @reboot without
       it), and start. Must run as root.
@@ -53,6 +59,25 @@ func main() {
 	command := os.Args[1]
 	rest := os.Args[2:]
 
+	// apply-update is the detached helper's private entry point. It takes
+	// flags no operator command shares, so it gets its own parser before the
+	// common one below.
+	if command == "apply-update" {
+		apply := flag.NewFlagSet(command, flag.ContinueOnError)
+		newPath := apply.String("new", "", "staged binary to install")
+		target := apply.String("target", "", "binary to replace")
+		backup := apply.String("backup", "", "where to keep the previous binary")
+		service := apply.String("service", systemdUnitName, "systemd unit to restart")
+		expect := apply.String("expect", "", "version the staged binary must report")
+		if err := apply.Parse(rest); err != nil {
+			os.Exit(2)
+		}
+		if err := cmdApplyUpdate(*newPath, *target, *backup, *service, *expect); err != nil {
+			log.Fatalf("superboard: %v", err)
+		}
+		return
+	}
+
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	configPath := fs.String("config", DefaultConfigPath, "path to config.json")
 	server := fs.String("server", "", "Flatline origin, e.g. https://uptime.mediaboost.kz")
@@ -60,6 +85,7 @@ func main() {
 	interval := fs.Int("interval", 0, "seconds between live samples (default 1)")
 	insecure := fs.Bool("insecure", false, "allow plain HTTP (not recommended)")
 	verbose := fs.Bool("verbose", false, "print the collected payload on check")
+	check := fs.Bool("check", false, "for self-update: only report, do not install")
 
 	if err := fs.Parse(rest); err != nil {
 		os.Exit(2)
@@ -85,6 +111,29 @@ func main() {
 			if err := runOnce(cfg, *verbose); err != nil {
 				log.Fatalf("superboard: %v", err)
 			}
+		}
+	case "self-update":
+		{
+			cfg, err := loadConfig(*configPath)
+			if err != nil {
+				log.Fatalf("superboard: %v", err)
+			}
+			if *check {
+				manifest, asset, err := checkForUpdate(context.Background(), cfg)
+				if err != nil {
+					log.Fatalf("superboard: %v", err)
+				}
+				if asset == nil {
+					fmt.Printf("superboard %s: no update available (server ships %s)\n", version, manifest.Version)
+					return
+				}
+				fmt.Printf("superboard %s: update available -> %s (%s)\n", version, manifest.Version, asset.File)
+				return
+			}
+			if err := selfUpdateOnce(context.Background(), cfg); err != nil {
+				log.Fatalf("superboard: %v", err)
+			}
+			fmt.Printf("superboard %s: no update applied (current, or no build for %s)\n", version, platformID())
 		}
 	case "install":
 		if *server == "" || *token == "" {

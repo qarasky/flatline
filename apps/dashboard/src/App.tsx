@@ -18,10 +18,9 @@ import { DeleteGroupDialog, MoveDialog, RenameDialog, ServerMenu, type MenuAncho
 import { directChildren, groupOptions, groupPath, subtreeMonitorCount } from "@/lib/groups";
 import { buildLinkCandidates } from "@/lib/links";
 import { AgentPanel } from "@/components/AgentPanel";
-import { UsersPanel } from "@/components/UsersPanel";
 import { TokenGate } from "@/components/TokenGate";
 import { SuperboardApp } from "@/components/Superboard";
-import { inviteTokenFrom, navigate, usePath } from "@/lib/router";
+import { navigate, usePath } from "@/lib/router";
 import { boardRouteFrom, statusSlugFromPath } from "@/lib/fleet-presentation";
 import { StatusPageApp } from "@/components/status/StatusPageApp";
 import { Badge } from "@/components/ui/badge";
@@ -594,7 +593,7 @@ function GroupedTable({
 /**
  * The operator's monitor table.
  */
-function Dashboard({ inviteToken }: { inviteToken: string | null }) {
+function Dashboard() {
     const [authed, setAuthed] = useState(() => Boolean(getToken()));
     const [monitors, setMonitors] = useState<MonitorSummary[]>([]);
     const [rosterLoaded, setRosterLoaded] = useState(false);
@@ -616,7 +615,6 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
     >(null);
     const [detailId, setDetailId] = useState<number | null>(null);
     const [agentsOpen, setAgentsOpen] = useState(false);
-    const [usersOpen, setUsersOpen] = useState(false);
 
     const load = useCallback(async (strict = false, signal?: AbortSignal) => {
         const epoch = ++loadEpoch.current;
@@ -808,7 +806,7 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
     }
 
     if (!authed) {
-        return <TokenGate inviteToken={inviteToken} onSaved={() => setAuthed(true)} />;
+        return <TokenGate onSaved={() => setAuthed(true)} />;
     }
 
     return (
@@ -834,16 +832,6 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
                 <div className="ml-auto flex items-center gap-2">
                     <Button size="sm" variant="outline" onClick={() => navigate("/superboard")}>
                         Superboard
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                            setDetailId(null);
-                            setUsersOpen((v) => !v);
-                        }}
-                    >
-                        Users
                     </Button>
                     <Button
                         size="sm"
@@ -914,14 +902,7 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
                 </div>
             ) : null}
 
-            {usersOpen ? (
-                <UsersPanel
-                    onClose={() => {
-                        setUsersOpen(false);
-                        void load();
-                    }}
-                />
-            ) : agentsOpen ? (
+            {agentsOpen ? (
                 <AgentPanel
                     onClose={() => {
                         setAgentsOpen(false);
@@ -958,7 +939,6 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
                     }
                     onEdit={(id) => {
                         setAgentsOpen(false);
-                        setUsersOpen(false);
                         setDetailId(id);
                     }}
                     onContextMenu={(monitor, x, y) => setMenu({ x, y, monitor })}
@@ -981,7 +961,6 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
                     }
                     onEdit={(id) => {
                         setAgentsOpen(false);
-                        setUsersOpen(false);
                         setDetailId(id);
                     }}
                     onContextMenu={(monitor, x, y) => setMenu({ x, y, monitor })}
@@ -1063,12 +1042,12 @@ function Dashboard({ inviteToken }: { inviteToken: string | null }) {
  * resolved against the status-page domain map first, so a mapped client
  * domain renders its page instead of a login gate.
  */
-function RootRoute({ inviteToken }: { inviteToken: string | null }) {
+function RootRoute() {
     const [authed] = useState(() => Boolean(getToken()));
     if (authed) {
-        return <Dashboard inviteToken={inviteToken} />;
+        return <Dashboard />;
     }
-    return <StatusPageApp slug={null} fallback={<Dashboard inviteToken={inviteToken} />} />;
+    return <StatusPageApp slug={null} fallback={<Dashboard />} />;
 }
 
 /**
@@ -1076,14 +1055,12 @@ function RootRoute({ inviteToken }: { inviteToken: string | null }) {
  *
  * Routes: the operator dashboard at "/" (unless the host maps to a status
  * page), public status pages at "/status/:slug", the wall board at
- * "/superboard" (optionally group-scoped), the chrome-free board at
- * "/superboard/kiosk", and invite redemption at "/invite/:token".
- * The route is resolved before either view mounts, so the dashboard's
- * polling never runs while the board or a status page is open.
+ * "/superboard" (optionally group-scoped), and the chrome-free board at
+ * "/superboard/kiosk". The route is resolved before either view mounts, so the
+ * dashboard's polling never runs while the board or a status page is open.
  */
 export default function App() {
     const path = usePath();
-    const inviteToken = inviteTokenFrom(path);
     const board = boardRouteFrom(path);
 
     if (board) {
@@ -1096,8 +1073,8 @@ export default function App() {
     }
 
     if (path === "/") {
-        return <RootRoute inviteToken={inviteToken} />;
+        return <RootRoute />;
     }
 
-    return <Dashboard inviteToken={inviteToken} />;
+    return <Dashboard />;
 }

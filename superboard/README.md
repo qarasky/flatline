@@ -89,10 +89,53 @@ records ordinary healthy heartbeats at most every min(30s, timeout/3).
 
 The dashboard provides CPU/RAM/GPU/VRAM history charts and p90/p95/p99
 summaries from archived readings. Card `Peak 10m` tracks rolling total CPU load;
-neither feature requires a newer agent. Container tiles show names and state
-colors, looping automatically when more than nine containers are present.
-Host cards show pending-update counts (`No updates` green, `Updates: N` yellow
-below 50 / red at 50+, `Security Updates: N` dark red); unknown stays blank.
+neither feature requires a newer agent. Container rows show names and state
+colors, leading with failures. Host cards show pending-update counts
+(`No updates` green, `Updates: N` grey below 50 / yellow at 50+, `Security
+Updates: N` dark red, and a flashing red label when a reboot is required);
+unknown stays blank.
+
+## Self-update (agent 1.7+)
+
+The agent keeps itself current. On startup (after a 2-minute stagger) and
+every `self_update_interval_hours` (default 24), it asks the server what it
+ships — `GET /agent/version` — using its **push token**. That endpoint is
+gated by the token, so only an already-provisioned host can fetch a release:
+that is the fleet whitelist, and it is why self-update needs no extra
+credential. It is **on by default**; set `"self_update": false` on a host you
+update by hand.
+
+When the server's version is newer:
+
+1. The build for this platform (`<goos>-<goarch>`) is downloaded and its
+   **sha256** verified against the manifest. Transfers require HTTPS; plain
+   HTTP is refused unless `allow_insecure` is set (dev only).
+2. The staged binary must run and report the expected version before anything
+   is replaced — a truncated or wrong-architecture download is discarded.
+3. A detached helper (a copy of the *current* binary, so it survives the
+   swap) replaces `/usr/local/bin/superboard`, keeping the previous build at
+   `superboard.bak`, then restarts the service.
+4. If the service is not active within 45s, the helper restores `.bak` and
+   restarts — a bad release rolls back instead of bricking a client box.
+
+Requirements and limits:
+
+- **systemd is required.** Without it the agent cannot restart itself, so it
+  logs the available release and does nothing; use
+  `install.sh --update` on those hosts.
+- Downgrades are refused unless `self_update_allow_downgrade` is true.
+- Failures never touch telemetry: the check runs beside the push loop and any
+  error is logged and retried at the next interval.
+- `superboard self-update --check` reports what would happen and installs
+  nothing; `superboard self-update` applies immediately.
+
+Config keys (all optional):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `self_update` | `true` | Allow the agent to replace its own binary |
+| `self_update_interval_hours` | `24` | How often to check for a release |
+| `self_update_allow_downgrade` | `false` | Permit installing an older release |
 
 Not implemented: Docker event subscriptions and log shipping. Update checks
 are read-only and never install packages or reboot hosts. SMART disk health

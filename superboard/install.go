@@ -76,6 +76,10 @@ func cmdInstall(configPath, server, token string, interval int, insecure bool) e
 	} else {
 		cfg.IntervalSeconds = DefaultIntervalSeconds
 	}
+	// Written explicitly rather than left to the nil default, so an operator
+	// reading the config file can see self-update is on and turn it off.
+	selfUpdate := true
+	cfg.SelfUpdate = &selfUpdate
 
 	if err := saveConfig(configPath, cfg); err != nil {
 		return err

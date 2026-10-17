@@ -26,7 +26,7 @@ import { ServerHistory } from "@/components/ServerHistory";
 /** Minimum card footprint used to work out how many fit on the wall. */
 const MIN_CARD_W = 340;
 const MIN_CARD_H = 420;
-const GAP = 16;
+const GAP = 8;
 
 /** How long the board stays paused after someone touches it. */
 const IDLE_RESUME_MS = 30_000;
@@ -407,7 +407,7 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
     ) : (
         <div
             ref={gridRef}
-            className="fleet-grid grid min-h-0 flex-1 items-start content-start gap-4 overflow-y-auto"
+            className="fleet-grid grid min-h-0 flex-1 items-start content-start gap-2 overflow-y-auto"
             style={{
                 gridTemplateColumns: `repeat(${layout.cols}, minmax(0, 1fr))`,
             }}
@@ -529,7 +529,7 @@ export function SuperboardApp({ kiosk, filter }: { kiosk: boolean; filter: strin
     }, []);
 
     if (!authed) {
-        return <TokenGate inviteToken={null} onSaved={() => setAuthed(true)} />;
+        return <TokenGate onSaved={() => setAuthed(true)} />;
     }
 
     return <Superboard kiosk={kiosk} filter={filter} onDisconnect={disconnect} />;

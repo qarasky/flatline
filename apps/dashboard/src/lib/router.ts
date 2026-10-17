@@ -51,13 +51,3 @@ export function navigate(to: string): void {
     // usePath pick the change up.
     window.dispatchEvent(new PopStateEvent("popstate"));
 }
-
-/**
- * Pull an invite token out of an /invite/:token path.
- * @param path Current path
- * @returns The token, or null when this is not an invite link
- */
-export function inviteTokenFrom(path: string): string | null {
-    const match = /^\/invite\/([^/]+)\/?$/.exec(path);
-    return match ? decodeURIComponent(match[1]) : null;
-}

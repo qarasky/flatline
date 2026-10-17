@@ -1,10 +1,10 @@
 import { memo, type MouseEvent } from "react";
 import type { MonitorSummary, MetricsPayload, CPUPeak, ResolvedMonitorLink } from "@/lib/api";
-import { agentWarnings, containerAgeMs, fleetAttention, formatBytes, formatDuration, formatRate, percentage, sampleAgeMs, smartWarning, updatesStatus } from "@/lib/fleet-presentation";
+import { agentWarnings, containerAgeMs, containerRows, fleetAttention, formatBytes, formatBytesPair, formatDuration, percentage, sampleAgeMs, smartWarning, updatesStatus } from "@/lib/fleet-presentation";
 import { linkStatusLabel, linkTone, sortLinks } from "@/lib/links";
-import { ContainerTiles } from "@/components/ContainerTiles";
+import { ContainerRows } from "@/components/ContainerRows";
 import { CoreSquares } from "@/components/CoreSquares";
-import { MetricBar, usageTone } from "@/components/MetricBar";
+import { MetricBar, UsageBar } from "@/components/MetricBar";
 import { ProviderLogo } from "@/components/ProviderLogo";
 import { LinkStatusDot } from "@/components/WebsiteLinks";
 
@@ -26,6 +26,15 @@ export function ageOf(value: string | null | undefined): string {
 function temperature(value: number | undefined): string | null {
     return value !== undefined && Number.isFinite(value) && value > 0 && value < 125 ? `${Math.round(value)}°C` : null;
 }
+
+/**
+ * Whether GPU tiles render on the card.
+ *
+ * Off for now: GPU load is not something this wall needs, but the tile code
+ * is kept intact so a box that reports a GPU still works the moment this is
+ * flipped back on. Nothing else in the card depends on it.
+ */
+const SHOW_GPU = false;
 
 /** Host reachability stays distinct from workload health and data freshness. */
 export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, onMenu }: {
@@ -60,28 +69,24 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
     const hostname = metrics.host?.hostname;
     const displayName = monitor.name || hostname || "Unnamed server";
     const updates = updatesStatus(metrics.updates);
-    const updatesTone = updates?.tone === "ok" ? "text-ok" : updates?.tone === "warn" ? "text-warn" : updates?.tone === "bad" ? "text-bad" : "text-critical";
+    const updatesTone = updates?.tone === "reboot" ? "text-bad fleet-reboot" : updates?.tone === "ok" ? "text-ok" : updates?.tone === "warn" ? "text-warn" : updates?.tone === "critical" ? "text-critical" : "";
     const agent = metrics.agent;
     const warning = agentWarnings(agent, monitor.pushFailuresAck ?? 0);
     const agentTip = agent
         ? `Agent ${agent.version ?? "unknown"}${Number.isFinite(agent.uptime) ? ` · running ${formatDuration(agent.uptime) ?? "0s"}` : ""}`
         : undefined;
+    // Second line under the name: only uptime and agent version. OS and core
+    // count are noise the operator can get from the machine itself.
+    const subline = [
+        metrics.host?.uptime ? `uptime ${formatDuration(metrics.host.uptime)}` : null,
+        agent?.version ? `agent ${agent.version}` : null,
+    ].filter(Boolean).join(" · ");
     const load = metrics.load;
     const loadTip = load && Number.isFinite(load.avg1)
         ? `Load average 1/5/15: ${(load.avg1 as number).toFixed(2)} / ${Number.isFinite(load.avg5) ? (load.avg5 as number).toFixed(2) : "—"} / ${Number.isFinite(load.avg15) ? (load.avg15 as number).toFixed(2) : "—"}`
         : null;
-    const netRate = metrics.netRate;
-    const ioRate = metrics.diskIoRate;
-    const netText = netRate
-        ? `Net ↓ ${formatRate(netRate.rxBytesPerSec) ?? "—"} ↑ ${formatRate(netRate.txBytesPerSec) ?? "—"}`
-        : null;
-    const ioText = ioRate
-        ? `I/O R ${formatRate(ioRate.readBytesPerSec) ?? "—"} W ${formatRate(ioRate.writeBytesPerSec) ?? "—"}`
-        : null;
-    const rateTip = netRate || ioRate
-        ? `Rates over the last ${Math.round((netRate?.windowSeconds ?? ioRate?.windowSeconds ?? 0) * 10) / 10}s of agent pushes; gaps produce no rate`
-        : undefined;
     const smart = smartWarning(metrics.smart);
+    const rows = containerRows(containers);
 
     return (
         <article
@@ -98,91 +103,94 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
                 <div className="min-w-0">
                     <h2 className="fleet-name truncate"><button type="button" className="fleet-history-link" onClick={() => onOpenHistory(monitor.id)}
                         aria-label={`Open load history for ${displayName}`} title={hostname && hostname !== displayName ? `${displayName} · hostname ${hostname} · View history` : `${displayName} · View history`}><ProviderLogo provider={monitor.provider} /><span className="truncate">{displayName} <span aria-hidden="true" className="text-quiet">↗</span></span></button></h2>
-                    <p className="fleet-secondary mt-1" title={agentTip}>
-                        {metrics.host?.os ?? monitor.type}{cpu?.cores ? ` · ${cpu.cores} cores` : ""}
-                        {metrics.host?.uptime ? ` · uptime ${formatDuration(metrics.host.uptime)}` : ""}
-                        {agent?.version ? ` · agent ${agent.version}` : ""}
-                    </p>
+                    {subline ? <p className="fleet-secondary mt-1" title={agentTip}>{subline}</p> : null}
                 </div>
                 <div className="fleet-health">
                     <span className="fleet-status"><span className="size-2 rounded-full bg-current" />{headline}</span>
-                    {headline !== hostLabel ? <span className="fleet-secondary">{hostLabel}</span> : null}
                     <span className={`fleet-freshness tnum ${stale ? "text-warn" : "text-quiet"}`}>
                         {stale ? "Stale · " : "Updated "}{ageOf(time)} ago
                     </span>
                 </div>
             </header>
 
-            {updates ? (
-                <p className={`fleet-secondary tnum ${updatesTone}`} title={updates.title} aria-label={`System updates: ${updates.label}`}>
-                    {updates.label}
-                </p>
+            {updates || warning ? (
+                <div className="fleet-flags">
+                    {updates ? (
+                        <span className={`fleet-secondary tnum ${updatesTone}`} title={updates.title} aria-label={`System updates: ${updates.label}`}>
+                            {updates.label}
+                        </span>
+                    ) : null}
+                    {warning ? (
+                        <span className="fleet-secondary text-warn" title={warning.title} role="status">
+                            {warning.text}
+                        </span>
+                    ) : null}
+                </div>
             ) : null}
 
-            {warning ? (
-                <p className="fleet-secondary text-warn" title={warning.title} role="status">
-                    {warning.text}
-                </p>
-            ) : null}
-
+            {/* CPU first, then RAM and Disk each on their own full-width row:
+                the numbers read `RAM · 24 / 36 (GB)` with a slim bar under
+                them, so nothing wraps in a narrow column. */}
             <div className="fleet-primary">
                 <section className="fleet-primary-metric" aria-label="CPU utilization">
-                    <div className="fleet-label">CPU</div>
-                    <div className={`fleet-number tnum ${usageTone(cpu?.percent) === "bad" ? "text-bad" : usageTone(cpu?.percent) === "warn" ? "text-warn" : ""}`}>{percentage(cpu?.percent)}</div>
-                    <p className="fleet-secondary" title={`Highest observed total CPU load over the last 10 minutes${loadTip ? ` · ${loadTip}` : ""}; restart recovery uses archived snapshots`}>
+                    <div className="fleet-label">CPU{temperature(cpu?.temp) ? ` ${temperature(cpu?.temp)}` : ""}</div>
+                    <div className="mt-2"><CoreSquares values={cpu?.perCore} label="Core" /></div>
+                    <p className="fleet-secondary mt-2" title={`Highest observed total CPU load over the last 10 minutes${loadTip ? ` · ${loadTip}` : ""}; restart recovery uses archived snapshots`}>
                         {`Peak 10m ${percentage(peak)}`}
-                        {temperature(cpu?.temp) ? ` · ${temperature(cpu?.temp)}` : ""}
                         {loadTip ? ` · load ${(load?.avg1 as number).toFixed(2)}` : ""}
                     </p>
-                    <div className="mt-3"><CoreSquares values={cpu?.perCore} label="Core" /></div>
                 </section>
                 <section className="fleet-primary-metric" aria-label="Memory utilization">
-                    <div className="fleet-label">RAM</div>
-                    <div className={`fleet-number tnum ${usageTone(mem?.percent) === "bad" ? "text-bad" : usageTone(mem?.percent) === "warn" ? "text-warn" : ""}`}>{percentage(mem?.percent)}</div>
-                    <p className="fleet-secondary">{formatBytes(mem?.used)} / {formatBytes(mem?.total)}{temperature(mem?.temp) ? ` · ${temperature(mem?.temp)}` : ""}</p>
-                    <div className="fleet-ram-track"><MetricBar label="Memory used" percent={mem?.percent} /></div>
+                    <p className="fleet-meter-line">
+                        <span className="fleet-label">RAM{temperature(mem?.temp) ? ` ${temperature(mem?.temp)}` : ""}</span>
+                        <span className="fleet-meter-value tnum">{formatBytesPair(mem?.used, mem?.total) ?? "—"}</span>
+                    </p>
+                    <UsageBar percent={mem?.percent} label="Memory" />
+                </section>
+                <section className="fleet-primary-metric" aria-label="Disk utilization">
+                    <p className="fleet-meter-line">
+                        <span className="fleet-label">{disk && disk.mount && disk.mount !== "/" ? `Disk ${disk.mount}` : "Disk"}</span>
+                        <span className="fleet-meter-value tnum">{formatBytesPair(disk?.used, disk?.total) ?? "No mounts reported"}</span>
+                    </p>
+                    <UsageBar percent={disk?.percent} label="Disk" />
                 </section>
             </div>
 
-            <div className="fleet-resources">
-                <MetricBar label={disk ? `Disk ${disk.mount ?? ""}` : "Disk"} percent={disk?.percent}
-                    detail={disk ? `${formatBytes(disk.used)} / ${formatBytes(disk.total)}` : "No mounts reported"} />
-                {netText || ioText ? (
-                    <p className="fleet-secondary tnum" title={rateTip}>
-                        {netText}{netText && ioText ? " · " : ""}{ioText}
-                    </p>
-                ) : null}
-                {smart ? (
-                    <p className={`fleet-secondary ${smart.tone === "bad" ? "text-bad" : "text-warn"}`} title={smart.title} role="status">
-                        {smart.text}
-                    </p>
-                ) : null}
-                {gpus.map((g, i) => (
-                    <section key={`${g.name}-${i}`} className="fleet-gpu">
-                        <MetricBar label={g.name ?? `GPU ${i + 1}`} percent={g.util} detail={temperature(g.temp) ?? undefined} />
-                        {g.memTotal !== undefined && g.memTotal > 0 ? <MetricBar label="VRAM" percent={g.memUsed !== undefined ? g.memUsed / g.memTotal * 100 : undefined}
-                            detail={`${formatBytes(g.memUsed)} / ${formatBytes(g.memTotal)}`} /> : null}
-                    </section>
-                ))}
-            </div>
-
-            <section className="fleet-containers" aria-label="Containers">
-                <div className="mb-2 flex items-baseline justify-between gap-2">
-                    <h3 className="fleet-label">Containers</h3>
-                    <span className="fleet-secondary tnum">{running}/{containers.length} running</span>
+            {smart || (SHOW_GPU && gpus.length) ? (
+                <div className="fleet-resources">
+                    {smart ? (
+                        <p className={`fleet-secondary ${smart.tone === "bad" ? "text-bad" : "text-warn"}`} title={smart.title} role="status">
+                            {smart.text}
+                        </p>
+                    ) : null}
+                    {SHOW_GPU ? gpus.map((g, i) => (
+                        <section key={`${g.name}-${i}`} className="fleet-gpu">
+                            <MetricBar label={g.name ?? `GPU ${i + 1}`} percent={g.util} detail={temperature(g.temp) ?? undefined} />
+                            {g.memTotal !== undefined && g.memTotal > 0 ? <MetricBar label="VRAM" percent={g.memUsed !== undefined ? g.memUsed / g.memTotal * 100 : undefined}
+                                detail={`${formatBytes(g.memUsed)} / ${formatBytes(g.memTotal)}`} /> : null}
+                        </section>
+                    )) : null}
                 </div>
-                {metrics.dockerError ? (
-                    <p className="fleet-secondary text-warn" title={metrics.dockerError} role="status">
-                        {dockerAge ? `Collection failing — containers as of ${dockerAge} ago` : "Collection unavailable — container health unknown"}
-                    </p>
-                ) : dockerAge ? (
-                    <p className="fleet-secondary text-warn" role="status">Containers as of {dockerAge} ago</p>
-                ) : null}
-                {!containers.length && !metrics.dockerError ? <p className="fleet-secondary">No containers</p> : null}
-                {containers.length ? (
-                    <ContainerTiles containers={containers} />
-                ) : null}
-            </section>
+            ) : null}
+
+            {rows.length || metrics.dockerError ? (
+                <section className="fleet-containers" aria-label="Containers">
+                    <div className="mb-2 flex items-baseline justify-between gap-2">
+                        <h3 className="fleet-label">Containers</h3>
+                        <span className="fleet-secondary tnum">{running}/{containers.length} running</span>
+                    </div>
+                    {metrics.dockerError ? (
+                        <p className="fleet-secondary text-warn" title={metrics.dockerError} role="status">
+                            {dockerAge ? `Collection failing — containers as of ${dockerAge} ago` : "Collection unavailable — container health unknown"}
+                        </p>
+                    ) : dockerAge ? (
+                        <p className="fleet-secondary text-warn" role="status">Containers as of {dockerAge} ago</p>
+                    ) : null}
+                    {rows.length ? (
+                        <ContainerRows containers={rows} />
+                    ) : null}
+                </section>
+            ) : null}
 
             {links.length ? (
                 <section className="fleet-links" aria-label="Hosted websites">

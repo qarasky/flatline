@@ -5,26 +5,27 @@ monitors but have separate credentials and API tokens.
 
 ## Local development
 
-The repository's `./dev.sh` starts the complete stack. To run this app alone:
+The repository's `./dev.sh` starts the complete stack (Rust backend, Go agent
+and mock fleet, this dev server). To run this app alone:
 
 ```sh
 npm --prefix apps/dashboard ci
-VITE_FLATLINE_URL=http://127.0.0.1:3001 npm --prefix apps/dashboard run dev
+FLATLINE_DEV_BACKEND=http://127.0.0.1:3001 npm --prefix apps/dashboard run dev
 ```
 
-Run commands from the repository root. Node.js >=26.2 is required. The Vite
-development server defaults to port 3003; the backend must already be running.
-Set the backend address to one reachable by the browser. In production the
-build is served by the backend itself (same origin), so no URL is stamped in.
+Run commands from the repository root; Node is needed only for Vite. The dev
+server defaults to port 3003 and proxies `/api` and `/agent` to the backend
+(see `vite.config.ts`), so the browser sees one same-origin API exactly as it
+does in production — where the backend serves this build itself.
 
 ## Main views
 
-- `/`: searchable grouped monitors, bulk operations, detail panels, Agents and Users.
+- `/`: searchable grouped monitors, bulk operations, detail panels and Agents.
 - `/status/:slug`: public client status pages (no operator token involved).
   On host-mapped client domains the site root resolves the slug from the
   request host instead. Password-gated pages show the unlock form; the page
   refreshes every 30s while visible.
-- `/superboard`: live host metrics and compact container tiles.
+- `/superboard`: live host metrics and compact container rows.
 - `/superboard/kiosk`: wall-display chrome, clock and automatic fleet pagination.
 - `/superboard/kiosk/<group>`: the same board scoped to a monitor group —
   `/superboard/kiosk/work` shows only that group's children, comma-separated
@@ -32,10 +33,10 @@ build is served by the backend itself (same origin), so no URL is stamped in.
   by slug (`Aiel Qorgan` → `aiel-qorgan`) or case-insensitive exact name;
   unknown scopes show an empty board rather than everything.
 
-Sign in with the operator password (and TOTP when configured). The username
-field stays hidden — the server resolves the single account — and appears
-automatically when the instance has several accounts. First-run setup creates
-the initial account. REST snapshots and bearer-authenticated SSE keep
+Sign in with the operator token — the one the server writes to
+`initial-token.txt` on first boot, or any token minted in the Agents panel.
+There are no accounts, invites or one-time codes. REST snapshots and
+bearer-authenticated SSE keep
 views current. Up to ten hosts remain on one default fleet page; smaller
 viewports scroll the board rather than rotating single rows.
 

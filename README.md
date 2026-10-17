@@ -139,11 +139,6 @@ are preserved until changed. Upgrade the backend before enabling 1Hz agents.
 
 Use a single backend process. If reverse-proxying `/api/v1/events`, disable
 response buffering and allow connections longer than the 15s keepalive.
-For a repeatable isolated 10-server / three-client benchmark:
-
-```sh
-TEST_BACKEND=1 node --import=tsx extra/benchmark-live.mjs
-```
 
 The benchmark reports HTTP-ingest-to-stream latency, not remote collection or
 browser paint latency. See [SUPERBOARD-SPEC.md](SUPERBOARD-SPEC.md) for limits
@@ -153,41 +148,40 @@ and restart/durability behavior.
 
 Documentation: [dashboard](apps/dashboard/README.md) ·
 [agent installation](superboard/README.md) · [Superboard specification](SUPERBOARD-SPEC.md) ·
-[single-origin deployment and rollback](docker/OFFICE-DEPLOYMENT.md) ·
+[single-origin deployment](docker/OFFICE-DEPLOYMENT.md) ·
 [improvement backlog](IMPROVEMENT-ROADMAP.md).
 
 ### Local dev
 
-Requires Node.js >= 26.2.0.
+Requires `cargo` (backend), `go` (agent and mock fleet) and Node (Vite dev
+server only — the backend and the agent do not use it).
 
 ```bash
-git clone https://github.com/qarasky/flatline.git
+git clone https://github.com/artchsh/flatline.git
 cd flatline
-npm ci
 ./dev.sh
 ```
 
-`./dev.sh` starts the backend and the dashboard/status app, and seeds a demo
-database on first run. Open the dashboard (address printed by the script) and
-sign in — on a fresh database it asks you to create the first operator
-account. `./dev.sh stop` stops everything; `./dev.sh status` checks health.
+`./dev.sh` builds the Rust backend and the Go agent, starts both plus the
+dashboard dev server, and starts the **mock fleet**: a Go agent
+(`superboard/mockagent`) that creates a demo set of hosts through the API and
+pushes believable telemetry, so the Superboard shows every card state without
+any real machines. The script prints the operator token, which is this
+instance's sign-in credential (also in `./.dev-data/initial-token.txt`).
+`./dev.sh stop` stops everything; `./dev.sh status` checks health.
 
 ### 🐳 Docker
 
-For the single-host office deployment behind Cloudflare Tunnel, use
-[`compose.production.yaml`](compose.production.yaml) and the
-[office deployment/rollback guide](docker/OFFICE-DEPLOYMENT.md).
-
 ```bash
-git clone https://github.com/qarasky/flatline.git
+git clone https://github.com/artchsh/flatline.git
 cd flatline
 docker compose up -d --build
 ```
 
-This starts one service on **3001** that serves the API, the dashboard and
-the public status pages. Data lives in `./data`. On first run, open
-`http://127.0.0.1:3001` and create the operator account — no token pasting,
-no seed scripts.
+This starts one service on **3001** that serves the API, the dashboard, the
+public status pages and the agent downloads. Data lives in `./data`. On first
+run the operator token is written to `./data/initial-token.txt` (mode 0600) —
+sign in with it. There is no account setup and no seed script.
 
 Everything is same-origin by design, so there is no backend URL to
 configure: whatever host serves the app also serves the API. Open it on the
@@ -208,19 +202,17 @@ docker run -d \
 
 ### 💪🏻 Non-Docker
 
-Requires Node.js >= 26.2.0.
+Requires `cargo` (and Node for the dashboard build).
 
 ```bash
-git clone https://github.com/qarasky/flatline.git
+git clone https://github.com/artchsh/flatline.git
 cd flatline
-npm ci
-npm run start-server-dev
+cargo run --release --manifest-path backend-rs/Cargo.toml
 ```
 
-Then run the frontend app:
-[apps/dashboard](apps/dashboard/README.md), pointed at the backend URL.
-
-Data is stored in `./data` (SQLite by default).
+The backend serves the built dashboard from `FLATLINE_WEB_DIST`
+(`apps/dashboard/dist`; build it with `npm run build` there). Data is stored
+in `./data` (SQLite).
 
 ## 🔌 Quick start with the API
 

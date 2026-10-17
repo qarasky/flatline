@@ -54,25 +54,36 @@ export function percentage(value: number | undefined): string {
 type Container = NonNullable<MetricsPayload["docker"]>[number];
 export type FleetContainer = Container;
 
-/** Pending-update counts at or above this read as bad (red); below, warn. */
-export const UPDATES_RED_AT = 50;
+/** Pending-update counts at or above this read as a warning (yellow). */
+export const UPDATES_WARN_AT = 50;
 
 export interface UpdatesStatus {
     label: string;
-    tone: "ok" | "warn" | "bad" | "critical";
+    tone: "ok" | "warn" | "quiet" | "critical" | "reboot";
     title: string;
 }
 
 /**
  * One-line pending-update status for a server card. Counts only, never a
  * package list. Absent or malformed data is unknown (null — the card shows
- * nothing) so a blind agent never reads as fully updated. Security takes
- * precedence whenever any are reported.
+ * nothing) so a blind agent never reads as fully updated.
+ *
+ * Priority is actionability: a pending reboot outranks everything (no further
+ * package check will clear it — the host must restart), then security, then a
+ * backlog. A handful of pending updates is an ordinary day, so below the
+ * threshold the line stays quiet (grey); a real backlog is the warning
+ * (yellow). Fully updated is green, security dark red, reboot flashing red.
  */
-export function updatesStatus(updates: { total?: number; security?: number } | undefined): UpdatesStatus | null {
+export function updatesStatus(updates: { total?: number; security?: number; rebootRequired?: boolean } | undefined): UpdatesStatus | null {
     if (!updates) { return null; }
-    const { total, security } = updates;
+    const { total, security, rebootRequired } = updates;
     if (!Number.isFinite(total) || (total as number) < 0) { return null; }
+    if (rebootRequired === true) {
+        const detail = Number.isFinite(security) && (security as number) > 0
+            ? `Security Updates: ${security} · reboot required`
+            : (total as number) > 0 ? `Updates: ${total} · reboot required` : "Reboot required";
+        return { label: detail, tone: "reboot", title: "A reboot is required to finish applying updates — patch, then restart the host" };
+    }
     if (Number.isFinite(security) && (security as number) > 0) {
         return {
             label: `Security Updates: ${security}`,
@@ -83,10 +94,10 @@ export function updatesStatus(updates: { total?: number; security?: number } | u
     if (total === 0) {
         return { label: "No updates", tone: "ok", title: "System is fully updated" };
     }
-    if ((total as number) >= UPDATES_RED_AT) {
-        return { label: `Updates: ${total}`, tone: "bad", title: `${total} pending updates (${UPDATES_RED_AT} or more)` };
+    if ((total as number) >= UPDATES_WARN_AT) {
+        return { label: `Updates: ${total}`, tone: "warn", title: `${total} pending updates (${UPDATES_WARN_AT} or more)` };
     }
-    return { label: `Updates: ${total}`, tone: "warn", title: `${total} pending updates` };
+    return { label: `Updates: ${total}`, tone: "quiet", title: `${total} pending updates` };
 }
 
 export function containerTone(container: Container): "up" | "stopped" | "bad" | "pending" {
@@ -96,18 +107,45 @@ export function containerTone(container: Container): "up" | "stopped" | "bad" | 
     return "pending";
 }
 
-export function containerTileLayout(containers: Container[]) {
-    // Reserve at least one rotating row when the fleet overflows. More than
-    // six issues cannot all be pinned: remaining issues lead the rotating set.
-    const issues = containers.filter(containerIssue);
-    const pinned = containers.length > 9 ? issues.slice(0, 6) : [];
-    const pinnedSet = new Set(pinned);
-    const rotating = containers.filter(container => !pinnedSet.has(container));
-    const pinnedRows = Math.ceil(pinned.length / 3);
-    const visibleRows = 3 - pinnedRows;
-    const rows: Container[][] = [];
-    for (let i = 0; i < rotating.length; i += 3) { rows.push(rotating.slice(i, i + 3)); }
-    return { pinned, rows, visibleRows, looping: rows.length > visibleRows };
+/** Containers a card shows at most: the failing ones, or the two busiest. */
+export const CONTAINER_ROWS = 2;
+
+/** A deliberately stopped container: never shown, never counted as trouble. */
+export function containerStopped(container: Container): boolean {
+    return container.state === "exited" || container.state === "removed";
+}
+
+/**
+ * Rank a container by resource pressure: CPU first (Docker's per-core
+ * convention, so 400% means four cores), memory as the tie-break. A container
+ * with no stats sorts last rather than reading as idle.
+ */
+function containerUsage(container: Container): number {
+    const cpu = Number.isFinite(container.stats?.cpuPercent) ? (container.stats?.cpuPercent as number) : -1;
+    const mem = Number.isFinite(container.stats?.memUsed) ? (container.stats?.memUsed as number) : 0;
+    return cpu * 1e12 + mem;
+}
+
+/**
+ * The containers worth a row on the card.
+ *
+ * Stopped containers are never shown: without an expected-running policy they
+ * express intent, not failure, and they would crowd out live signal. Real
+ * failures come first, capped at CONTAINER_ROWS, whatever else is running —
+ * an unhealthy container is the one thing the wall exists to surface. When
+ * nothing fails, the busiest few earn the space instead, so a healthy card
+ * still says something about what the host is actually doing.
+ */
+export function containerRows(containers: Container[], limit = CONTAINER_ROWS): Container[] {
+    const live = containers.filter((container) => !containerStopped(container));
+    const failing = live.filter(containerIssue);
+    if (failing.length) {
+        return failing.slice(0, limit);
+    }
+    return live
+        .filter((container) => container.state === "running")
+        .sort((a, b) => containerUsage(b) - containerUsage(a))
+        .slice(0, limit);
 }
 
 // Stopped containers may be intentional. Only explicit malfunction states
@@ -127,6 +165,29 @@ export function formatBytes(bytes: number | undefined): string {
     let unit = 0;
     while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
     return `${value.toFixed(value >= 100 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+/**
+ * "used / total" sharing one unit, e.g. "24 / 36 (GB)".
+ *
+ * Cards are read at a glance, so the unit is printed once. Returns null when
+ * either side is unknown, and falls back to two full figures when the units
+ * differ (900 GB of 2 TB, say) since one trailing unit would then be a lie.
+ * @param used Used bytes
+ * @param total Total bytes
+ * @returns The paired text, or null when nothing can be shown
+ */
+export function formatBytesPair(used: number | undefined, total: number | undefined): string | null {
+    const u = formatBytes(used);
+    const t = formatBytes(total);
+    if (u === "—" || t === "—") { return null; }
+    const uSplit = u.lastIndexOf(" ");
+    const tSplit = t.lastIndexOf(" ");
+    const uUnit = u.slice(uSplit + 1);
+    const tUnit = t.slice(tSplit + 1);
+    if (uUnit !== tUnit) { return `${u} / ${t}`; }
+    const bare = (value: string) => (value.endsWith(".0") ? value.slice(0, -2) : value);
+    return `${bare(u.slice(0, uSplit))} / ${bare(t.slice(0, tSplit))} (${uUnit})`;
 }
 
 /**
