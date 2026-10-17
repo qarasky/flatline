@@ -3,10 +3,10 @@
 # Start the Flatline dev servers, detached so they survive the shell that
 # launched them.
 #
-# The backend is the Rust service in backend-rs/ (the Node backend has been
-# retired). The operator dashboard is the Vite app in apps/dashboard; Vite
-# dev-serves it and proxies nothing — the app talks to the backend origin
-# directly.
+# The backend is the Rust service in backend-rs/. The operator dashboard is the
+# Vite app in apps/dashboard: Vite proxies /api and /agent to the backend
+# (see apps/dashboard/vite.config.ts), so the app is same-origin in dev exactly
+# as it is in production.
 #
 # Mock data: the Go mock agent (superboard/mockagent) creates a demo fleet
 # through the public API and pushes telemetry for it, so the Superboard shows

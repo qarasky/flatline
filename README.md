@@ -4,290 +4,162 @@
 
 # Flatline
 
-Self-hosted uptime monitoring, live server telemetry, and Telegram alerts—built for shared operators and AI agents.
+Self-hosted uptime monitoring, live server telemetry, and Telegram alerts —
+built for one operator, a wall monitor and AI agents.
 
-A fork of [Uptime Kuma](https://github.com/louislam/uptime-kuma) (MIT), trimmed down to what a
-small team actually uses and extended where it fell short. See [FORK-ROADMAP.md](./FORK-ROADMAP.md)
-for the full list of changes.
+A fork of [Uptime Kuma](https://github.com/louislam/uptime-kuma) (MIT), trimmed
+to what a small team actually uses and extended where it fell short. See
+[docs/history.md](docs/history.md) for how it differs from upstream and what was
+removed.
 
 ![Superboard with eight fictional servers and compact container status tiles](docs/screenshots/superboard.png)
 
 **All screenshots use generated sample data**, not a production installation.
 
+## What it is
+
+Three pieces, one origin:
+
+| Piece | Dir | What |
+|---|---|---|
+| Backend | `backend-rs/` | Rust service: the check engine, REST API, storage, alerts, and the built web app. |
+| Dashboard | `apps/dashboard/` | React/Vite app: operator dashboard, Superboard, public status pages. |
+| Host agent | `superboard/` | Single static Go binary pushed to each monitored server; sends telemetry, never accepts connections. |
+
+`./dev.sh` runs all three locally, plus a mock fleet so the board has something
+to show without real machines. Production is one container: the backend serves
+the API, the dashboard, the status pages and the agent downloads on `:3001`.
+
 ## What you can do
 
-- Monitor websites and services from a dense, keyboard-friendly dashboard.
-- Watch CPU/RAM at 1Hz on **Superboard**, including per-core load, disk usage,
-  optional GPU/VRAM, temperatures, and explicit telemetry freshness.
-- Open a server's history with **10m / 1h / 6h / 24h / 7d / 30d / 1y** ranges
-  and **p90 / p95 / p99**, mean, and peak summaries. Windows beyond a week
-  read hourly rollups (two-year retention); peak stays the true maximum.
-- Track containers in three-column status tiles with automatic vertical looping,
-  pinned problems, and no manual scrolling; each tile shows a compact CPU /
-  memory reading when the agent can measure it. Host reachability stays
-  separate from workload health.
-- See pending OS update counts per host (`No updates` / `Updates: N` /
-  `Security Updates: N`), read-only, from agent 1.3.
-- Get paged on sustained resource pressure: per-server CPU / RAM / disk
-  thresholds evaluated server-side, with 60-second debounce, 30-minute
-  cooldown, hysteresis, and explicit recovery messages through the same
-  Telegram path as host alerts.
-- Spot agent trouble at a glance: version, dropped samples, failed pushes and
-  per-collector error counts travel in every payload and render on the card
-  when something is off.
-- Read load average and live network / disk I/O throughput on each server
-  card (rates derived server-side from raw counters, virtual interfaces
-  excluded so container traffic is not double counted).
-- See per-container CPU / memory on the container tiles, and a SMART warning
-  when a disk reports failing health or heavy SSD wear (NVMe).
-- Wall-mount a group of servers on its own kiosk page —
-  `/superboard/kiosk/work` — while home shows every fleet on one board,
-  or combine scopes with `/superboard/kiosk/work,personal`.
-- Rename servers on the board directly (right-click → Rename).
-- Share monitor data across accounts without sharing passwords or API tokens.
-- Publish client status pages with password gates, branding, and group-driven
-  generation; manage the installation through scoped REST calls. Status pages
-  live in the dashboard app (`/status/:slug`, plus host-routed client
-  domains).
-
-### Operator dashboard
-
-Grouped monitors, bulk actions, search (`/`), and live status updates.
+- **Monitor** HTTP/HTTPS endpoints, ICMP hosts, groups and agent-pushed servers,
+  with retries, maintenance-safe retry windows and Telegram alerts.
+- **Watch CPU/RAM at 1 Hz on the Superboard**, with per-core squares, RAM and
+  disk rows, container tiles, pending-update counts, SMART warnings and explicit
+  telemetry freshness. Wall-mount a group on its own kiosk page
+  (`/superboard/kiosk/work`, comma-separate scopes) and rename servers from the
+  board.
+- **Link the websites a server hosts** to its card and see their status as chips,
+  with hosting-provider logos drawn next to the card title.
+- **Open a server's history** with 10m / 1h / 6h / 24h / 7d / 30d / 1y ranges and
+  p90 / p95 / p99, mean and peak summaries. Windows beyond a week read hourly
+  rollups (two-year retention); peak stays the true maximum.
+- **Get paged on sustained resource pressure**: per-server CPU/RAM/disk
+  thresholds evaluated server-side, with 60s debounce, 30-minute cooldown,
+  hysteresis and explicit recovery messages.
+- **See agent trouble at a glance**: version, dropped samples, failed pushes and
+  per-collector error counts on the card, with one right-click action to clear
+  the warnings you have seen.
+- **Serve client status pages** with password gates, per-page logos and accents
+  (`/status/:slug`, plus host-routed client domains). Serving and unlocking them
+  is fully API-driven; creating or editing a page is currently a database
+  operation — the admin API for pages was not ported.
+- **Drive everything over HTTP**: the REST API is the same one the dashboard
+  uses, and `GET /api/v1/openapi.json` documents itself.
 
 ![Operator dashboard with fictional applications and infrastructure](docs/screenshots/dashboard.png)
 
-### Server history
-
-Percentiles use archived readings (normally every 30 seconds), **not raw 1Hz
-samples**. Charts show bucket averages; missing readings are not zeroes.
-The card's **Peak 10m** tracks the highest total CPU load observed in the last
-ten minutes, not the currently busiest core.
-
 ![Fictional CPU, RAM, GPU and VRAM history with p90, p95 and p99 summaries](docs/screenshots/history.png)
 
-[Screenshot fixtures and regeneration instructions](docs/screenshots/README.md).
+## Install
 
-## What is different from upstream
+### Local development
 
-- **Telegram only.** All 108 other notification providers were removed, along with the Webpush
-  service worker and its VAPID infrastructure. Fewer moving parts, one way to be paged.
-- **Multiple real users.** Flatline adds operator-issued, single-use invite links: mint a link, send it over any channel
-  you already trust, the recipient picks their own password. No email required, no signup form.
-- **REST API v1.** Everything the dashboard does is available over HTTP with bearer-token
-  auth and per-token `read` / `write` / `publish` scopes, so scripts and LLM agents can drive it.
-  `GET /api/v1/openapi.json` documents itself.
-- **Shared instance.** There are no per-user silos: every operator sees and edits the same
-  monitors, notifications and maintenance windows. Multiple accounts exist so panel access
-  can be shared without passing around one password. Tokens and invite links stay per-user
-  as the audit trail.
-- **Flatline branding.** Hot-orange accent on warm near-black, following the palette of
-  [1410666.xyz](https://1410666.xyz).
-
-Retains upstream monitor types such as HTTP(s), TCP, DNS, Ping, Push, Docker,
-SFTP, NTP, Postgres, and Redis, plus maintenance windows, proxy support, and 2FA.
-
-## ⭐ Features
-
-- Monitoring for HTTP(s), TCP, HTTP(s) Keyword, HTTP(s) Json Query, Websocket, Ping, DNS Record,
-  Push, Steam Game Server, Docker Containers, gRPC, MQTT, PostgreSQL, MySQL, MS SQL, MongoDB,
-  Redis, RabbitMQ, Kafka, SFTP, NTP, Oracle DB and more
-- Telegram notifications with templates and MarkdownV2
-- REST API v1 with token scopes and a self-describing OpenAPI document
-- Server-side metric threshold alerts (CPU / RAM / disk) with debounce,
-  cooldown and recovery messages
-- Multi-user with single-use invite links
-- Multiple status pages, maintenance windows, tags, proxy support, 2FA
-- Configurable check intervals; 1Hz host telemetry does not accelerate website checks
-
-## Architecture
-
-One process (v2 consolidation): the backend serves the API and the web app —
-operator dashboard and public status pages — on one origin.
-
-| App | Dir | Port | What |
-|---|---|---|---|
-| Backend + web app | `server/`, `apps/dashboard/` | 3001 | Monitors, checks, notifications, REST v1, and the built SPA (dashboard, `/status/:slug`, host-routed client domains). |
-
-The dashboard uses bearer-authenticated HTTP. Sign in with the operator
-password to obtain a browser token — the username is only asked for when the
-instance has several accounts; integrations use per-user API keys from
-`POST /api/v1/api-keys` or the **Agents** panel. Public status pages are
-routes in the same app; they read the status-page API, and password-gated
-pages use page-scoped unlock cookies rather than granting visitors operator
-access. In development the Vite dev server runs separately on 3003; the
-release image serves the build from the backend.
-
-### Live updates
-
-The operator dashboard and Superboard use bearer-authenticated SSE
-(`/api/v1/events`) rather than roster polling. REST snapshots recover state on
-connect/reconnect; heartbeat changes arrive as soon as checks finish.
-External monitor check frequencies do not change.
-
-[Superboard agent 1.5](superboard/README.md) pushes raw CPU counters at 1Hz
-(the server derives utilization: responsive live, ~30s means in history),
-1-second-fresh RAM, load average, network and disk I/O counters (server
-derives live rates), independent slower collectors, read-only pending-update
-counts every 4h, and a Telegraf-style self-report (version, uptime, dropped
-samples, collector errors) that cards surface as version + warning lines.
-Delivery is disk-backed: backend outages and agent restarts become late
-history instead of missing history, and backfilled samples carry their real
-times (`sampledAt`). Latest samples are cached; live history is
-sampled every 30s and retained for 30 days, with hourly rollups kept for two
-years. Existing explicit agent intervals
-are preserved until changed. Upgrade the backend before enabling 1Hz agents.
-
-Use a single backend process. If reverse-proxying `/api/v1/events`, disable
-response buffering and allow connections longer than the 15s keepalive.
-
-The benchmark reports HTTP-ingest-to-stream latency, not remote collection or
-browser paint latency. See [SUPERBOARD-SPEC.md](SUPERBOARD-SPEC.md) for limits
-and restart/durability behavior.
-
-## 🔧 How to Install
-
-Documentation: [dashboard](apps/dashboard/README.md) ·
-[agent installation](superboard/README.md) · [Superboard specification](SUPERBOARD-SPEC.md) ·
-[single-origin deployment](docker/OFFICE-DEPLOYMENT.md) ·
-[improvement backlog](IMPROVEMENT-ROADMAP.md).
-
-### Local dev
-
-Requires `cargo` (backend), `go` (agent and mock fleet) and Node (Vite dev
-server only — the backend and the agent do not use it).
+Requires `cargo`, `go` and Node (Node is only the Vite dev server).
 
 ```bash
-git clone https://github.com/artchsh/flatline.git
+git clone https://github.com/qarasky/flatline.git
 cd flatline
 ./dev.sh
 ```
 
-`./dev.sh` builds the Rust backend and the Go agent, starts both plus the
-dashboard dev server, and starts the **mock fleet**: a Go agent
-(`superboard/mockagent`) that creates a demo set of hosts through the API and
-pushes believable telemetry, so the Superboard shows every card state without
-any real machines. It also creates a few demo websites, links them to the
-servers that host them, and leaves agent warnings on two hosts, so the link
-picker and the "Clear agent warnings" action have something to show. The
-script prints the operator token, which is this instance's sign-in credential
-(also in `./.dev-data/initial-token.txt`). `./dev.sh stop` stops everything;
-`./dev.sh status` checks health.
+`./dev.sh` builds the backend and agent, starts the dashboard on `:3003`
+(backend on `:3001`, proxied), and starts the mock fleet: a Go agent that
+creates a demo set of hosts through the public API, pushes believable telemetry,
+creates a few demo websites and leaves agent warnings on two hosts. It prints
+the operator token — also in `./.dev-data/initial-token.txt`. `./dev.sh stop`
+stops everything; `./dev.sh status` checks health.
 
-### 🐳 Docker
+### Docker
 
 ```bash
-git clone https://github.com/artchsh/flatline.git
+git clone https://github.com/qarasky/flatline.git
 cd flatline
 docker compose up -d --build
 ```
 
-This starts one service on **3001** that serves the API, the dashboard, the
-public status pages and the agent downloads. Data lives in `./data`. On first
-run the operator token is written to `./data/initial-token.txt` (mode 0600) —
-sign in with it. There is no account setup and no seed script.
+One service on **3001** serving the API, dashboard, status pages and agent
+downloads. Data lives in `./data`; on first run the operator token is written to
+`./data/initial-token.txt` (0600) — sign in with it. There is no account setup
+and no seed script.
 
-Everything is same-origin by design, so there is no backend URL to
-configure: whatever host serves the app also serves the API. Open it on the
-LAN host or public origin when the browser is elsewhere.
-
-### 🐳 Docker Command
-
-The image serves everything — API, dashboard, status pages:
+### Without Docker
 
 ```bash
-docker run -d \
-  --restart=always \
-  -p 3001:3001 \
-  -v flatline:/app/data \
-  --name flatline \
-  artchsh/flatline:2
-```
-
-### 💪🏻 Non-Docker
-
-Requires `cargo` (and Node for the dashboard build).
-
-```bash
-git clone https://github.com/artchsh/flatline.git
-cd flatline
 cargo run --release --manifest-path backend-rs/Cargo.toml
 ```
 
 The backend serves the built dashboard from `FLATLINE_WEB_DIST`
-(`apps/dashboard/dist`; build it with `npm run build` there). Data is stored
-in `./data` (SQLite).
+(`apps/dashboard/dist`, built with `npm run build` there). Data is SQLite in
+`./data`.
 
-## 🔌 Quick start with the API
-
-Create a token in the dashboard's **Agents** panel, optionally scoped to `read` only. Tokens are shown
-once.
-
-```bash
-# What is broken right now?
-curl -H "Authorization: Bearer uk1_..." http://localhost:3001/api/v1/health
-
-# Create a monitor
-curl -X POST http://localhost:3001/api/v1/monitors \
-  -H "Authorization: Bearer uk1_..." \
-  -H "Content-Type: application/json" \
-  -d '{"name":"My API","type":"http","url":"https://example.com"}'
-
-# Let an agent report its own check results
-curl -X POST http://localhost:3001/api/v1/monitors/1/heartbeat \
-  -H "Authorization: Bearer uk1_..." \
-  -H "Content-Type: application/json" \
-  -d '{"status":"up","ping":123}'
-```
-
-Point an agent at `http://localhost:3001/api/v1/openapi.json` and it can figure out the rest.
-
-### Reading Superboard from an AI agent
-
-A **read-scoped token** can inspect current metrics and historical percentiles
-without operating a browser:
-
-```sh
-export FLATLINE_URL=https://flatline.example
-# Set FLATLINE_TOKEN privately; do not paste real tokens into docs or source.
-curl -H "Authorization: Bearer $FLATLINE_TOKEN" \
-  "$FLATLINE_URL/api/v1/monitors/metrics/latest?ids=1,2"
-curl -H "Authorization: Bearer $FLATLINE_TOKEN" \
-  "$FLATLINE_URL/api/v1/monitors/1/metrics/summary?hours=24"
-```
-
-History summaries read the selected window, not merely the newest 1,000 rows.
-They return at most 240 chart buckets and inspect at most 50,000 archived rows;
-`capped: true` explicitly flags truncated statistics. The read API exposes up
-to seven days, while retention is 30 days. Restarts may lose up to 30 seconds
-of unarchived telemetry; recovered pre-restart CPU peaks use archived samples.
-
-## 🆙 How to Update
+### Updating
 
 ```bash
 git pull --ff-only
 docker compose up -d --build
 ```
 
-Back up the database before upgrades. For manually transferred production
-images, follow the [deployment guide](docker/OFFICE-DEPLOYMENT.md) instead.
+Back up the database first. Agents update themselves from the release the
+server ships; see [docs/agent.md](docs/agent.md). The office deployment is
+documented in [docs/deployment.md](docs/deployment.md).
 
-## Planned, not implemented
+## Sign in and tokens
 
-The ranked improvement list — with the comparable systems (Prometheus,
-Netdata, Telegraf, Grafana Alloy, Beszel) each item is measured against —
-lives in [IMPROVEMENT-ROADMAP.md](IMPROVEMENT-ROADMAP.md). Headline items:
-agent self-telemetry and a disk-backed send buffer, threshold alerts,
-multi-tier retention, network/disk-I/O metrics, per-container stats, and
-SMART disk health.
+Sign-in is a single token, pasted into the dashboard. There is one token type
+and it has full permission — the dashboard's **Agents** panel mints additional
+named tokens (shown once) so an integration can have its own revocable
+credential, not to limit what it can do.
 
-Also outstanding: private aggregate saved status-page views; inherited
-dependency advisories (separate hardening pass, see
-[docker/OFFICE-DEPLOYMENT.md](docker/OFFICE-DEPLOYMENT.md)).
+The same token authenticates the REST API and the tokenized provisioning
+documents:
 
-## 📜 Credits & licence
+```bash
+export FLATLINE_URL=http://localhost:3001
+# Set FLATLINE_TOKEN privately; never commit or paste a real token.
+curl -H "Authorization: Bearer $FLATLINE_TOKEN" "$FLATLINE_URL/api/v1/health"
 
-Built on [Uptime Kuma](https://github.com/louislam/uptime-kuma) by Louis Lam, MIT licensed.
-This fork is released under the same licence; see [LICENSE](./LICENSE), which retains his
-copyright notice.
+# The provisioning runbook, ready to hand to a human or an LLM agent:
+curl "$FLATLINE_URL/add-push-server.md?token=$FLATLINE_TOKEN"
+```
 
-Upstream project: <https://github.com/louislam/uptime-kuma>
+`/llms.txt` is the same pointer file in `llms.txt` form. Both embed the token,
+so they are token-gated rather than crawlable.
+
+## Documentation
+
+Everything lives in [`docs/`](docs/README.md):
+
+| Document | Read it when |
+|---|---|
+| [Architecture](docs/architecture.md) | You want to know how the pieces fit and where data lives. |
+| [API](docs/api.md) | You are calling Flatline from a script or an agent. |
+| [Host agent](docs/agent.md) | You are installing, configuring or debugging `superboard`. |
+| [Superboard](docs/superboard.md) | You are changing or explaining the wall board. |
+| [Dashboard](docs/dashboard.md) | You are working on the operator UI. |
+| [Status pages](docs/status-pages.md) | You are publishing or theming a public page. |
+| [Deployment](docs/deployment.md) | You are shipping a release to a server. |
+| [Operations](docs/operations.md) | You are backing up, rotating a token or rolling back. |
+| [Development](docs/development.md) | You are running, testing or releasing the code. |
+| [Provisioning runbook](docs/provisioning.md) | You are adding hosts (also served by the API). |
+| [Roadmap](docs/roadmap.md) | You want to know what is deliberately not done. |
+| [History](docs/history.md) | You want to know what changed from upstream Uptime Kuma. |
+| [Screenshots](docs/screenshots/README.md) | You want the images and how they were made. |
+
+## Credits and licence
+
+Built on [Uptime Kuma](https://github.com/louislam/uptime-kuma) by Louis Lam,
+MIT licensed. This fork is released under the same licence; see
+[LICENSE](./LICENSE), which retains his copyright notice.
+
+Security reporting: [.github/SECURITY.md](.github/SECURITY.md).

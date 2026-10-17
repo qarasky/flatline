@@ -1,8 +1,9 @@
-//! Flatline backend, Rust rewrite (v2 consolidation aftermath).
+//! Flatline backend.
 //!
-//! Scope is locked in RUST-REWRITE-PLAN.md: push + http monitors, the
-//! telemetry pipeline, Superboard read APIs, badges, single-token auth.
-//! The Go agent and the SPA are reused unchanged.
+//! The monitor surface is deliberately small — push, http(s), ping and group
+//! containers — plus the telemetry pipeline, the Superboard read APIs, badges
+//! and single-token auth. The Go agent and the SPA are reused unchanged.
+//! Architecture: docs/architecture.md.
 
 pub mod api;
 pub mod auth;

@@ -113,7 +113,7 @@ func TestSMARTJSONShape(t *testing.T) {
 	if err := json.Unmarshal(passed, &diskBack); err != nil {
 		t.Fatal(err)
 	}
-	for _, absent := range []string{ "wearPercent", "reallocatedSectors", "powerOnHours", "tempC" } {
+	for _, absent := range []string{"wearPercent", "reallocatedSectors", "powerOnHours", "tempC"} {
 		if _, ok := diskBack[absent]; ok {
 			t.Fatalf("%s must be omitted when unknown", absent)
 		}

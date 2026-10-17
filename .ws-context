@@ -1,6 +1,0 @@
-{
-    "framework": "none",
-    "src/**": {
-        "framework": "vue"
-    }
-}

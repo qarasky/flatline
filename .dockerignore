@@ -1,60 +1,45 @@
-/.idea
-/node_modules
-/data*
-/out
-/test
-/kubernetes
-/.do
-**/.dockerignore
-/private
-**/.git
-**/.gitignore
-**/docker-compose*
-**/[Dd]ockerfile*
-LICENSE
-README.md
-.editorconfig
-.vscode
-.eslint*
-.stylelint*
-/.github
-yarn.lock
-app.json
-CODE_OF_CONDUCT.md
-CONTRIBUTING.md
-CNAME
-install.sh
-SECURITY.md
-tsconfig.json
-.env
-/tmp
-/ecosystem.config.js
-/extra/healthcheck.exe
-/extra/healthcheck
-/extra/exe-builder
-/extra/uptime-kuma-push
+# Build context for the Flatline image (docker/rust.dockerfile).
+#
+# The stages copy: packages/shared, apps/dashboard, superboard, backend-rs,
+# docs/provisioning.md and agent-install.sh. Everything below is local state,
+# dependency trees or build output the image never needs.
 
-# Comment the following line if you want to rebuild the healthcheck binary
-/extra/healthcheck-armv7
-
-
-### .gitignore content (commented rules are duplicated)
-
-#node_modules
+# Version control and local state
+.git
+.gitignore
 .DS_Store
-#dist
-dist-ssr
-*.local
-#.idea
-
-#/data
-#!/data/.gitkeep
-#.vscode
-
-### End of .gitignore content
-apps/*/node_modules
-apps/*/dist
-apps/*/.next
 .dev-data
 .dev-logs
+.env
+.idea
+.vscode
+private
+tmp
+out
+data
+
+# Installed dependencies and build output
+node_modules
+apps/*/node_modules
+packages/*/node_modules
+apps/*/dist
+apps/*/out
+apps/*/.next
 dist
+dist-ssr
+backend-rs/target
+superboard/flatline-superboard
+
+# Repository metadata the image does not carry
+.github
+LICENSE
+CONTRIBUTING.md
+
+# Retired upstream paths, kept out in case they ever reappear
+kubernetes
+test
+app.json
+CNAME
+install.sh
+yarn.lock
+ecosystem.config.js

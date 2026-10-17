@@ -6,8 +6,8 @@
 #   docker build --platform linux/amd64 -f docker/rust.dockerfile \
 #       -t artchsh/flatline-rust:office-live .
 #
-# Stage a copy of the production database with the importer first; see
-# docker/RUST-CUTOVER.md.
+# The database is created and migrated on first start; to bring an older
+# database across, `flatline-backend import`. See docs/deployment.md.
 ############################################
 
 # Web app build (dashboard + status pages, one Vite app).
@@ -57,9 +57,10 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs \
 
 COPY backend-rs/src src
 COPY backend-rs/migrations migrations
-# Embedded with include_str! by src/api/provisioning.rs; the paths resolve
-# to the container root, not /app.
-COPY add-push-server.md /add-push-server.md
+# Embedded with include_str! by src/api/provisioning.rs and src/api/openapi.rs.
+# The paths resolve from /app/src/api to the container root, not /app, so the
+# images of these files land at /docs/provisioning.md and /agent-install.sh.
+COPY docs/provisioning.md /docs/provisioning.md
 COPY agent-install.sh /agent-install.sh
 RUN touch src/main.rs src/lib.rs && cargo build --release
 

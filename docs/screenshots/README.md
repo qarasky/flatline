@@ -1,36 +1,37 @@
 # Documentation screenshots
 
-These are screenshots of the **actual dashboard components**, rendered against
-fictional data—not production captures or hand-drawn mockups.
+Screenshots of the real dashboard components, rendered against the **mock
+fleet** rather than a production installation: the hosts, websites, container
+names and measurements all come from `superboard/mockagent`. Nothing here is
+hand-drawn, and no production database is opened.
 
 | Image | Shows |
 |---|---|
-| `dashboard.png` | Grouped monitor table, service failures and host reachability |
-| `superboard.png` | Eight servers, CPU/RAM/disk/GPU, freshness and container tiles |
-| `history.png` | CPU/RAM/GPU/VRAM history, mean/peak and p90/p95/p99 |
+| `superboard.png` | The wall board: eight demo servers, per-core CPU squares, RAM/Disk rows, container rows, linked-website chips, update states and agent warnings. |
+| `dashboard.png` | The operator dashboard: summary bar and the grouped monitor table, with one Down row. |
+| `history.png` | The server history dialog on the 1h range: CPU, RAM, GPU and VRAM with mean, peak and p90/p95/p99. |
 
-All names, domains (`example.com`), container images, measurements and history
-are generated in [`extra/docs-fixtures.mjs`](../../extra/docs-fixtures.mjs).
-The clock is fixed to 2026-10-01 12:00 UTC, at 1920×1080. The token is a dummy
-string that cannot authenticate against a real backend. No database is opened.
+## Regenerating
 
-## Regenerate
-
-From the repository root, with Node.js >=26.2 and frontend dependencies installed:
+From the repository root, with the dev stack running:
 
 ```sh
+./dev.sh                                    # backend :3001, dashboard :3003, mock fleet
 npm ci
-npm --prefix apps/dashboard ci
 npx playwright install chromium
-VITE_FLATLINE_URL= npm --prefix apps/dashboard run build
-node extra/generate-docs-screenshots.mjs
+node docs/screenshots/capture.mjs
 ```
 
-The generator serves the build and fixture API on an ephemeral loopback port,
-in a fresh browser context. It blocks all requests outside that local origin;
-**do not point it at production**. The blank `VITE_FLATLINE_URL` is important:
-it keeps the screenshot build's requests same-origin. Screenshots overwrite
-these three PNGs; the temporary server and browser close afterward.
+`capture.mjs` signs in with the local dev token from `.dev-data/initial-token.txt`,
+waits for the mock fleet to be painted, and writes the three PNGs at 1920×1080
+with device scale factor 1. It touches nothing but those files.
 
-Review the images after regenerating, especially card fit, readable labels,
-and dialog clipping. Browser/font versions may change pixels slightly.
+Two caveats when regenerating:
+
+- **Let the fleet run for a while before retaking `history.png`.** Archived
+  snapshots arrive every ~30 s, and the 1h chart only looks like a chart once a
+  few minutes of history exist. A fresh `.dev-data/` shows an almost empty
+  chart.
+- **Check the images afterwards** for card fit, readable labels and dialog
+  clipping. Browser and font versions can shift pixels slightly, which is
+  exactly why these are regenerated from the app rather than drawn.

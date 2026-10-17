@@ -2,10 +2,9 @@ package main
 
 // Payload schema for Superboard metrics.
 //
-// Mirrors SUPERBOARD-SPEC.md §1.2: units are bytes for memory/disk totals,
-// percent 0–100, uptime seconds. The agent and the board must never disagree
-// about units, so they are documented here, next to the code that produces
-// them.
+// Documented in full in docs/agent.md; the essentials: units are bytes for
+// memory/disk totals, percent 0–100, uptime seconds. The agent and the board
+// must never disagree about units, so they are documented in both places.
 //
 // Absent capabilities are explicit, never omitted: gpu.available false means
 // "no GPU", an empty docker list means "no Docker", an empty disk list means

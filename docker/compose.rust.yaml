@@ -1,16 +1,18 @@
-# Rust backend stack. Same shape as the Node stack: one container, one
-# origin, the existing Cloudflare Tunnel already points at localhost:3001.
+# Office stack: one pre-built image, one origin. The Cloudflare Tunnel already
+# points at localhost:3001.
 #
-# Stage on loopback port 3101 against a COPY of the production database
-# (`./data-rust`), verify, then switch FLATLINE_PORT to 3001 for cutover.
-# The Node stack and its `./data` are never touched, so rollback is a
-# `docker compose stop` here plus `docker compose up -d` there.
+# The image is built on the host from the synced source tree:
 #
-# See docker/RUST-CUTOVER.md for the full runbook.
+#   cd /home/office/flatline-src
+#   sudo docker build --platform linux/amd64 -f docker/rust.dockerfile \
+#       -t artchsh/flatline-rust:office-live .
+#   cd /home/office/flatline && sudo docker compose -f compose.rust.yaml up -d
 #
-# `name` keeps this stack out of the Node project's way: staging runs both
-# side by side, and the Node container (flatline-flatline-1) is untouched
-# until the tunnel port moves.
+# The repository copy of this file and the office copy are kept identical.
+# Steps, backup paths and the rollback procedure: docs/deployment.md.
+#
+# `FLATLINE_PORT` is the published port; `FLATLINE_BIND` defaults to loopback
+# so the tunnel is the only way in from outside.
 name: flatline-rust
 
 services:

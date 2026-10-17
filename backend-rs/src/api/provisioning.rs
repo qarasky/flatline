@@ -21,9 +21,9 @@ use sha2::{Digest, Sha256};
 
 use crate::AppState;
 
-/// The provisioning runbook (repository root; embedded so the served doc
+/// The provisioning runbook (docs/provisioning.md; embedded so the served doc
 /// and the binary always version together).
-const RUNBOOK: &str = include_str!("../../../add-push-server.md");
+const RUNBOOK: &str = include_str!("../../../docs/provisioning.md");
 
 /// The installer script template (repository root).
 const INSTALLER: &str = include_str!("../../../agent-install.sh");
