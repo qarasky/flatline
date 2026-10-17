@@ -262,6 +262,64 @@ export function formatDuration(seconds: number | undefined): string | null {
 
 type AgentMetrics = NonNullable<MetricsPayload["agent"]>;
 
+/**
+ * The acknowledged agent counters for one monitor: the `*Ack` fields of its
+ * MonitorSummary. All optional, since a monitor may carry none.
+ */
+export interface AgentAcks {
+    pushFailuresAck?: number;
+    samplesDroppedAck?: number;
+    collectorErrorsAck?: Record<string, number>;
+}
+
+export interface AgentWarningCounts {
+    /** Collector failures still outstanding, docker excluded. */
+    collectorErrors: number;
+    failedPushes: number;
+    samplesDropped: number;
+    /** Outstanding per-collector detail, docker excluded. */
+    collectors: [ string, number ][];
+    /** Everything the card prints, for the menu's "Clear (N)". */
+    total: number;
+}
+
+/**
+ * Count the agent warnings still outstanding, after subtracting the
+ * acknowledged values.
+ *
+ * Docker collector errors are excluded: the containers section already
+ * renders dockerError, and printing the same problem twice on one card helps
+ * nobody. Counts are cumulative since the agent started, so the ack marks the
+ * value the operator has seen; the server drops a stale ack when the agent
+ * restarts, so this subtraction can never hide a new failure.
+ */
+export function agentWarningCounts(agent: AgentMetrics | undefined, acks: AgentAcks = {}): AgentWarningCounts {
+    const empty: AgentWarningCounts = { collectorErrors: 0, failedPushes: 0, samplesDropped: 0, collectors: [], total: 0 };
+    if (!agent) { return empty; }
+
+    const collectors: [ string, number ][] = Object.entries(agent.collectorErrors ?? {})
+        .filter(([ name, count ]) => name !== "docker" && Number.isFinite(count))
+        .map(([ name, count ]): [ string, number ] => [
+            name,
+            Math.max(0, (count as number) - Math.max(0, acks.collectorErrorsAck?.[name] ?? 0)),
+        ])
+        .filter(([ , count ]) => count > 0);
+    const collectorErrors = collectors.reduce((sum, [ , count ]) => sum + count, 0);
+
+    const reported = Number.isFinite(agent.failedPushes) ? agent.failedPushes as number : 0;
+    const failedPushes = Math.max(0, reported - Math.max(0, acks.pushFailuresAck ?? 0));
+    const dropped = Number.isFinite(agent.samplesDropped) ? agent.samplesDropped as number : 0;
+    const samplesDropped = Math.max(0, dropped - Math.max(0, acks.samplesDroppedAck ?? 0));
+
+    return {
+        collectorErrors,
+        failedPushes,
+        samplesDropped,
+        collectors,
+        total: collectorErrors + failedPushes + samplesDropped,
+    };
+}
+
 export interface AgentWarning {
     text: string;
     title: string;
@@ -271,37 +329,24 @@ export interface AgentWarning {
  * Human summary of the agent self-report, or null when there is nothing to
  * report — a clean agent adds no card noise.
  *
- * Docker collector errors are deliberately excluded: the containers section
- * already renders dockerError, and printing the same problem twice on one
- * card helps nobody. Counts are cumulative since the agent started, so a
- * warning means "has had trouble", not necessarily "failing right now";
- * the title carries the detail needed to check journald.
- *
- * `pushFailuresAck` is the counter value the operator cleared: only
- * failures since then are news. The server drops a stale ack when the
- * agent restarts, so this subtraction can never hide a new failure.
+ * The counts come from {@link agentWarningCounts}, so acknowledged values are
+ * already subtracted; the title carries the detail needed to check journald.
  */
-export function agentWarnings(agent: AgentMetrics | undefined, pushFailuresAck = 0): AgentWarning | null {
+export function agentWarnings(agent: AgentMetrics | undefined, acks: AgentAcks = {}): AgentWarning | null {
     if (!agent) { return null; }
 
-    const collectorErrors = Object.entries(agent.collectorErrors ?? {})
-        .filter(([name, count]) => name !== "docker" && Number.isFinite(count) && count > 0);
-    const reported = Number.isFinite(agent.failedPushes) ? agent.failedPushes as number : 0;
-    const failedPushes = Math.max(0, reported - Math.max(0, pushFailuresAck));
-    const samplesDropped = Number.isFinite(agent.samplesDropped) ? agent.samplesDropped as number : 0;
-
+    const counts = agentWarningCounts(agent, acks);
     const parts: string[] = [];
     const details: string[] = [];
-    if (collectorErrors.length) {
-        const total = collectorErrors.reduce((sum, [, count]) => sum + count, 0);
-        parts.push(`${total} collector error${total === 1 ? "" : "s"}`);
-        details.push(collectorErrors.map(([name, count]) => `${name} ${count}`).join(", "));
+    if (counts.collectorErrors > 0) {
+        parts.push(`${counts.collectorErrors} collector error${counts.collectorErrors === 1 ? "" : "s"}`);
+        details.push(counts.collectors.map(([ name, count ]) => `${name} ${count}`).join(", "));
     }
-    if (failedPushes > 0) {
-        parts.push(`${failedPushes} push failure${failedPushes === 1 ? "" : "s"}`);
+    if (counts.failedPushes > 0) {
+        parts.push(`${counts.failedPushes} push failure${counts.failedPushes === 1 ? "" : "s"}`);
     }
-    if (samplesDropped > 0) {
-        parts.push(`${samplesDropped} sample${samplesDropped === 1 ? "" : "s"} dropped`);
+    if (counts.samplesDropped > 0) {
+        parts.push(`${counts.samplesDropped} sample${counts.samplesDropped === 1 ? "" : "s"} dropped`);
     }
     if (!parts.length) { return null; }
 

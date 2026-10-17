@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ApiError,
-    clearPushFailures,
+    clearAgentWarnings,
     fetchBulkMonitorLinks,
     fetchLatestMetricsBulk,
     fetchAllMonitors,
@@ -19,7 +19,7 @@ import { RenameDialog, ServerMenu, type MenuAnchor, type MenuItem } from "@/comp
 import { WebsiteLinkDialog } from "@/components/WebsiteLinks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { fleetAttention, matchGroups } from "@/lib/fleet-presentation";
+import { agentWarningCounts, fleetAttention, matchGroups } from "@/lib/fleet-presentation";
 import { fleetPageSize } from "@/lib/fleet-layout";
 import { ServerHistory } from "@/components/ServerHistory";
 
@@ -130,10 +130,10 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
         setMenu({ x: e.clientX, y: e.clientY, monitor });
     }, []);
 
-    // Menu contents for the current anchor. "Clear push failures" only
-    // appears while the agent's counter is ahead of the acknowledged value,
-    // so a clean card carries no noise. Clearing acknowledges on the server
-    // (the agent has no control channel) and the invalidate resnapshots.
+    // Menu contents for the current anchor. "Clear agent warnings" only
+    // appears while the card is showing one, so a clean card carries no
+    // noise. Clearing acknowledges every agent counter on the server (the
+    // agent has no control channel) and the invalidate resnapshots.
     const menuItems: MenuItem[] = useMemo(() => {
         if (!menu) {
             return [];
@@ -157,15 +157,16 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
             },
         ];
 
-        const reported = server?.metrics.agent?.failedPushes ?? 0;
-        const ack = server?.monitor.pushFailuresAck ?? menu.monitor.pushFailuresAck ?? 0;
-        if (menu.monitor.type === "push" && reported > ack) {
-            const pending = reported - ack;
+        // The same counts the card prints, from the latest sample the board
+        // already holds, so the menu and the warning line agree.
+        const monitor = server?.monitor ?? menu.monitor;
+        const warnings = agentWarningCounts(server?.metrics.agent, monitor).total;
+        if (menu.monitor.type === "push" && warnings > 0) {
             items.push({
-                label: `Clear push failures (${pending})`,
+                label: `Clear agent warnings (${warnings})`,
                 onSelect: () => {
                     setMenu(null);
-                    void clearPushFailures(menu.monitor.id).catch((failure) => {
+                    void clearAgentWarnings(menu.monitor.id).catch((failure) => {
                         setError(failure instanceof Error ? failure.message : "Clear failed.");
                     });
                 },

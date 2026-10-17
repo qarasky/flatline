@@ -162,13 +162,18 @@ the group path/type/target, and push failures needed a way to clear.
   push monitors only (newest archived sample); metric alerts use the same
   two-line shape with a `[⚠️ METRIC]`/`[✅ METRIC]` tag. Group paths come
   from the monitor tree; ungrouped monitors read `[Ungrouped]`.
-- **Clear push failures.** `agent.failedPushes` is the agent's cumulative
-  counter; the server now stores `monitors.push_failures_ack` (migration
-  0006) and `POST /api/v1/monitors/{id}/push-failures/clear` acknowledges
-  the current value. The board shows `failedPushes - ack` and the
-  Superboard card menu offers "Clear push failures (N)" only while the
-  counter is ahead. Ingest drops the ack whenever a newest sample reports a
-  lower counter, so an agent restart can never leave new failures hidden.
+- **Clear agent warnings.** The agent self-report carries three cumulative
+  counters: `agent.failedPushes`, `agent.samplesDropped` and the
+  per-collector `agent.collectorErrors`. The server stores the acknowledged
+  values (`monitors.push_failures_ack` from migration 0006, plus
+  `samples_dropped_ack` and the JSON `collector_errors_ack` from migration
+  0011) and the board shows each reported counter minus its ack. The card
+  menu offers "Clear agent warnings (N)" only while something is showing;
+  `POST /api/v1/monitors/{id}/agent-warnings/clear` acknowledges the lot,
+  while the older `push-failures/clear` still acknowledges just
+  `failedPushes`. Ingest drops an ack whenever the newest sample reports a
+  lower counter (per collector for the map), so an agent restart can never
+  leave new warnings hidden.
 
 ### Provisioning surfaces for LLM agents — 2026-10-13 (third release)
 

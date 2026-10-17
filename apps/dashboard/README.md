@@ -61,7 +61,10 @@ version (tooltip: version + process uptime) and a card prints one amber
 `Agent: …` warning line when there are dropped samples, failed pushes, or
 non-docker collector errors, with the full detail (per-collector counts, last
 push error) in the tooltip. Docker collector failures keep their existing
-single line in the containers section instead.
+single line in the containers section instead. Right-clicking a card offers
+"Clear agent warnings (N)" while the line is showing: it acknowledges the
+current counters, so only failures past that point bring the line back (an
+agent restart drops the acks, never hiding new warnings).
 
 The monitor edit form (Advanced → Metric alert thresholds) configures
 per-server CPU/RAM/disk percentage thresholds. Evaluation is server-side at

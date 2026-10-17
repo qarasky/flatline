@@ -71,7 +71,9 @@ export const FleetCard = memo(function FleetCard({ server, now, onOpenHistory, o
     const updates = updatesStatus(metrics.updates);
     const updatesTone = updates?.tone === "reboot" ? "text-bad fleet-reboot" : updates?.tone === "ok" ? "text-ok" : updates?.tone === "warn" ? "text-warn" : updates?.tone === "critical" ? "text-critical" : "";
     const agent = metrics.agent;
-    const warning = agentWarnings(agent, monitor.pushFailuresAck ?? 0);
+    // The monitor carries the acknowledged counter values, so the warning
+    // line shows only what the operator has not cleared yet.
+    const warning = agentWarnings(agent, monitor);
     const agentTip = agent
         ? `Agent ${agent.version ?? "unknown"}${Number.isFinite(agent.uptime) ? ` · running ${formatDuration(agent.uptime) ?? "0s"}` : ""}`
         : undefined;

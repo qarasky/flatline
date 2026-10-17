@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatBytesPair, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, smartWarning, statusSlugFromPath, updatesStatus, containerAgeMs } from "../src/lib/fleet-presentation.ts";
+import { agentWarningCounts, agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatBytesPair, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, smartWarning, statusSlugFromPath, updatesStatus, containerAgeMs } from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -107,6 +107,39 @@ test("agent warnings stay quiet when clean and exclude docker (shown elsewhere)"
     assert.match(warn.title, /gpu 3, updates 2/);
     assert.match(warn.title, /connection refused/);
     assert.equal(agentWarnings({ collectorErrors: { cpu: 1 } })?.text, "Agent: 1 collector error");
+});
+test("acknowledged agent counters stay cleared and only new ones show", () => {
+    const agent = {
+        version: "1.7.0", uptime: 600, failedPushes: 7, samplesDropped: 4,
+        collectorErrors: { gpu: 5, updates: 2, docker: 99 },
+    };
+    // Nothing acknowledged yet: the whole line shows, docker excluded.
+    assert.equal(
+        agentWarnings(agent)?.text,
+        "Agent: 7 collector errors · 7 push failures · 4 samples dropped",
+    );
+
+    // The operator clears everything the card was showing.
+    const acks = { pushFailuresAck: 7, samplesDroppedAck: 4, collectorErrorsAck: { gpu: 5, updates: 2 } };
+    assert.equal(agentWarnings(agent, acks), null);
+    assert.equal(agentWarningCounts(agent, acks).total, 0);
+
+    // Only failures past the acknowledged value are news again, per counter.
+    const grown = { ...agent, failedPushes: 9, samplesDropped: 5, collectorErrors: { gpu: 8, updates: 2, docker: 99 } };
+    const counts = agentWarningCounts(grown, acks);
+    assert.deepEqual(counts.collectors, [ [ "gpu", 3 ] ]);
+    assert.equal(counts.collectorErrors, 3);
+    assert.equal(counts.failedPushes, 2);
+    assert.equal(counts.samplesDropped, 1);
+    assert.equal(counts.total, 6);
+    assert.equal(
+        agentWarnings(grown, acks)?.text,
+        "Agent: 3 collector errors · 2 push failures · 1 sample dropped",
+    );
+
+    // A stale ack from before a restart can never drive a count below zero.
+    const stale = agentWarningCounts({ collectorErrors: { gpu: 1 } }, { collectorErrorsAck: { gpu: 5 } });
+    assert.deepEqual(stale, { collectorErrors: 0, failedPushes: 0, samplesDropped: 0, collectors: [], total: 0 });
 });
 test("durations format compactly for cards and tooltips", () => {
     for (const v of [undefined, NaN, 0, -5]) { assert.equal(formatDuration(v), null); }

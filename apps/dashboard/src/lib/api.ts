@@ -130,8 +130,11 @@ export interface MonitorSummary {
     metricCpuThreshold?: number | null;
     metricRamThreshold?: number | null;
     metricDiskThreshold?: number | null;
-    /** Agent `failedPushes` value the operator last acknowledged. */
+    /** Agent counters the operator last acknowledged; the board shows the
+     * reported value minus each ack. Reset by the server on agent restart. */
     pushFailuresAck?: number;
+    samplesDroppedAck?: number;
+    collectorErrorsAck?: Record<string, number>;
     uptime24h: number | null;
     uptime7d: number | null;
     uptime30d: number | null;
@@ -468,19 +471,23 @@ export function deleteMonitor(id: number, deleteChildren = false): Promise<{ ok:
 }
 
 /**
- * Acknowledge a push monitor's current `failedPushes` counter.
+ * Acknowledge every agent warning counter at once: `failedPushes`,
+ * `samplesDropped` and the per-collector `collectorErrors`.
  *
- * The agent owns the counter; the server stores the acknowledged value and
- * the board shows the difference. The ack is dropped automatically when the
- * agent restarts and its counter moves backwards.
+ * The agent owns the counters; the server stores the acknowledged values and
+ * the board shows the difference, so this clears the whole "Agent: …" line
+ * without touching the agent (there is no server-to-agent channel). The acks
+ * are dropped automatically when the agent restarts and its counters reset.
  */
-export function clearPushFailures(id: number): Promise<{
+export function clearAgentWarnings(id: number): Promise<{
     ok: true;
     id: number;
     pushFailuresAck: number;
-    reported: number | null;
+    samplesDroppedAck: number;
+    collectorErrorsAck: Record<string, number>;
+    reported: Record<string, unknown>;
 }> {
-    return request(`/api/v1/monitors/${id}/push-failures/clear`, { method: "POST" });
+    return request(`/api/v1/monitors/${id}/agent-warnings/clear`, { method: "POST" });
 }
 
 /**

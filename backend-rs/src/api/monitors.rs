@@ -485,6 +485,22 @@ pub async fn patch(
     })))
 }
 
+/// The newest agent self-report for a monitor: the live cache when it has a
+/// sample, else the newest archived row. Shared by the clear endpoints, which
+/// acknowledge whatever the agent is reporting right now.
+async fn latest_agent(state: &AppState, id: i64) -> Option<Value> {
+    if let Some(agent) = state
+        .metrics
+        .latest_json(id)
+        .and_then(|sample| sample.pointer("/metrics/agent").cloned())
+    {
+        return Some(agent);
+    }
+    crate::metrics::ingest::load_latest(&state.pool, id)
+        .await
+        .and_then(|(_, sample)| sample.pointer("/agent").cloned())
+}
+
 /// POST /api/v1/monitors/{id}/push-failures/clear
 ///
 /// Acknowledge the agent's current `failedPushes` counter. The board shows
@@ -498,19 +514,9 @@ pub async fn clear_push_failures(
 ) -> Result<Json<Value>, ApiError> {
     let _monitor = load(&state.pool, id).await?;
 
-    // The latest sample from the live cache, else the newest archived row.
-    let mut reported = state.metrics.latest_json(id).and_then(|sample| {
-        sample
-            .pointer("/metrics/agent/failedPushes")
-            .and_then(Value::as_u64)
-    });
-    if reported.is_none()
-        && let Some((_, sample)) = crate::metrics::ingest::load_latest(&state.pool, id).await
-    {
-        reported = sample
-            .pointer("/agent/failedPushes")
-            .and_then(Value::as_u64);
-    }
+    let reported = latest_agent(&state, id)
+        .await
+        .and_then(|agent| agent.get("failedPushes").and_then(Value::as_u64));
 
     let ack = reported.unwrap_or(0).min(i64::MAX as u64) as i64;
     sqlx::query("UPDATE monitors SET push_failures_ack = ? WHERE id = ?")
@@ -526,6 +532,64 @@ pub async fn clear_push_failures(
         "ok": true,
         "id": id,
         "pushFailuresAck": ack,
+        "reported": reported,
+    })))
+}
+
+/// POST /api/v1/monitors/{id}/agent-warnings/clear
+///
+/// Acknowledge every agent warning counter at once: `failedPushes`,
+/// `samplesDropped` and the per-collector `collectorErrors`. The board shows
+/// each reported counter minus its ack, so this clears the whole
+/// "Agent: …" line on the card. Docker collector errors are acknowledged too
+/// (the snapshot is complete), though the card renders them in the container
+/// section instead. The counters reset when the agent restarts and ingest
+/// drops stale acks, so a fresh failure is never masked.
+pub async fn clear_agent_warnings(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, ApiError> {
+    let _monitor = load(&state.pool, id).await?;
+
+    let reported = latest_agent(&state, id).await.unwrap_or_else(|| json!({}));
+    let failed_pushes = reported
+        .get("failedPushes")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(i64::MAX as u64) as i64;
+    let samples_dropped = reported
+        .get("samplesDropped")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(i64::MAX as u64) as i64;
+    let collector_errors = reported
+        .get("collectorErrors")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let collector_errors_json =
+        serde_json::to_string(&collector_errors).unwrap_or_else(|_| "{}".to_string());
+
+    sqlx::query(
+        "UPDATE monitors SET push_failures_ack = ?, samples_dropped_ack = ?,
+             collector_errors_ack = ? WHERE id = ?",
+    )
+    .bind(failed_pushes)
+    .bind(samples_dropped)
+    .bind(&collector_errors_json)
+    .bind(id)
+    .execute(&state.pool)
+    .await
+    .map_err(internal)?;
+
+    state.events.invalidate();
+
+    Ok(Json(json!({
+        "ok": true,
+        "id": id,
+        "pushFailuresAck": failed_pushes,
+        "samplesDroppedAck": samples_dropped,
+        "collectorErrorsAck": collector_errors,
         "reported": reported,
     })))
 }

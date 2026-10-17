@@ -2,9 +2,10 @@
  * Helpers for server -> website links: picker candidates and card chips.
  *
  * A server is a monitor that emits metrics (usually `push`). Its linked
- * targets may be ordinary monitors or group monitors; the server expands
- * groups to their websites when it resolves the links, so the dashboard only
- * builds picker candidates and orders the chips.
+ * targets are websites, or groups containing them; the server expands groups
+ * to their websites when it resolves the links, so the dashboard only builds
+ * picker candidates and orders the chips. Only HTTP/HTTPS monitors count as
+ * websites: other servers and ping checks are never offered as a target.
  */
 
 import type { MonitorSummary, ResolvedMonitorLink } from "./api";
@@ -18,20 +19,52 @@ export interface LinkCandidate {
     status: number;
 }
 
+/** Monitor types that count as a hosted website. */
+const WEBSITE_TYPES = new Set([ "http", "https" ]);
+
+/** Whether a monitor is a website that a server card can link. */
+export function isWebsiteMonitor(monitor: Pick<MonitorSummary, "type">): boolean {
+    return WEBSITE_TYPES.has(monitor.type);
+}
+
 /**
- * Picker options for a server: every group (by path) and every ordinary
- * monitor, excluding the server itself. Groups come first so "link a whole
- * group" reads as a distinct choice from "link one website".
+ * Picker options for a server: every group holding a website somewhere below
+ * it, and every website, excluding the server itself. Groups come first so
+ * "link a whole group" reads as a distinct choice from "link one website".
  * @param monitors Full roster
  * @param excludeId The server being edited, never offered as a target
- * @returns Candidates, groups then monitors, each sorted by label
+ * @returns Candidates, groups then websites, each sorted by label
  */
 export function buildLinkCandidates(monitors: MonitorSummary[], excludeId?: number | null): LinkCandidate[] {
+    const childrenOf = new Map<number, MonitorSummary[]>();
+    for (const monitor of monitors) {
+        if (monitor.parent === null || monitor.parent === undefined) {
+            continue;
+        }
+        const siblings = childrenOf.get(monitor.parent);
+        if (siblings) {
+            siblings.push(monitor);
+        } else {
+            childrenOf.set(monitor.parent, [ monitor ]);
+        }
+    }
+
+    // A group is only worth offering when it actually contains a website, so
+    // a group of servers can't be picked as a website link.
+    const holdsWebsite = (id: number, seen = new Set<number>()): boolean => {
+        if (!seen.add(id)) {
+            return false;
+        }
+        return (childrenOf.get(id) ?? []).some((child) =>
+            isWebsiteMonitor(child) || (child.type === "group" && holdsWebsite(child.id, seen))
+        );
+    };
+
     const groups: LinkCandidate[] = monitors
-        .filter((m) => m.type === "group" && m.id !== excludeId)
+        .filter((m) => m.type === "group" && m.id !== excludeId && holdsWebsite(m.id))
         .map((m) => ({ id: m.id, label: groupPath(monitors, m.id) ?? m.name, kind: "group", status: m.status }));
     const singles: LinkCandidate[] = monitors
-        .filter((m) => m.type !== "group" && m.id !== excludeId)
+        .filter((m) => isWebsiteMonitor(m) && m.id !== excludeId)
         .map((m) => ({ id: m.id, label: m.name, kind: "monitor", status: m.status }));
 
     groups.sort((a, b) => a.label.localeCompare(b.label));

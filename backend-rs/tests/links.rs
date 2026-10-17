@@ -227,3 +227,44 @@ async fn deleting_a_monitor_cascades_its_links() {
         .unwrap();
     assert_eq!(count, 0, "server deletion cascades");
 }
+
+#[tokio::test]
+async fn only_websites_are_linkable() {
+    let h = harness().await;
+    let server = create(&h, "host", "push", json!({})).await;
+    let other = create(&h, "other-host", "push", json!({})).await;
+    let ping = create(&h, "ping", "ping", json!({ "hostname": "1.1.1.1" })).await;
+    let web = create(&h, "site", "http", json!({ "url": "https://example.com" })).await;
+    let group = create(&h, "clients", "group", json!({})).await;
+    let grouped_web = create(
+        &h,
+        "grouped-site",
+        "http",
+        json!({ "url": "https://grouped.example", "parent": group }),
+    )
+    .await;
+    let grouped_server = create(&h, "grouped-host", "push", json!({ "parent": group })).await;
+
+    // A direct link to another server or to a ping check is refused instead
+    // of being stored and drawn as a website chip.
+    let (status, body) = put_links(&h, server, json!([other, ping, web])).await;
+    assert_eq!(status, StatusCode::OK, "put failed: {body}");
+    let raw = body["raw"].as_array().unwrap();
+    assert_eq!(raw.len(), 1, "only the website survives: {body}");
+    assert_eq!(raw[0]["linkedMonitorId"], web);
+
+    // A group link expands to the websites inside it, skipping the servers.
+    let (_, body) = put_links(&h, server, json!([group])).await;
+    assert_eq!(body["raw"][0]["type"], "group");
+    let ids: Vec<i64> = body["resolved"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(ids, vec![grouped_web]);
+    assert!(
+        !ids.contains(&grouped_server),
+        "servers inside a group are not websites"
+    );
+}

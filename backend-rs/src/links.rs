@@ -1,10 +1,11 @@
 //! Server -> website monitor links.
 //!
 //! A "server" is a monitor that emits metrics (usually `push`). Each server
-//! links website monitors that appear as status chips on its Superboard card.
-//! A link may point at a `group`, expanded to its non-group descendants on
-//! read, so linking a whole group links every website inside it — including
-//! ones added later. Mirrors the Node `server/monitor-links.js`.
+//! links website monitors (HTTP/HTTPS) that appear as status chips on its
+//! Superboard card. A link may point at a `group`, expanded to the website
+//! monitors beneath it on read, so linking a whole group links every website
+//! inside it — including ones added later. Non-website monitors are never
+//! linkable: only websites are chips.
 
 use std::collections::{HashMap, HashSet};
 
@@ -18,6 +19,13 @@ const PENDING: i64 = 2;
 
 /// Upper bound on links per server, matching the API's input cap.
 pub const MAX_LINKS: usize = 200;
+
+/// Monitor types that count as a hosted website. Only HTTP(S) monitors are
+/// linkable: a server's card shows the sites it hosts, not other servers or
+/// ping checks, so a stored link to anything else is ignored.
+fn is_website(kind: &str) -> bool {
+    matches!(kind, "http" | "https")
+}
 
 /// A raw stored link joined with its target's current status.
 #[derive(sqlx::FromRow)]
@@ -49,6 +57,14 @@ struct TargetRow {
 /// group child).
 pub async fn resolve(pool: &SqlitePool, monitor_id: i64) -> Result<(Vec<Value>, Vec<Value>), ApiError> {
     let raw = raw_links(pool, monitor_id).await?;
+    // A stored link to a non-website (possible before this rule existed: the
+    // picker used to offer every monitor) is ignored rather than drawn as a
+    // website chip. Group links stay, since a group is how a whole set of
+    // sites is linked at once.
+    let raw: Vec<RawRow> = raw
+        .into_iter()
+        .filter(|row| row.kind == "group" || is_website(&row.kind))
+        .collect();
 
     let raw_json: Vec<Value> = raw
         .iter()
@@ -126,7 +142,9 @@ pub async fn for_many(pool: &SqlitePool, ids: &[i64]) -> Result<(i64, Value), Ap
 ///
 /// Non-positive ids, the server itself and duplicates are dropped; ids that
 /// no longer exist are skipped, since the target may have been deleted
-/// between the picker loading and the save.
+/// between the picker loading and the save. Ids that are neither a website
+/// nor a group are skipped too, so storage never holds a link the board
+/// would refuse to draw.
 pub async fn replace(pool: &SqlitePool, monitor_id: i64, linked: &[i64]) -> Result<(), ApiError> {
     let mut ids: Vec<i64> = Vec::new();
     let mut seen: HashSet<i64> = HashSet::new();
@@ -141,7 +159,10 @@ pub async fn replace(pool: &SqlitePool, monitor_id: i64, linked: &[i64]) -> Resu
         Vec::new()
     } else {
         let placeholders = vec!["?"; ids.len()].join(",");
-        let sql = format!("SELECT id FROM monitors WHERE id IN ({placeholders})");
+        let sql = format!(
+            "SELECT id FROM monitors WHERE id IN ({placeholders})
+             AND (type IN ('http', 'https') OR type = 'group')"
+        );
         let mut query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql));
         for id in &ids {
             query = query.bind(id);
@@ -195,7 +216,9 @@ async fn raw_links(pool: &SqlitePool, monitor_id: i64) -> Result<Vec<RawRow>, Ap
     .map_err(internal)
 }
 
-/// Every descendant id of a monitor, breadth-first and cycle-safe.
+/// Every website id below a monitor, breadth-first and cycle-safe. Nested
+/// groups are traversed; non-website leaves (servers, ping checks) are never
+/// returned, so linking a mixed group links only the websites inside it.
 async fn descendants(pool: &SqlitePool, root: i64) -> Result<Vec<i64>, ApiError> {
     let mut out = Vec::new();
     let mut seen: HashSet<i64> = HashSet::new();
@@ -203,17 +226,22 @@ async fn descendants(pool: &SqlitePool, root: i64) -> Result<Vec<i64>, ApiError>
 
     while !frontier.is_empty() {
         let placeholders = vec!["?"; frontier.len()].join(",");
-        let sql = format!("SELECT id FROM monitors WHERE parent IN ({placeholders}) ORDER BY id");
-        let mut query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql));
+        let sql = format!("SELECT id, type FROM monitors WHERE parent IN ({placeholders}) ORDER BY id");
+        let mut query = sqlx::query_as::<_, (i64, String)>(sqlx::AssertSqlSafe(sql));
         for parent in &frontier {
             query = query.bind(parent);
         }
         let children = query.fetch_all(pool).await.map_err(internal)?;
 
         let mut next = Vec::new();
-        for id in children {
-            if id != root && seen.insert(id) {
+        for (id, kind) in children {
+            if id == root || !seen.insert(id) {
+                continue;
+            }
+            if is_website(&kind) {
                 out.push(id);
+            } else if kind == "group" {
+                // Descend, but never list the group itself as a website.
                 next.push(id);
             }
         }

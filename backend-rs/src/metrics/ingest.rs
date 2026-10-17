@@ -357,6 +357,59 @@ impl Metrics {
             .await;
         }
 
+        // The same restart rule for the other two agent-warning counters.
+        if let Some(reported) = sample_metrics
+            .pointer("/agent/samplesDropped")
+            .and_then(Value::as_u64)
+        {
+            let _ = sqlx::query(
+                "UPDATE monitors SET samples_dropped_ack = 0 WHERE id = ? AND samples_dropped_ack > ?",
+            )
+            .bind(monitor_id)
+            .bind(reported as i64)
+            .execute(&self.pool)
+            .await;
+        }
+
+        // Collector errors are a map, so the ack is dropped key by key: keep
+        // only the collectors still reporting at least what was acknowledged.
+        if let Some(reported) = sample_metrics
+            .pointer("/agent/collectorErrors")
+            .and_then(Value::as_object)
+        {
+            let stored: Option<String> =
+                sqlx::query_scalar("SELECT collector_errors_ack FROM monitors WHERE id = ?")
+                    .bind(monitor_id)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .ok()
+                    .flatten();
+            if let Some(acked) = stored
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .and_then(|value| value.as_object().cloned())
+                .filter(|acked| !acked.is_empty())
+            {
+                let total = acked.len();
+                let kept: serde_json::Map<String, Value> = acked
+                    .into_iter()
+                    .filter(|(name, acked)| {
+                        reported
+                            .get(name)
+                            .and_then(Value::as_u64)
+                            .is_some_and(|now| now >= acked.as_u64().unwrap_or(0))
+                    })
+                    .collect();
+                if kept.len() != total {
+                    let encoded = Value::Object(kept).to_string();
+                    let _ = sqlx::query("UPDATE monitors SET collector_errors_ack = ? WHERE id = ?")
+                        .bind(encoded)
+                        .bind(monitor_id)
+                        .execute(&self.pool)
+                        .await;
+                }
+            }
+        }
+
         self.events.publish(json!({
             "type": "metrics",
             "monitorId": monitor_id,

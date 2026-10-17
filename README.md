@@ -166,9 +166,12 @@ cd flatline
 dashboard dev server, and starts the **mock fleet**: a Go agent
 (`superboard/mockagent`) that creates a demo set of hosts through the API and
 pushes believable telemetry, so the Superboard shows every card state without
-any real machines. The script prints the operator token, which is this
-instance's sign-in credential (also in `./.dev-data/initial-token.txt`).
-`./dev.sh stop` stops everything; `./dev.sh status` checks health.
+any real machines. It also creates a few demo websites, links them to the
+servers that host them, and leaves agent warnings on two hosts, so the link
+picker and the "Clear agent warnings" action have something to show. The
+script prints the operator token, which is this instance's sign-in credential
+(also in `./.dev-data/initial-token.txt`). `./dev.sh stop` stops everything;
+`./dev.sh status` checks health.
 
 ### 🐳 Docker
 

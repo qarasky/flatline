@@ -408,3 +408,122 @@ async fn push_failures_clear_acknowledges_and_resets_on_restart() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["monitor"]["pushFailuresAck"], 0);
 }
+
+#[tokio::test]
+async fn agent_warnings_clear_acknowledges_every_counter_and_resets_on_restart() {
+    let h = harness().await;
+    let monitor = create_push(&h, "fleet-1").await;
+    let id = monitor["id"].as_i64().unwrap();
+    let push_token = monitor["pushToken"].as_str().unwrap().to_string();
+
+    // The counters live on the monitor JSON, starting unacknowledged.
+    assert_eq!(monitor["pushFailuresAck"], 0);
+    assert_eq!(monitor["samplesDroppedAck"], 0);
+    assert_eq!(monitor["collectorErrorsAck"], json!({}));
+
+    // Nothing reported yet: clearing acknowledges zeroes rather than failing.
+    let (status, body) = send(
+        &h.app,
+        request(
+            "POST",
+            &format!("/api/v1/monitors/{id}/agent-warnings/clear"),
+            Some(&h.token),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "clear failed: {body}");
+    assert_eq!(body["pushFailuresAck"], 0);
+    assert_eq!(body["samplesDroppedAck"], 0);
+    assert_eq!(body["collectorErrorsAck"], json!({}));
+
+    let sample = |failed: u64, dropped: u64, collectors: Value| {
+        json!({
+            "metrics": {
+                "host": { "hostname": "fleet-1" },
+                "cpu": { "percent": 5.0, "cores": 2 },
+                "mem": { "percent": 20.0, "total": 100, "used": 20 },
+                "agent": {
+                    "version": "1.7.0", "uptime": 60, "failedPushes": failed,
+                    "samplesDropped": dropped, "collectorErrors": collectors,
+                },
+            }
+        })
+    };
+
+    let (status, _) = send(
+        &h.app,
+        request(
+            "POST",
+            &format!("/api/push/{push_token}"),
+            None,
+            Some(sample(2, 5, json!({ "gpu": 3, "updates": 1 }))),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Clearing snapshots every counter the agent reports.
+    let (status, body) = send(
+        &h.app,
+        request(
+            "POST",
+            &format!("/api/v1/monitors/{id}/agent-warnings/clear"),
+            Some(&h.token),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["pushFailuresAck"], 2);
+    assert_eq!(body["samplesDroppedAck"], 5);
+    assert_eq!(body["collectorErrorsAck"], json!({ "gpu": 3, "updates": 1 }));
+
+    let (status, body) = get_json(&h.app, &format!("/api/v1/monitors/{id}"), &h.token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["monitor"]["pushFailuresAck"], 2);
+    assert_eq!(body["monitor"]["samplesDroppedAck"], 5);
+    assert_eq!(
+        body["monitor"]["collectorErrorsAck"],
+        json!({ "gpu": 3, "updates": 1 })
+    );
+
+    // Counters climbing past the ack are new warnings: the ack is kept, so
+    // the board still subtracts and shows the difference.
+    let (status, _) = send(
+        &h.app,
+        request(
+            "POST",
+            &format!("/api/push/{push_token}"),
+            None,
+            Some(sample(5, 9, json!({ "gpu": 4, "updates": 1 }))),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = get_json(&h.app, &format!("/api/v1/monitors/{id}"), &h.token).await;
+    assert_eq!(body["monitor"]["pushFailuresAck"], 2);
+    assert_eq!(body["monitor"]["samplesDroppedAck"], 5);
+    assert_eq!(
+        body["monitor"]["collectorErrorsAck"],
+        json!({ "gpu": 3, "updates": 1 })
+    );
+
+    // The agent restarts and its counters reset: a stale ack would hide the
+    // first new failures, so ingest drops every acknowledgement instead.
+    let (status, _) = send(
+        &h.app,
+        request(
+            "POST",
+            &format!("/api/push/{push_token}"),
+            None,
+            Some(sample(0, 0, json!({}))),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = get_json(&h.app, &format!("/api/v1/monitors/{id}"), &h.token).await;
+    assert_eq!(body["monitor"]["pushFailuresAck"], 0);
+    assert_eq!(body["monitor"]["samplesDroppedAck"], 0);
+    assert_eq!(body["monitor"]["collectorErrorsAck"], json!({}));
+}

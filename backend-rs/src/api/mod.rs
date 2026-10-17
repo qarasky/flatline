@@ -166,6 +166,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/monitors/{id}/push-failures/clear",
             post(monitors::clear_push_failures),
         )
+        .route(
+            "/api/v1/monitors/{id}/agent-warnings/clear",
+            post(monitors::clear_agent_warnings),
+        )
         .route("/api/v1/monitors/links", get(links::bulk))
         .route(
             "/api/v1/monitors/{id}/links",

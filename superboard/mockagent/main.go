@@ -55,6 +55,31 @@ var fleet = []serverDef{
 	{name: "build-16", group: "Home", provider: "hetzner", profile: "manycores"},
 }
 
+// websiteDef is one demo website a server hosts, shown as a chip on its card.
+type websiteDef struct {
+	name  string
+	group string
+	url   string
+}
+
+// Demo websites, so the link picker and the cards' website chips have
+// something real to show. The URLs point at the dev stack itself (up) and at
+// a closed port (down), so both chip tones appear without leaving the machine.
+// The server checker polls them like any other HTTP monitor.
+var websites = []websiteDef{
+	{name: "shop.clients.kz", group: "Work", url: "http://127.0.0.1:3003/"},
+	{name: "api.clients.kz", group: "Work", url: "http://127.0.0.1:3003/"},
+	{name: "legacy.clients.kz", group: "Work", url: "http://127.0.0.1:9/"},
+	{name: "media.home.lan", group: "Home", url: "http://127.0.0.1:3003/"},
+}
+
+// Which server hosts which websites, as an operator would link them.
+var hostLinks = map[string][]string{
+	"web-01": {"shop.clients.kz", "api.clients.kz"},
+	"db-01":  {"legacy.clients.kz"},
+	"nas-01": {"media.home.lan"},
+}
+
 // state carries the counters that must climb between pushes so the server can
 // derive per-second rates.
 type state struct {
@@ -195,6 +220,40 @@ func (c *client) ensurePush(def serverDef, parent int64) (int64, string, error) 
 func (c *client) push(token string, metrics map[string]any) error {
 	body := map[string]any{"status": "up", "ping": 12, "msg": "OK", "metrics": metrics}
 	return c.do(http.MethodPost, "/api/push/"+token+"?telemetry=1", body, nil)
+}
+
+// ensureWebsite finds or creates an HTTP monitor and returns its id.
+func (c *client) ensureWebsite(def websiteDef, parent int64) (int64, error) {
+	roster, err := c.roster()
+	if err != nil {
+		return 0, err
+	}
+	for _, m := range roster {
+		if m.Type == "http" && m.Name == def.name {
+			return m.ID, nil
+		}
+	}
+	var created struct {
+		Monitor monitorSummary `json:"monitor"`
+	}
+	body := map[string]any{
+		"name":    def.name,
+		"type":    "http",
+		"active":  true,
+		"url":     def.url,
+		"parent":  parent,
+		"timeout": 5,
+	}
+	if err := c.do(http.MethodPost, "/api/v1/monitors", body, &created); err != nil {
+		return 0, err
+	}
+	return created.Monitor.ID, nil
+}
+
+// setLinks replaces a server's linked websites with exactly the given ids.
+func (c *client) setLinks(serverID int64, linked []int64) error {
+	body := map[string]any{"linkedMonitorIds": linked}
+	return c.do(http.MethodPut, fmt.Sprintf("/api/v1/monitors/%d/links", serverID), body, nil)
 }
 
 // walk nudges a value and keeps it inside a range.
@@ -452,15 +511,37 @@ func main() {
 
 	tokens := map[string]string{}
 	states := map[string]*state{}
+	servers := map[string]int64{}
 	for _, def := range fleet {
-		_, tok, err := c.ensurePush(def, groups[def.group])
+		id, tok, err := c.ensurePush(def, groups[def.group])
 		if err != nil {
 			log.Fatalf("mockagent: monitor %s: %v", def.name, err)
 		}
+		servers[def.name] = id
 		tokens[def.name] = tok
 		states[def.name] = newState()
 	}
-	log.Printf("mockagent: %d hosts ready -> %s every %s", len(fleet), c.base, *interval)
+
+	// Websites live in their group too, so the picker can offer both a single
+	// website and the whole group that holds it.
+	websiteIDs := map[string]int64{}
+	for _, def := range websites {
+		id, err := c.ensureWebsite(def, groups[def.group])
+		if err != nil {
+			log.Fatalf("mockagent: website %s: %v", def.name, err)
+		}
+		websiteIDs[def.name] = id
+	}
+	for host, names := range hostLinks {
+		ids := make([]int64, 0, len(names))
+		for _, name := range names {
+			ids = append(ids, websiteIDs[name])
+		}
+		if err := c.setLinks(servers[host], ids); err != nil {
+			log.Fatalf("mockagent: links for %s: %v", host, err)
+		}
+	}
+	log.Printf("mockagent: %d hosts and %d websites ready -> %s every %s", len(fleet), len(websites), c.base, *interval)
 
 	consecutiveFailures := 0
 	for {

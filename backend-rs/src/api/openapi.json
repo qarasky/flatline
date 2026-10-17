@@ -192,6 +192,21 @@
                             "null"
                         ],
                         "description": "Alert when the fullest reported mount stays at or above this percent for 60s. null disables."
+                    },
+                    "pushFailuresAck": {
+                        "type": "integer",
+                        "description": "Agent `failedPushes` value the operator last acknowledged; the board shows the difference."
+                    },
+                    "samplesDroppedAck": {
+                        "type": "integer",
+                        "description": "Agent `samplesDropped` value the operator last acknowledged; the board shows the difference."
+                    },
+                    "collectorErrorsAck": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "integer"
+                        },
+                        "description": "Acknowledged per-collector `agent.collectorErrors` counts, keyed by collector name."
                     }
                 }
             },
@@ -829,6 +844,52 @@
                                                 "integer",
                                                 "null"
                                             ]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/monitors/{id}/agent-warnings/clear": {
+            "post": {
+                "summary": "Clear agent warnings",
+                "description": "Requires the `write` scope. Acknowledges every agent warning counter at once: `agent.failedPushes`, `agent.samplesDropped` and the per-collector `agent.collectorErrors`. The board shows each reported counter minus its ack, so this clears the whole \"Agent: …\" line on a card. Docker collector errors are acknowledged too, though the card renders them in the container section. The counters reset when the agent restarts and the acks are dropped automatically, so new warnings are never masked.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The acknowledged values",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "id": {
+                                            "type": "integer"
+                                        },
+                                        "pushFailuresAck": {
+                                            "type": "integer"
+                                        },
+                                        "samplesDroppedAck": {
+                                            "type": "integer"
+                                        },
+                                        "collectorErrorsAck": {
+                                            "type": "object",
+                                            "additionalProperties": {
+                                                "type": "integer"
+                                            }
+                                        },
+                                        "reported": {
+                                            "type": "object"
                                         }
                                     }
                                 }

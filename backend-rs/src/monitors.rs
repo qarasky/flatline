@@ -82,6 +82,12 @@ pub struct Monitor {
     /// Agent `failedPushes` value the operator last acknowledged; the board
     /// shows the difference. Reset by ingest when the agent restarts.
     pub push_failures_ack: i64,
+    /// Agent `samplesDropped` value the operator last acknowledged, read the
+    /// same way. Reset by ingest when the agent restarts.
+    pub samples_dropped_ack: i64,
+    /// Agent `collectorErrors` counts the operator last acknowledged, as a
+    /// JSON object of collector name to count. Reset by ingest on restart.
+    pub collector_errors_ack: String,
     pub created_at: String,
 }
 
@@ -118,6 +124,8 @@ impl Monitor {
             metric_ram_threshold: None,
             metric_disk_threshold: None,
             push_failures_ack: 0,
+            samples_dropped_ack: 0,
+            collector_errors_ack: "{}".to_string(),
             created_at: String::new(),
         }
     }
@@ -139,6 +147,13 @@ pub fn monitor_json(m: &Monitor, beat: Option<&Beat>, uptime: &UptimeWindows) ->
 
     let status_codes: Value =
         serde_json::from_str(&m.accepted_statuscodes).unwrap_or_else(|_| json!(["200-299"]));
+
+    // The acknowledged collector-error counts are stored as JSON text; an
+    // unreadable value degrades to "nothing acknowledged" rather than failing.
+    let collector_errors_ack: Value = serde_json::from_str(&m.collector_errors_ack)
+        .ok()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
 
     json!({
         "id": m.id,
@@ -162,6 +177,8 @@ pub fn monitor_json(m: &Monitor, beat: Option<&Beat>, uptime: &UptimeWindows) ->
         // The agent's failedPushes counter value the operator acknowledged;
         // the board shows reported - ack (never below zero).
         "pushFailuresAck": m.push_failures_ack,
+        "samplesDroppedAck": m.samples_dropped_ack,
+        "collectorErrorsAck": collector_errors_ack,
         "description": m.description,
         "provider": m.provider,
         "method": m.method,
