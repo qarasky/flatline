@@ -326,11 +326,11 @@ async fn import_monitors(
         sqlx::query(
             "INSERT INTO monitors (
                  id, name, type, active, description, interval, retry_interval, maxretries,
-                 timeout, resend_interval, upside_down, parent, weight, url, method,
+                 timeout, resend_interval, upside_down, parent, weight, provider, url, method,
                  accepted_statuscodes, ignore_tls, maxredirects, push_token,
                  hostname, packet_size, ping_count, ping_numeric, ping_per_request_timeout,
                  metric_cpu_threshold, metric_ram_threshold, metric_disk_threshold, created_at
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(id)
         .bind(name)
@@ -345,6 +345,7 @@ async fn import_monitors(
         .bind(int_or(row, &cols, "upside_down", 0))
         .bind(Option::<i64>::None)
         .bind(int_or(row, &cols, "weight", 0))
+        .bind(text(row, &cols, "provider"))
         .bind(text(row, &cols, "url"))
         .bind(text(row, &cols, "method"))
         .bind(accepted.unwrap_or_else(|| "[\"200-299\"]".to_string()))

@@ -56,6 +56,10 @@ They are printed as INFO lines by the script:
    differently; tag data stays in the old database.
 5. **Cert expiry fields** (`certExpiryDaysRemaining`, `validCert`) and
    group `sendUrl`: not part of the v1 surface.
+6. **Monitor `provider`.** Added to the Node side on 2026-10-14, after this
+   parity run, so the Rust backend ignored it until migration 10 restored the
+   field. The Superboard draws the provider logo from it; nothing else reads
+   it, and the catalog still lives in the frontend.
 
 ## Golden-path checklist (manual, on staging)
 

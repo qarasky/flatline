@@ -174,7 +174,6 @@ echo
 echo "  backend     http://$LAN_IP:$BACKEND_PORT"
 echo "  dashboard   http://$LAN_IP:$DASH_PORT"
 echo "  superboard  http://$LAN_IP:$DASH_PORT/superboard   (kiosk: /superboard/kiosk, scope: /superboard/kiosk/work)"
-echo "  status page http://$LAN_IP:$DASH_PORT/status/clients"
 echo
 if [ -n "$TOKEN" ]; then
     echo "  operator token: $TOKEN"

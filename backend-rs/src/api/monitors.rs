@@ -351,11 +351,11 @@ pub async fn create(
     let stored = sqlx::query_as::<_, Monitor>(
         "INSERT INTO monitors (
             name, type, active, description, interval, retry_interval, maxretries,
-            timeout, resend_interval, upside_down, parent, weight, url, method,
+            timeout, resend_interval, upside_down, parent, weight, provider, url, method,
             accepted_statuscodes, ignore_tls, maxredirects, push_token,
             hostname, packet_size, ping_count, ping_numeric, ping_per_request_timeout,
             metric_cpu_threshold, metric_ram_threshold, metric_disk_threshold
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *",
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *",
     )
     .bind(&monitor.name)
     .bind(&monitor.kind)
@@ -369,6 +369,7 @@ pub async fn create(
     .bind(monitor.upside_down)
     .bind(monitor.parent)
     .bind(monitor.weight)
+    .bind(&monitor.provider)
     .bind(&monitor.url)
     .bind(&monitor.method)
     .bind(&monitor.accepted_statuscodes)
@@ -431,7 +432,7 @@ pub async fn patch(
         "UPDATE monitors SET
             name = ?, active = ?, description = ?, interval = ?, retry_interval = ?,
             maxretries = ?, timeout = ?, resend_interval = ?, upside_down = ?, parent = ?,
-            weight = ?, url = ?, method = ?, accepted_statuscodes = ?, ignore_tls = ?,
+            weight = ?, provider = ?, url = ?, method = ?, accepted_statuscodes = ?, ignore_tls = ?,
             maxredirects = ?, push_token = ?, hostname = ?, packet_size = ?, ping_count = ?,
             ping_numeric = ?, ping_per_request_timeout = ?, metric_cpu_threshold = ?,
             metric_ram_threshold = ?, metric_disk_threshold = ?
@@ -448,6 +449,7 @@ pub async fn patch(
     .bind(monitor.upside_down)
     .bind(monitor.parent)
     .bind(monitor.weight)
+    .bind(&monitor.provider)
     .bind(&monitor.url)
     .bind(&monitor.method)
     .bind(&monitor.accepted_statuscodes)

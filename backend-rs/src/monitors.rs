@@ -29,6 +29,7 @@ pub const WRITABLE_FIELDS: &[&str] = &[
     "upsideDown",
     "parent",
     "weight",
+    "provider",
     "url",
     "method",
     "accepted_statuscodes",
@@ -61,6 +62,9 @@ pub struct Monitor {
     pub upside_down: i64,
     pub parent: Option<i64>,
     pub weight: i64,
+    /// Hosting provider id (usually a domain), drawn as a logo on the card.
+    /// Display-only: the server never acts on it.
+    pub provider: Option<String>,
     pub url: Option<String>,
     pub method: Option<String>,
     pub accepted_statuscodes: String,
@@ -98,6 +102,7 @@ impl Monitor {
             upside_down: 0,
             parent: None,
             weight: 0,
+            provider: None,
             url: None,
             method: None,
             accepted_statuscodes: "[\"200-299\"]".to_string(),
@@ -158,6 +163,7 @@ pub fn monitor_json(m: &Monitor, beat: Option<&Beat>, uptime: &UptimeWindows) ->
         // the board shows reported - ack (never below zero).
         "pushFailuresAck": m.push_failures_ack,
         "description": m.description,
+        "provider": m.provider,
         "method": m.method,
         "accepted_statuscodes": status_codes,
         "maxretries": m.maxretries,
@@ -220,6 +226,7 @@ pub fn apply_payload(
                     }
             }
             "weight" => monitor.weight = bounded_int(value, "weight", -100_000, 100_000)?,
+            "provider" => monitor.provider = optional_string(value),
             "url" => monitor.url = optional_string(value),
             "method" => monitor.method = optional_string(value),
             "accepted_statuscodes" => {
@@ -369,4 +376,37 @@ fn threshold(value: &Value) -> Option<i64> {
 /// Generate the push token a push monitor reports with.
 pub fn generate_push_token() -> String {
     mint_token()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn payload(value: Value) -> Map<String, Value> {
+        value.as_object().expect("object").clone()
+    }
+
+    #[test]
+    fn provider_round_trips_through_payload_and_json() {
+        let mut monitor = Monitor::new("edge-01".into(), "push".into());
+        assert_eq!(monitor.provider, None);
+
+        let ignored = apply_payload(&mut monitor, &payload(json!({ "provider": "hetzner.com" })), false)
+            .expect("provider is a writable field");
+        assert!(ignored.is_empty(), "provider must not be reported as ignored");
+        assert_eq!(monitor.provider.as_deref(), Some("hetzner.com"));
+
+        let described = monitor_json(&monitor, None, &crate::heartbeats::UptimeWindows::default());
+        assert_eq!(described.get("provider").and_then(Value::as_str), Some("hetzner.com"));
+
+        // Clearing works like every other optional string: null (or empty)
+        // means "no provider", and nothing is ignored.
+        let ignored = apply_payload(&mut monitor, &payload(json!({ "provider": null })), false)
+            .expect("clearing is allowed");
+        assert!(ignored.is_empty());
+        assert_eq!(monitor.provider, None);
+        let described = monitor_json(&monitor, None, &crate::heartbeats::UptimeWindows::default());
+        assert_eq!(described.get("provider"), Some(&Value::Null));
+    }
 }
