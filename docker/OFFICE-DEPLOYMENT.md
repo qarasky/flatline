@@ -57,6 +57,53 @@ Flatline backend. Stop one monitoring backend before enabling another to avoid
 duplicate alerts. Do not start the old Mac backend after production cutover
 unless its notification links have first been disabled.
 
+## Hosted-website links, provider logos, agent-warning acks, agent 1.7.0 — 2026-10-18
+
+Image rebuilt on the office from `dc5322fa` and the stack recreated. This is
+the release that also **removes the Node backend from the repository** and
+ships agent **1.7.0** with self-update. The source tree on the host was a
+pre-removal snapshot, so it was replaced with the commit tarball
+(`flatline-src`; the old tree is kept as `flatline-src.prev-20261018`, 24 MiB,
+and can be deleted once this release has settled).
+
+- Backup first (SQLite backup API, `integrity_check: ok`, 36 monitors,
+  366k heartbeats): `backups/pre-1.7.0-20261017-233721.db` (812 MiB).
+- Image: `artchsh/flatline-rust:office-live` → `05dc96d1658a` (was
+  `07e4e97b609d`, kept as `artchsh/flatline-rust:office-prev-20261017`).
+- Migrations `0009_monitor_links` (hosted-website links),
+  `0010_monitor_provider` (Superboard provider logos) and
+  `0011_agent_warning_acks` (`samples_dropped_ack` plus the JSON
+  `collector_errors_ack`) applied. All additive.
+- Dashboard: the redesigned fleet card (per-core CPU squares, full-width
+  RAM/Disk rows, container rows, a websites section), provider logos,
+  website linking from a server's right-click menu (HTTP/HTTPS targets only),
+  and "Clear agent warnings (N)" — one action that acknowledges failed
+  pushes, dropped samples and per-collector errors.
+- Verified live: container `healthy`, 0 restarts; `/api/v1/health` 36/36 up;
+  `_sqlx_migrations` at 7–11 with the new `monitors` columns and
+  `monitor_links` present; `/agent/version` → **1.7.0** (linux-amd64 +
+  linux-arm64) with the served binary's sha256 matching `sha256sums`; the
+  runbook renders `https://uptime.mediaboost.kz` against agent 1.7.0;
+  `/superboard` serves this build (`index-DgVBcMXZ.js`,
+  `index-Cm37BaMZ.css`) and renders all 8 servers with no page errors;
+  public origin 200 on `/`, `/status/clients`, `/superboard` and
+  `/api/v1/auth/setup`, 401 unauthenticated on `/api/v1/*`; every push agent
+  resumed within seconds of the recreate.
+- **The fleet stays on agent 1.6.1** (six hosts report it; `home-rpi` and
+  `office-mac-server` report no agent block). Self-update only exists from
+  1.7.0 on, so the first hop is a manual `install.sh --update` per host —
+  after that they keep themselves current. The office host's own agent is
+  included in that.
+- **Rollback is not image-only.** sqlx refuses to start a binary that does
+  not know a migration the database has applied (`VersionMissing`), so
+  rolling the code back needs the matching database: retag
+  `office-prev-20261017` → `office-live`, restore
+  `pre-1.7.0-20261017-233721.db` over `data-rust/flatline.db`, then
+  `docker compose -f compose.rust.yaml up -d`.
+- Minor hardening note: `data-rust/flatline.db` is mode 0644 inside a 0755
+  directory. Harmless for a single-operator box; tighten it if other shell
+  users ever appear.
+
 ## Performance follow-up release — 2026-10-14
 
 Image rebuilt on the office from the synced tree
