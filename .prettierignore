@@ -1,2 +1,15 @@
-# language files
-src/lang/*.json
+# Prettier runs over the whole repository (`prettier --write .`), so this file
+# lists everything it must leave alone. `node_modules` is skipped by default.
+
+# Local state, secrets and build output
+.dev-data
+.dev-logs
+data
+private
+tmp
+dist
+backend-rs/target
+superboard/flatline-superboard
+
+# Generated files: npm owns the lockfile's formatting.
+package-lock.json

@@ -20,7 +20,11 @@ const context = await browser.newContext({
     colorScheme: "dark",
 });
 await context.addInitScript((value) => {
-    try { localStorage.setItem("flatline.token", value); } catch { /* storage disabled */ }
+    try {
+        localStorage.setItem("flatline.token", value);
+    } catch {
+        /* storage disabled */
+    }
 }, token);
 const page = await context.newPage();
 page.on("pageerror", (error) => console.error("page error:", error.message));

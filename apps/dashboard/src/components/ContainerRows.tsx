@@ -22,13 +22,19 @@ function Row({ container }: { container: FleetContainer }) {
     const failed = containerIssue(container);
     const stats = containerStatsSummary(container.stats);
     const state = stateText(container);
-    const detail = failed ? state : stats?.label ?? "";
+    const detail = failed ? state : (stats?.label ?? "");
     const description = `${container.name ?? "?"}: ${state}${stats ? `, ${stats.title}` : ""}${container.image ? ` · ${container.image}` : ""}`;
     return (
         <li className="fleet-container-row" data-tone={tone} title={description} aria-label={description}>
-            <span className="fleet-container-symbol" aria-hidden="true">{SYMBOLS[tone]}</span>
+            <span className="fleet-container-symbol" aria-hidden="true">
+                {SYMBOLS[tone]}
+            </span>
             <span className="fleet-container-name">{container.name ?? "?"}</span>
-            {detail ? <span className="fleet-container-state tnum" aria-hidden="true">{detail}</span> : null}
+            {detail ? (
+                <span className="fleet-container-state tnum" aria-hidden="true">
+                    {detail}
+                </span>
+            ) : null}
         </li>
     );
 }
@@ -41,7 +47,9 @@ function Row({ container }: { container: FleetContainer }) {
 export function ContainerRows({ containers }: { containers: FleetContainer[] }) {
     return (
         <ul className="fleet-container-rows">
-            {containers.map((container, i) => <Row key={`${container.name}-${i}`} container={container} />)}
+            {containers.map((container, i) => (
+                <Row key={`${container.name}-${i}`} container={container} />
+            ))}
         </ul>
     );
 }

@@ -20,7 +20,7 @@ export interface LinkCandidate {
 }
 
 /** Monitor types that count as a hosted website. */
-const WEBSITE_TYPES = new Set([ "http", "https" ]);
+const WEBSITE_TYPES = new Set(["http", "https"]);
 
 /** Whether a monitor is a website that a server card can link. */
 export function isWebsiteMonitor(monitor: Pick<MonitorSummary, "type">): boolean {
@@ -45,7 +45,7 @@ export function buildLinkCandidates(monitors: MonitorSummary[], excludeId?: numb
         if (siblings) {
             siblings.push(monitor);
         } else {
-            childrenOf.set(monitor.parent, [ monitor ]);
+            childrenOf.set(monitor.parent, [monitor]);
         }
     }
 
@@ -55,8 +55,8 @@ export function buildLinkCandidates(monitors: MonitorSummary[], excludeId?: numb
         if (!seen.add(id)) {
             return false;
         }
-        return (childrenOf.get(id) ?? []).some((child) =>
-            isWebsiteMonitor(child) || (child.type === "group" && holdsWebsite(child.id, seen))
+        return (childrenOf.get(id) ?? []).some(
+            (child) => isWebsiteMonitor(child) || (child.type === "group" && holdsWebsite(child.id, seen))
         );
     };
 
@@ -69,7 +69,7 @@ export function buildLinkCandidates(monitors: MonitorSummary[], excludeId?: numb
 
     groups.sort((a, b) => a.label.localeCompare(b.label));
     singles.sort((a, b) => a.label.localeCompare(b.label));
-    return [ ...groups, ...singles ];
+    return [...groups, ...singles];
 }
 
 /** Worst-first order: down, pending, maintenance, up, then unknown. */
@@ -82,27 +82,37 @@ const LINK_ORDER: Record<number, number> = { 0: 0, 2: 1, 3: 2, 1: 3 };
  * @returns A new, sorted array
  */
 export function sortLinks(links: ResolvedMonitorLink[]): ResolvedMonitorLink[] {
-    return [ ...links ].sort(
+    return [...links].sort(
         (a, b) => (LINK_ORDER[a.status] ?? 4) - (LINK_ORDER[b.status] ?? 4) || a.name.localeCompare(b.name)
     );
 }
 
 export function linkStatusLabel(status: number): string {
     switch (status) {
-        case 1: return "Up";
-        case 0: return "Down";
-        case 2: return "Pending";
-        case 3: return "Maintenance";
-        default: return "Unknown";
+        case 1:
+            return "Up";
+        case 0:
+            return "Down";
+        case 2:
+            return "Pending";
+        case 3:
+            return "Maintenance";
+        default:
+            return "Unknown";
     }
 }
 
 export function linkTone(status: number): "up" | "bad" | "pending" | "maintenance" | "neutral" {
     switch (status) {
-        case 1: return "up";
-        case 0: return "bad";
-        case 2: return "pending";
-        case 3: return "maintenance";
-        default: return "neutral";
+        case 1:
+            return "up";
+        case 0:
+            return "bad";
+        case 2:
+            return "pending";
+        case 3:
+            return "maintenance";
+        default:
+            return "neutral";
     }
 }

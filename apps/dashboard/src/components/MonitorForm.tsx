@@ -1,7 +1,24 @@
 import { useEffect, useState } from "react";
 import type { SyntheticEvent } from "react";
-import { ApiError, createMonitor, fetchMonitorLinks, fetchMonitorTypes, replaceMonitorLinks, updateMonitor, type MonitorSummary } from "@/lib/api";
-import { ALERT_THRESHOLD_FIELDS, COMMON_FIELDS, SCHEDULING_FIELDS, TYPE_SCHEMAS, defaultsFor, fieldsFor, schemaFor, type FieldDef } from "@/lib/monitor-schema";
+import {
+    ApiError,
+    createMonitor,
+    fetchMonitorLinks,
+    fetchMonitorTypes,
+    replaceMonitorLinks,
+    updateMonitor,
+    type MonitorSummary,
+} from "@/lib/api";
+import {
+    ALERT_THRESHOLD_FIELDS,
+    COMMON_FIELDS,
+    SCHEDULING_FIELDS,
+    TYPE_SCHEMAS,
+    defaultsFor,
+    fieldsFor,
+    schemaFor,
+    type FieldDef,
+} from "@/lib/monitor-schema";
 import { PROVIDERS, resolveProvider } from "@/lib/providers";
 import type { LinkCandidate } from "@/lib/links";
 import { LinkPicker } from "@/components/WebsiteLinks";
@@ -69,7 +86,14 @@ function FieldInput({
         );
     }
 
-    const inputType = field.kind === "number" ? "number" : field.kind === "password" ? "password" : field.kind === "url" ? "url" : "text";
+    const inputType =
+        field.kind === "number"
+            ? "number"
+            : field.kind === "password"
+              ? "password"
+              : field.kind === "url"
+                ? "url"
+                : "text";
 
     // list kind (e.g. accepted_statuscodes) is comma-separated text in the compact form.
     const displayValue =
@@ -154,7 +178,9 @@ function ProviderField({ value, onChange }: { value: unknown; onChange: (value: 
                 >
                     <option value="">— none —</option>
                     {PROVIDERS.map((p) => (
-                        <option key={p.id} value={p.id}>{p.label}</option>
+                        <option key={p.id} value={p.id}>
+                            {p.label}
+                        </option>
                     ))}
                     <option value={CUSTOM_PROVIDER}>Other…</option>
                 </select>
@@ -171,7 +197,8 @@ function ProviderField({ value, onChange }: { value: unknown; onChange: (value: 
                 ) : null}
             </div>
             <span className="mt-1 block text-[11px] text-quiet">
-                Symbol before the name on Superboard cards. Any domain works; unknown ones fall back to the site favicon.
+                Symbol before the name on Superboard cards. Any domain works; unknown ones fall back to the site
+                favicon.
             </span>
         </div>
     );
@@ -235,16 +262,22 @@ export function MonitorForm({
         let cancelled = false;
         fetchMonitorLinks(initial.id as number)
             .then((r) => {
-                if (cancelled) { return; }
+                if (cancelled) {
+                    return;
+                }
                 setLinkSelection(new Set(r.raw.map((link) => link.linkedMonitorId)));
                 setLinksReady(true);
                 setLinkError(null);
             })
             .catch((e) => {
-                if (!cancelled) { setLinkError(e instanceof Error ? e.message : "Could not load linked websites."); }
+                if (!cancelled) {
+                    setLinkError(e instanceof Error ? e.message : "Could not load linked websites.");
+                }
             });
-        return () => { cancelled = true; };
-    }, [ isEdit, linkable, initial?.id ]);
+        return () => {
+            cancelled = true;
+        };
+    }, [isEdit, linkable, initial?.id]);
 
     // When the type changes on create, reset to that type's defaults.
     // On edit the type is locked (server rejects type changes).
@@ -302,9 +335,10 @@ export function MonitorForm({
 
         // Provider clears the same way: "none" must send null, not omit the
         // key. The server lowercases and trims it.
-        payload.provider = typeof values.provider === "string" && values.provider.trim() !== ""
-            ? values.provider.trim().toLowerCase()
-            : null;
+        payload.provider =
+            typeof values.provider === "string" && values.provider.trim() !== ""
+                ? values.provider.trim().toLowerCase()
+                : null;
 
         try {
             let savedId: number | null = null;
@@ -321,18 +355,22 @@ export function MonitorForm({
             // exists. On an edit, skip when the existing links never loaded so
             // a failed read cannot silently clear them.
             if (linkable && savedId != null && (!isEdit || linksReady)) {
-                await replaceMonitorLinks(savedId, [ ...linkSelection ]);
+                await replaceMonitorLinks(savedId, [...linkSelection]);
             }
             onSaved();
         } catch (e) {
-            setError(e instanceof ApiError ? `${e.message} (${e.code})` : e instanceof Error ? e.message : "Save failed.");
+            setError(
+                e instanceof ApiError ? `${e.message} (${e.code})` : e instanceof Error ? e.message : "Save failed."
+            );
         } finally {
             setSaving(false);
         }
     }
 
     const schema = schemaFor(type);
-    const basics = fieldsFor(type).filter((f) => !f.advanced && f.key !== "name" && f.key !== "interval" && f.key !== "active");
+    const basics = fieldsFor(type).filter(
+        (f) => !f.advanced && f.key !== "name" && f.key !== "interval" && f.key !== "active"
+    );
     const advanced = fieldsFor(type).filter((f) => f.advanced);
     const typeOptions = serverTypes ?? Object.keys(TYPE_SCHEMAS).sort();
 
@@ -341,11 +379,11 @@ export function MonitorForm({
     const scheduling: FieldDef[] = SCHEDULING_FIELDS.map((field) =>
         field.key === "parent" && groupChoices
             ? {
-                ...field,
-                kind: "select" as const,
-                help: "Parent group. Pick a name, not an id.",
-                options: [ { value: "", label: "— none (top level)" }, ...groupChoices ],
-            }
+                  ...field,
+                  kind: "select" as const,
+                  help: "Parent group. Pick a name, not an id.",
+                  options: [{ value: "", label: "— none (top level)" }, ...groupChoices],
+              }
             : field
     );
 
@@ -394,20 +432,36 @@ export function MonitorForm({
                         {advanced.map((f) => (
                             <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => setField(f, v)} />
                         ))}
-                        {scheduling.filter((f) => !advanced.some((a) => a.key === f.key)).map((f) => (
-                            <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => setField(f, v)} />
-                        ))}
+                        {scheduling
+                            .filter((f) => !advanced.some((a) => a.key === f.key))
+                            .map((f) => (
+                                <FieldInput
+                                    key={f.key}
+                                    field={f}
+                                    value={values[f.key]}
+                                    onChange={(v) => setField(f, v)}
+                                />
+                            ))}
                         {advanced.length === 0 ? (
-                            <p className="text-xs text-quiet md:col-span-2">Scheduling and group options. Defaults are usually right.</p>
+                            <p className="text-xs text-quiet md:col-span-2">
+                                Scheduling and group options. Defaults are usually right.
+                            </p>
                         ) : null}
                     </div>
                 ) : null}
                 {showAdvanced ? (
                     <div className="mt-3 rounded-md border border-border p-3">
-                        <p className="mb-2 text-xs font-semibold tracking-wide text-quiet uppercase">Metric alert thresholds</p>
+                        <p className="mb-2 text-xs font-semibold tracking-wide text-quiet uppercase">
+                            Metric alert thresholds
+                        </p>
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                             {ALERT_THRESHOLD_FIELDS.map((f) => (
-                                <FieldInput key={f.key} field={f} value={values[f.key]} onChange={(v) => set(f.key, v)} />
+                                <FieldInput
+                                    key={f.key}
+                                    field={f}
+                                    value={values[f.key]}
+                                    onChange={(v) => set(f.key, v)}
+                                />
                             ))}
                         </div>
                         <p className="mt-2 text-xs text-quiet">
@@ -425,20 +479,27 @@ export function MonitorForm({
                         candidates={linkCandidates}
                         selected={linkSelection}
                         disabled={saving}
-                        onToggle={(id) => setLinkSelection((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(id)) {
-                                next.delete(id);
-                            } else {
-                                next.add(id);
-                            }
-                            return next;
-                        })}
+                        onToggle={(id) =>
+                            setLinkSelection((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(id)) {
+                                    next.delete(id);
+                                } else {
+                                    next.add(id);
+                                }
+                                return next;
+                            })
+                        }
                     />
                     <p className="mt-2 text-xs text-quiet">
-                        Their status appears on this server's Superboard card. Pick a group to include every website inside it.
+                        Their status appears on this server's Superboard card. Pick a group to include every website
+                        inside it.
                     </p>
-                    {linkError ? <p className="mt-2 text-xs text-bad" role="alert">{linkError}</p> : null}
+                    {linkError ? (
+                        <p className="mt-2 text-xs text-bad" role="alert">
+                            {linkError}
+                        </p>
+                    ) : null}
                 </div>
             ) : null}
 
@@ -448,11 +509,19 @@ export function MonitorForm({
                 </div>
             ) : null}
 
-            {error ? <div className="rounded-md bg-destructive/12 px-2.5 py-2 text-xs text-destructive">{error}</div> : null}
+            {error ? (
+                <div className="rounded-md bg-destructive/12 px-2.5 py-2 text-xs text-destructive">{error}</div>
+            ) : null}
 
             <div className="flex gap-2">
                 <Button type="submit" disabled={saving}>
-                    {saving ? "Saving…" : isEdit ? "Save changes" : type === "group" ? "Create group" : "Create monitor"}
+                    {saving
+                        ? "Saving…"
+                        : isEdit
+                          ? "Save changes"
+                          : type === "group"
+                            ? "Create group"
+                            : "Create monitor"}
                 </Button>
                 <Button type="button" variant="outline" onClick={onCancel}>
                     Cancel

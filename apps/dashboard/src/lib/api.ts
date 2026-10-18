@@ -106,7 +106,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         throw new ApiError(response.status, body.error ?? "unknown", body.message ?? response.statusText);
     }
 
-    return await response.json() as T;
+    return (await response.json()) as T;
 }
 
 export interface MonitorSummary {
@@ -175,14 +175,17 @@ export function fetchHealth(signal?: AbortSignal): Promise<{ ok: true; health: H
  * @param signal Cancels the request when the caller's deadline fires
  * @returns Monitors plus pagination metadata
  */
-export function fetchMonitors(params: { status?: string; q?: string; page?: number; perPage?: number } = {}, signal?: AbortSignal): Promise<{
+export function fetchMonitors(
+    params: { status?: string; q?: string; page?: number; perPage?: number } = {},
+    signal?: AbortSignal
+): Promise<{
     ok: true;
     count: number;
     monitors: MonitorSummary[];
     pagination: Pagination;
 }> {
     const query = new URLSearchParams();
-    for (const [ key, value ] of Object.entries(params)) {
+    for (const [key, value] of Object.entries(params)) {
         if (value !== undefined && value !== "") {
             query.set(key, String(value));
         }
@@ -202,7 +205,9 @@ export async function fetchAllMonitors(signal?: AbortSignal): Promise<MonitorSum
     for (let page = 1; ; page++) {
         const result = await fetchMonitors({ page, perPage: 200 }, signal);
         monitors.push(...result.monitors);
-        if (!result.pagination.hasMore) { return monitors; }
+        if (!result.pagination.hasMore) {
+            return monitors;
+        }
     }
 }
 
@@ -261,7 +266,9 @@ export function watchLive(options: {
             .then(() => options.snapshot(abort.signal))
             .finally(() => {
                 clearTimeout(deadline);
-                if (snapshotAbort === abort) { snapshotAbort = null; }
+                if (snapshotAbort === abort) {
+                    snapshotAbort = null;
+                }
                 snapshotInFlight = null;
             });
         snapshotInFlight = inflight;
@@ -287,14 +294,22 @@ export function watchLive(options: {
             }
             signal.addEventListener("abort", onAbort, { once: true });
             promise.then(
-                value => { signal.removeEventListener("abort", onAbort); resolve(value); },
-                error => { signal.removeEventListener("abort", onAbort); reject(error); }
+                (value) => {
+                    signal.removeEventListener("abort", onAbort);
+                    resolve(value);
+                },
+                (error) => {
+                    signal.removeEventListener("abort", onAbort);
+                    reject(error);
+                }
             );
         });
     }
 
     async function connect() {
-        if (stopped) { return; }
+        if (stopped) {
+            return;
+        }
         const epoch = ++generation;
         controller = new AbortController();
         const currentController = controller;
@@ -305,7 +320,9 @@ export function watchLive(options: {
                 headers: { Accept: "text/event-stream", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
                 signal: controller.signal,
             });
-            if (!response.ok) { throw new ApiError(response.status, "live_stream", response.statusText); }
+            if (!response.ok) {
+                throw new ApiError(response.status, "live_stream", response.statusText);
+            }
             if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
                 throw new Error("Live stream unavailable");
             }
@@ -318,22 +335,40 @@ export function watchLive(options: {
                     const chunk = await reader.read();
                     clearTimeout(watchdog);
                     watchdog = setTimeout(() => currentController.abort(), STREAM_WATCHDOG_MS);
-                    if (chunk.done) { throw new Error("Live connection closed; reconnecting"); }
+                    if (chunk.done) {
+                        throw new Error("Live connection closed; reconnecting");
+                    }
                     buffer += decoder.decode(chunk.value, { stream: true }).replace(/\r/g, "");
-                    if (buffer.length > 1024 * 1024) { throw new Error("Live frame exceeds limit"); }
+                    if (buffer.length > 1024 * 1024) {
+                        throw new Error("Live frame exceeds limit");
+                    }
                     let boundary;
                     while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-                        if (stopped || epoch !== generation) { break; }
+                        if (stopped || epoch !== generation) {
+                            break;
+                        }
                         const frame = buffer.slice(0, boundary);
                         buffer = buffer.slice(boundary + 2);
-                        const data = frame.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
-                        if (!data) { continue; }
+                        const data = frame
+                            .split("\n")
+                            .filter((line) => line.startsWith("data:"))
+                            .map((line) => line.slice(5).trimStart())
+                            .join("\n");
+                        if (!data) {
+                            continue;
+                        }
                         const event = JSON.parse(data);
-                        if (event.type === "unauthorized") { throw new ApiError(401, "unauthorized", "Live token expired or revoked"); }
+                        if (event.type === "unauthorized") {
+                            throw new ApiError(401, "unauthorized", "Live token expired or revoked");
+                        }
                         if (event.type === "ready" || event.type === "invalidate") {
                             await untilStreamDies(runSnapshot(), currentController.signal);
                             delay = 1000;
-                        } else if ((event.type === "metrics" || event.type === "heartbeat") && !stopped && epoch === generation) {
+                        } else if (
+                            (event.type === "metrics" || event.type === "heartbeat") &&
+                            !stopped &&
+                            epoch === generation
+                        ) {
                             options.event(event);
                         }
                     }
@@ -343,7 +378,9 @@ export function watchLive(options: {
                 reader.releaseLock();
             }
         } catch (error) {
-            if (stopped || epoch !== generation) { return; }
+            if (stopped || epoch !== generation) {
+                return;
+            }
             connected = false;
             const failure = error instanceof Error ? error : new Error("Live stream disconnected");
             options.error(failure);
@@ -357,7 +394,9 @@ export function watchLive(options: {
             // reader awaits it before applying deltas anyway.
             retry = setTimeout(() => void connect(), delay + Math.random() * 500);
             delay = Math.min(15_000, delay * 2);
-            void runSnapshot().catch(() => { /* reconnect retries the snapshot */ });
+            void runSnapshot().catch(() => {
+                /* reconnect retries the snapshot */
+            });
         } finally {
             clearTimeout(watchdog);
         }
@@ -367,7 +406,7 @@ export function watchLive(options: {
     // snapshots: runSnapshot coalesces them and bounds each one.
     const fallback = setInterval(() => {
         if (!stopped && !connected && !document.hidden) {
-            void runSnapshot().catch(error => options.error(error));
+            void runSnapshot().catch((error) => options.error(error));
         }
     }, 30_000);
     void connect();
@@ -430,7 +469,10 @@ export function fetchMonitorTypes(): Promise<{
  * @param signal Cancels the request when the caller's deadline fires
  * @returns The monitor's full record
  */
-export function fetchMonitor(id: number, signal?: AbortSignal): Promise<{ ok: true; monitor: MonitorSummary & Record<string, unknown> }> {
+export function fetchMonitor(
+    id: number,
+    signal?: AbortSignal
+): Promise<{ ok: true; monitor: MonitorSummary & Record<string, unknown> }> {
     return request(`/api/v1/monitors/${id}`, { signal });
 }
 
@@ -465,7 +507,10 @@ export function updateMonitor(
 /**
  * Delete a monitor.
  */
-export function deleteMonitor(id: number, deleteChildren = false): Promise<{ ok: true; deleted: number[]; count: number }> {
+export function deleteMonitor(
+    id: number,
+    deleteChildren = false
+): Promise<{ ok: true; deleted: number[]; count: number }> {
     const suffix = deleteChildren ? "?deleteChildren=true" : "";
     return request(`/api/v1/monitors/${id}${suffix}`, { method: "DELETE" });
 }
@@ -503,7 +548,10 @@ export interface MetricsPayload {
     sampleInterval?: number;
     host?: { hostname?: string; os?: string; uptime?: number };
     cpu?: {
-        percent?: number; cores?: number; perCore?: number[]; temp?: number;
+        percent?: number;
+        cores?: number;
+        perCore?: number[];
+        temp?: number;
         counters?: { total?: number; idle?: number; perCore?: { total?: number; idle?: number }[] };
     };
     mem?: { total?: number; used?: number; percent?: number; temp?: number };
@@ -518,7 +566,12 @@ export interface MetricsPayload {
         gpus?: { name?: string; util?: number; memUsed?: number; memTotal?: number; temp?: number }[];
     };
     docker?: {
-        name?: string; image?: string; state?: string; health?: string; ports?: string[]; uptime?: number;
+        name?: string;
+        image?: string;
+        state?: string;
+        health?: string;
+        ports?: string[];
+        uptime?: number;
         stats?: { cpuPercent?: number; memUsed?: number; memLimit?: number; memPercent?: number };
     }[];
     dockerError?: string;
@@ -532,7 +585,14 @@ export interface MetricsPayload {
     diskIoRate?: { readBytesPerSec?: number; writeBytesPerSec?: number; windowSeconds?: number };
     smart?: {
         available?: boolean;
-        disks?: { device?: string; health?: string; tempC?: number; wearPercent?: number; reallocatedSectors?: number; powerOnHours?: number }[];
+        disks?: {
+            device?: string;
+            health?: string;
+            tempC?: number;
+            wearPercent?: number;
+            reallocatedSectors?: number;
+            powerOnHours?: number;
+        }[];
     };
     agent?: {
         version?: string;
@@ -552,15 +612,42 @@ export interface LatestMetrics {
     cpuPeak10m?: CPUPeak | null;
 }
 
-export interface CPUPeak { percent: number; at: string }
+export interface CPUPeak {
+    percent: number;
+    at: string;
+}
 export type HistoryMetric = "cpu" | "ram" | "gpu" | "vram";
-export interface HistoryStats { count: number; min: number; max: number; mean: number; p90: number; p95: number; p99: number }
-export interface HistoryPoint { time: string; cpu: number | null; ram: number | null; gpu: number | null; vram: number | null }
+export interface HistoryStats {
+    count: number;
+    min: number;
+    max: number;
+    mean: number;
+    p90: number;
+    p95: number;
+    p99: number;
+}
+export interface HistoryPoint {
+    time: string;
+    cpu: number | null;
+    ram: number | null;
+    gpu: number | null;
+    vram: number | null;
+}
 export interface MetricsHistorySummary {
-    ok: true; monitorId: number; hours: number; from: string; to: string;
-    capped: boolean; samples: number; firstSample: string | null; lastSample: string | null;
-    bucketSeconds: number; percentileMethod: string; basis: string;
-    stats: Record<HistoryMetric, HistoryStats | null>; series: HistoryPoint[];
+    ok: true;
+    monitorId: number;
+    hours: number;
+    from: string;
+    to: string;
+    capped: boolean;
+    samples: number;
+    firstSample: string | null;
+    lastSample: string | null;
+    bucketSeconds: number;
+    percentileMethod: string;
+    basis: string;
+    stats: Record<HistoryMetric, HistoryStats | null>;
+    series: HistoryPoint[];
 }
 
 export function fetchMetricsHistory(id: number, hours: number, signal?: AbortSignal): Promise<MetricsHistorySummary> {
@@ -576,7 +663,10 @@ export function fetchMetricsHistory(id: number, hours: number, signal?: AbortSig
  * @param signal Cancels the request when the caller's deadline fires
  * @returns Samples keyed by monitor id, null where missing
  */
-export function fetchLatestMetricsBulk(ids: number[], signal?: AbortSignal): Promise<{
+export function fetchLatestMetricsBulk(
+    ids: number[],
+    signal?: AbortSignal
+): Promise<{
     ok: true;
     count: number;
     samples: Record<number, { time: string; metrics: MetricsPayload; cpuPeak10m?: CPUPeak | null } | null>;
@@ -618,7 +708,10 @@ export interface MonitorLinks {
  * @param signal Cancels the request when the caller's deadline fires
  * @returns Raw and resolved links
  */
-export function fetchMonitorLinks(id: number, signal?: AbortSignal): Promise<{ ok: true; monitorId: number } & MonitorLinks> {
+export function fetchMonitorLinks(
+    id: number,
+    signal?: AbortSignal
+): Promise<{ ok: true; monitorId: number } & MonitorLinks> {
     return request(`/api/v1/monitors/${id}/links`, { signal });
 }
 
@@ -630,7 +723,10 @@ export function fetchMonitorLinks(id: number, signal?: AbortSignal): Promise<{ o
  * @param signal Cancels the request when the caller's deadline fires
  * @returns Links keyed by server id
  */
-export function fetchBulkMonitorLinks(ids: number[], signal?: AbortSignal): Promise<{
+export function fetchBulkMonitorLinks(
+    ids: number[],
+    signal?: AbortSignal
+): Promise<{
     ok: true;
     count: number;
     servers: Record<string, MonitorLinks>;
@@ -644,7 +740,10 @@ export function fetchBulkMonitorLinks(ids: number[], signal?: AbortSignal): Prom
  * @param linkedMonitorIds Desired linked monitor ids
  * @returns The server's links after the update
  */
-export function replaceMonitorLinks(id: number, linkedMonitorIds: number[]): Promise<{ ok: true; monitorId: number } & MonitorLinks> {
+export function replaceMonitorLinks(
+    id: number,
+    linkedMonitorIds: number[]
+): Promise<{ ok: true; monitorId: number } & MonitorLinks> {
     return request(`/api/v1/monitors/${id}/links`, {
         method: "PUT",
         body: JSON.stringify({ linkedMonitorIds }),
@@ -664,14 +763,24 @@ export interface ApiKeySummary {
 /**
  * List this token's sibling tokens (same user). Secrets are never returned.
  */
-export function fetchApiKeys(): Promise<{ ok: true; count: number; apiKeys: ApiKeySummary[]; availableScopes: string[] }> {
+export function fetchApiKeys(): Promise<{
+    ok: true;
+    count: number;
+    apiKeys: ApiKeySummary[];
+    availableScopes: string[];
+}> {
     return request("/api/v1/api-keys");
 }
 
 /**
  * Mint a token. The plaintext comes back exactly once.
  */
-export function createApiKey(payload: { name: string; scopes?: string | string[]; active?: boolean; expires?: string | null }): Promise<{
+export function createApiKey(payload: {
+    name: string;
+    scopes?: string | string[];
+    active?: boolean;
+    expires?: string | null;
+}): Promise<{
     ok: true;
     apiKey: ApiKeySummary;
     token: string;

@@ -20,11 +20,11 @@ removed.
 
 Three pieces, one origin:
 
-| Piece | Dir | What |
-|---|---|---|
-| Backend | `backend-rs/` | Rust service: the check engine, REST API, storage, alerts, and the built web app. |
-| Dashboard | `apps/dashboard/` | React/Vite app: operator dashboard, Superboard, public status pages. |
-| Host agent | `superboard/` | Single static Go binary pushed to each monitored server; sends telemetry, never accepts connections. |
+| Piece      | Dir               | What                                                                                                 |
+| ---------- | ----------------- | ---------------------------------------------------------------------------------------------------- |
+| Backend    | `backend-rs/`     | Rust service: the check engine, REST API, storage, alerts, and the built web app.                    |
+| Dashboard  | `apps/dashboard/` | React/Vite app: operator dashboard, Superboard, public status pages.                                 |
+| Host agent | `superboard/`     | Single static Go binary pushed to each monitored server; sends telemetry, never accepts connections. |
 
 `./dev.sh` runs all three locally, plus a mock fleet so the board has something
 to show without real machines. Production is one container: the backend serves
@@ -140,21 +140,21 @@ so they are token-gated rather than crawlable.
 
 Everything lives in [`docs/`](docs/README.md):
 
-| Document | Read it when |
-|---|---|
-| [Architecture](docs/architecture.md) | You want to know how the pieces fit and where data lives. |
-| [API](docs/api.md) | You are calling Flatline from a script or an agent. |
-| [Host agent](docs/agent.md) | You are installing, configuring or debugging `superboard`. |
-| [Superboard](docs/superboard.md) | You are changing or explaining the wall board. |
-| [Dashboard](docs/dashboard.md) | You are working on the operator UI. |
-| [Status pages](docs/status-pages.md) | You are publishing or theming a public page. |
-| [Deployment](docs/deployment.md) | You are shipping a release to a server. |
-| [Operations](docs/operations.md) | You are backing up, rotating a token or rolling back. |
-| [Development](docs/development.md) | You are running, testing or releasing the code. |
-| [Provisioning runbook](docs/provisioning.md) | You are adding hosts (also served by the API). |
-| [Roadmap](docs/roadmap.md) | You want to know what is deliberately not done. |
-| [History](docs/history.md) | You want to know what changed from upstream Uptime Kuma. |
-| [Screenshots](docs/screenshots/README.md) | You want the images and how they were made. |
+| Document                                     | Read it when                                               |
+| -------------------------------------------- | ---------------------------------------------------------- |
+| [Architecture](docs/architecture.md)         | You want to know how the pieces fit and where data lives.  |
+| [API](docs/api.md)                           | You are calling Flatline from a script or an agent.        |
+| [Host agent](docs/agent.md)                  | You are installing, configuring or debugging `superboard`. |
+| [Superboard](docs/superboard.md)             | You are changing or explaining the wall board.             |
+| [Dashboard](docs/dashboard.md)               | You are working on the operator UI.                        |
+| [Status pages](docs/status-pages.md)         | You are publishing or theming a public page.               |
+| [Deployment](docs/deployment.md)             | You are shipping a release to a server.                    |
+| [Operations](docs/operations.md)             | You are backing up, rotating a token or rolling back.      |
+| [Development](docs/development.md)           | You are running, testing or releasing the code.            |
+| [Provisioning runbook](docs/provisioning.md) | You are adding hosts (also served by the API).             |
+| [Roadmap](docs/roadmap.md)                   | You want to know what is deliberately not done.            |
+| [History](docs/history.md)                   | You want to know what changed from upstream Uptime Kuma.   |
+| [Screenshots](docs/screenshots/README.md)    | You want the images and how they were made.                |
 
 ## Credits and licence
 

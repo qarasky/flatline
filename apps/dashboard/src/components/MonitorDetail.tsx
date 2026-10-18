@@ -18,7 +18,11 @@ export interface HeartbeatEntry {
  * @param signal Cancels the request when the caller's deadline fires
  * @returns Heartbeats newest first, plus the total
  */
-async function fetchHeartbeats(id: number, limit = 120, signal?: AbortSignal): Promise<{ heartbeats: HeartbeatEntry[]; total: number }> {
+async function fetchHeartbeats(
+    id: number,
+    limit = 120,
+    signal?: AbortSignal
+): Promise<{ heartbeats: HeartbeatEntry[]; total: number }> {
     const token = window.localStorage.getItem("flatline.token");
     const base = (import.meta.env.VITE_FLATLINE_URL as string | undefined) ?? "";
     const response = await fetch(`${base}/api/v1/monitors/${id}/heartbeats?limit=${limit}`, {
@@ -73,7 +77,7 @@ function BeatBar({ beats }: { beats: HeartbeatEntry[] }) {
     }
 
     // Oldest first so the newest beat sits on the right, matching the trend.
-    const ordered = [ ...beats ].reverse();
+    const ordered = [...beats].reverse();
 
     return (
         <div className="flex items-end gap-[2px]" role="img" aria-label={`${beats.length} recent checks`}>
@@ -105,7 +109,7 @@ function BeatBar({ beats }: { beats: HeartbeatEntry[] }) {
  * looks like excellent latency.
  */
 function PingSparkline({ beats }: { beats: HeartbeatEntry[] }) {
-    const points = [ ...beats ].reverse().filter((b) => b.status === 1 && b.ping != null);
+    const points = [...beats].reverse().filter((b) => b.status === 1 && b.ping != null);
 
     if (points.length < 2) {
         return <p className="text-xs text-quiet">Not enough ping data yet.</p>;
@@ -138,12 +142,19 @@ function PingSparkline({ beats }: { beats: HeartbeatEntry[] }) {
                 aria-label={`Ping trend, latest ${Math.round(last)}ms`}
                 preserveAspectRatio="none"
             >
-                <path d={path} fill="none" stroke="var(--color-ok)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                <path
+                    d={path}
+                    fill="none"
+                    stroke="var(--color-ok)"
+                    strokeWidth="1.5"
+                    vectorEffect="non-scaling-stroke"
+                />
             </svg>
             <div className="text-xs">
                 <div className="tnum text-sm font-semibold">{Math.round(last)}ms</div>
                 <div className="text-quiet">
-                    <span className="tnum">{Math.round(min)}</span>–<span className="tnum">{Math.round(max)}</span>ms range
+                    <span className="tnum">{Math.round(min)}</span>–<span className="tnum">{Math.round(max)}</span>ms
+                    range
                 </div>
             </div>
         </div>
@@ -176,7 +187,7 @@ export function MonitorDetail({
 
         async function load(signal?: AbortSignal) {
             try {
-                const [ m, h ] = await Promise.all([ fetchMonitor(id, signal), fetchHeartbeats(id, 120, signal) ]);
+                const [m, h] = await Promise.all([fetchMonitor(id, signal), fetchHeartbeats(id, 120, signal)]);
                 if (cancelled) {
                     return;
                 }
@@ -194,21 +205,23 @@ export function MonitorDetail({
         const stop = watchLive({
             metrics: false,
             snapshot: load,
-            event: event => {
+            event: (event) => {
                 if (!cancelled && event.type === "heartbeat" && event.monitorId === id) {
-                    setMonitor(previous => previous ? { ...previous, ...event.patch } : previous);
+                    setMonitor((previous) => (previous ? { ...previous, ...event.patch } : previous));
                     void load();
                 }
             },
             error: () => {
-                if (!cancelled) { setError("Live updates disconnected; reconnecting."); }
+                if (!cancelled) {
+                    setError("Live updates disconnected; reconnecting.");
+                }
             },
         });
         return () => {
             cancelled = true;
             stop();
         };
-    }, [ id ]);
+    }, [id]);
 
     if (error && !monitor) {
         return (
@@ -249,9 +262,7 @@ export function MonitorDetail({
                 </div>
             </div>
 
-            {monitor.url ? (
-                <p className="mb-4 truncate text-xs text-quiet">{monitor.url}</p>
-            ) : null}
+            {monitor.url ? <p className="mb-4 truncate text-xs text-quiet">{monitor.url}</p> : null}
 
             <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
                 <div className="rounded-md border border-border bg-card p-3">
@@ -281,7 +292,10 @@ export function MonitorDetail({
             <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div className="rounded-md border border-border bg-card p-3">
                     <div className="mb-2 text-[11px] uppercase tracking-wide text-quiet">
-                        Recent checks <span className="tnum">({beats.length} of {total})</span>
+                        Recent checks{" "}
+                        <span className="tnum">
+                            ({beats.length} of {total})
+                        </span>
                     </div>
                     <BeatBar beats={beats} />
                 </div>
@@ -291,7 +305,8 @@ export function MonitorDetail({
                 </div>
             </div>
 
-            {monitor.validCert || (monitor.certExpiryDaysRemaining !== "" && monitor.certExpiryDaysRemaining != null) ? (
+            {monitor.validCert ||
+            (monitor.certExpiryDaysRemaining !== "" && monitor.certExpiryDaysRemaining != null) ? (
                 <div className="mb-4 rounded-md border border-border bg-card p-3 text-xs">
                     <span className="mr-3 text-quiet">Certificate</span>
                     {monitor.validCert ? (

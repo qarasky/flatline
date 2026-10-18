@@ -74,15 +74,28 @@ export interface UpdatesStatus {
  * threshold the line stays quiet (grey); a real backlog is the warning
  * (yellow). Fully updated is green, security dark red, reboot flashing red.
  */
-export function updatesStatus(updates: { total?: number; security?: number; rebootRequired?: boolean } | undefined): UpdatesStatus | null {
-    if (!updates) { return null; }
+export function updatesStatus(
+    updates: { total?: number; security?: number; rebootRequired?: boolean } | undefined
+): UpdatesStatus | null {
+    if (!updates) {
+        return null;
+    }
     const { total, security, rebootRequired } = updates;
-    if (!Number.isFinite(total) || (total as number) < 0) { return null; }
+    if (!Number.isFinite(total) || (total as number) < 0) {
+        return null;
+    }
     if (rebootRequired === true) {
-        const detail = Number.isFinite(security) && (security as number) > 0
-            ? `Security Updates: ${security} · reboot required`
-            : (total as number) > 0 ? `Updates: ${total} · reboot required` : "Reboot required";
-        return { label: detail, tone: "reboot", title: "A reboot is required to finish applying updates — patch, then restart the host" };
+        const detail =
+            Number.isFinite(security) && (security as number) > 0
+                ? `Security Updates: ${security} · reboot required`
+                : (total as number) > 0
+                  ? `Updates: ${total} · reboot required`
+                  : "Reboot required";
+        return {
+            label: detail,
+            tone: "reboot",
+            title: "A reboot is required to finish applying updates — patch, then restart the host",
+        };
     }
     if (Number.isFinite(security) && (security as number) > 0) {
         return {
@@ -95,15 +108,25 @@ export function updatesStatus(updates: { total?: number; security?: number; rebo
         return { label: "No updates", tone: "ok", title: "System is fully updated" };
     }
     if ((total as number) >= UPDATES_WARN_AT) {
-        return { label: `Updates: ${total}`, tone: "warn", title: `${total} pending updates (${UPDATES_WARN_AT} or more)` };
+        return {
+            label: `Updates: ${total}`,
+            tone: "warn",
+            title: `${total} pending updates (${UPDATES_WARN_AT} or more)`,
+        };
     }
     return { label: `Updates: ${total}`, tone: "quiet", title: `${total} pending updates` };
 }
 
 export function containerTone(container: Container): "up" | "stopped" | "bad" | "pending" {
-    if (containerIssue(container)) { return "bad"; }
-    if (container.state === "exited" || container.state === "removed") { return "stopped"; }
-    if (container.state === "running" && (!container.health || container.health === "healthy")) { return "up"; }
+    if (containerIssue(container)) {
+        return "bad";
+    }
+    if (container.state === "exited" || container.state === "removed") {
+        return "stopped";
+    }
+    if (container.state === "running" && (!container.health || container.health === "healthy")) {
+        return "up";
+    }
     return "pending";
 }
 
@@ -151,19 +174,27 @@ export function containerRows(containers: Container[], limit = CONTAINER_ROWS): 
 // Stopped containers may be intentional. Only explicit malfunction states
 // count as issues until expected-running configuration exists.
 export function containerIssue(container: Container): boolean {
-    return container.state === "dead" || container.state === "restarting" ||
-        (container.state === "running" && container.health === "unhealthy");
+    return (
+        container.state === "dead" ||
+        container.state === "restarting" ||
+        (container.state === "running" && container.health === "unhealthy")
+    );
 }
 
 /**
  * Format a byte count compactly. Missing or non-finite reads as "—".
  */
 export function formatBytes(bytes: number | undefined): string {
-    if (bytes === undefined || !Number.isFinite(bytes)) { return "—"; }
+    if (bytes === undefined || !Number.isFinite(bytes)) {
+        return "—";
+    }
     const units = ["B", "KB", "MB", "GB", "TB", "PB"];
     let value = bytes;
     let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+    }
     return `${value.toFixed(value >= 100 || unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
@@ -180,12 +211,16 @@ export function formatBytes(bytes: number | undefined): string {
 export function formatBytesPair(used: number | undefined, total: number | undefined): string | null {
     const u = formatBytes(used);
     const t = formatBytes(total);
-    if (u === "—" || t === "—") { return null; }
+    if (u === "—" || t === "—") {
+        return null;
+    }
     const uSplit = u.lastIndexOf(" ");
     const tSplit = t.lastIndexOf(" ");
     const uUnit = u.slice(uSplit + 1);
     const tUnit = t.slice(tSplit + 1);
-    if (uUnit !== tUnit) { return `${u} / ${t}`; }
+    if (uUnit !== tUnit) {
+        return `${u} / ${t}`;
+    }
     const bare = (value: string) => (value.endsWith(".0") ? value.slice(0, -2) : value);
     return `${bare(u.slice(0, uSplit))} / ${bare(t.slice(0, tSplit))} (${uUnit})`;
 }
@@ -206,11 +241,16 @@ export function formatRate(bytesPerSecond: number | undefined): string | null {
  * when absent. Full formatting lives in the tooltip.
  */
 export function formatBytesCompact(bytes: number | undefined): string | null {
-    if (bytes === undefined || !Number.isFinite(bytes) || bytes < 0) { return null; }
+    if (bytes === undefined || !Number.isFinite(bytes) || bytes < 0) {
+        return null;
+    }
     const units = ["B", "K", "M", "G", "T", "P"];
     let value = bytes;
     let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+    }
     const text = value >= 100 || unit === 0 ? `${Math.round(value)}` : value.toFixed(1);
     return `${text}${units[unit]}`;
 }
@@ -227,23 +267,34 @@ type ContainerStats = NonNullable<NonNullable<MetricsPayload["docker"]>[number][
  * a fake zero.
  */
 export function containerStatsSummary(stats: ContainerStats | undefined): { label: string; title: string } | null {
-    if (!stats) { return null; }
-    const cpu = Number.isFinite(stats.cpuPercent) ? stats.cpuPercent as number : null;
-    const mem = stats.memUsed !== undefined && Number.isFinite(stats.memUsed) ? stats.memUsed as number : null;
-    if (cpu === null && mem === null) { return null; }
+    if (!stats) {
+        return null;
+    }
+    const cpu = Number.isFinite(stats.cpuPercent) ? (stats.cpuPercent as number) : null;
+    const mem = stats.memUsed !== undefined && Number.isFinite(stats.memUsed) ? (stats.memUsed as number) : null;
+    if (cpu === null && mem === null) {
+        return null;
+    }
 
     const cpuText = cpu === null ? null : cpu === 0 ? "0%" : cpu < 10 ? `${cpu.toFixed(1)}%` : `${Math.round(cpu)}%`;
     const memText = mem === null ? null : formatBytesCompact(mem);
-    const label = [ cpuText, memText ].filter(Boolean).join(" · ");
+    const label = [cpuText, memText].filter(Boolean).join(" · ");
 
     const titleParts: string[] = [];
-    if (cpu !== null) { titleParts.push(`CPU ${cpu.toFixed(1)}%`); }
+    if (cpu !== null) {
+        titleParts.push(`CPU ${cpu.toFixed(1)}%`);
+    }
     if (mem !== null) {
-        const limit = stats.memLimit !== undefined && Number.isFinite(stats.memLimit) && stats.memLimit > 0 ? stats.memLimit : null;
+        const limit =
+            stats.memLimit !== undefined && Number.isFinite(stats.memLimit) && stats.memLimit > 0
+                ? stats.memLimit
+                : null;
         const percent = Number.isFinite(stats.memPercent) ? Math.round(stats.memPercent as number) : null;
-        titleParts.push(limit
-            ? `memory ${formatBytes(mem)} of ${formatBytes(limit)}${percent !== null ? ` (${percent}%)` : ""}`
-            : `memory ${formatBytes(mem)}`);
+        titleParts.push(
+            limit
+                ? `memory ${formatBytes(mem)} of ${formatBytes(limit)}${percent !== null ? ` (${percent}%)` : ""}`
+                : `memory ${formatBytes(mem)}`
+        );
     }
     return { label, title: titleParts.join(" · ") };
 }
@@ -253,10 +304,18 @@ export function containerStatsSummary(stats: ContainerStats | undefined): { labe
  * value is absent or not finite.
  */
 export function formatDuration(seconds: number | undefined): string | null {
-    if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) { return null; }
-    if (seconds < 60) { return `${Math.floor(seconds)}s`; }
-    if (seconds < 3600) { return `${Math.floor(seconds / 60)}m`; }
-    if (seconds < 86400) { return `${Math.floor(seconds / 3600)}h`; }
+    if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) {
+        return null;
+    }
+    if (seconds < 60) {
+        return `${Math.floor(seconds)}s`;
+    }
+    if (seconds < 3600) {
+        return `${Math.floor(seconds / 60)}m`;
+    }
+    if (seconds < 86400) {
+        return `${Math.floor(seconds / 3600)}h`;
+    }
     return `${Math.floor(seconds / 86400)}d`;
 }
 
@@ -278,7 +337,7 @@ export interface AgentWarningCounts {
     failedPushes: number;
     samplesDropped: number;
     /** Outstanding per-collector detail, docker excluded. */
-    collectors: [ string, number ][];
+    collectors: [string, number][];
     /** Everything the card prints, for the menu's "Clear (N)". */
     total: number;
 }
@@ -294,21 +353,29 @@ export interface AgentWarningCounts {
  * restarts, so this subtraction can never hide a new failure.
  */
 export function agentWarningCounts(agent: AgentMetrics | undefined, acks: AgentAcks = {}): AgentWarningCounts {
-    const empty: AgentWarningCounts = { collectorErrors: 0, failedPushes: 0, samplesDropped: 0, collectors: [], total: 0 };
-    if (!agent) { return empty; }
+    const empty: AgentWarningCounts = {
+        collectorErrors: 0,
+        failedPushes: 0,
+        samplesDropped: 0,
+        collectors: [],
+        total: 0,
+    };
+    if (!agent) {
+        return empty;
+    }
 
-    const collectors: [ string, number ][] = Object.entries(agent.collectorErrors ?? {})
-        .filter(([ name, count ]) => name !== "docker" && Number.isFinite(count))
-        .map(([ name, count ]): [ string, number ] => [
+    const collectors: [string, number][] = Object.entries(agent.collectorErrors ?? {})
+        .filter(([name, count]) => name !== "docker" && Number.isFinite(count))
+        .map(([name, count]): [string, number] => [
             name,
             Math.max(0, (count as number) - Math.max(0, acks.collectorErrorsAck?.[name] ?? 0)),
         ])
-        .filter(([ , count ]) => count > 0);
-    const collectorErrors = collectors.reduce((sum, [ , count ]) => sum + count, 0);
+        .filter(([, count]) => count > 0);
+    const collectorErrors = collectors.reduce((sum, [, count]) => sum + count, 0);
 
-    const reported = Number.isFinite(agent.failedPushes) ? agent.failedPushes as number : 0;
+    const reported = Number.isFinite(agent.failedPushes) ? (agent.failedPushes as number) : 0;
     const failedPushes = Math.max(0, reported - Math.max(0, acks.pushFailuresAck ?? 0));
-    const dropped = Number.isFinite(agent.samplesDropped) ? agent.samplesDropped as number : 0;
+    const dropped = Number.isFinite(agent.samplesDropped) ? (agent.samplesDropped as number) : 0;
     const samplesDropped = Math.max(0, dropped - Math.max(0, acks.samplesDroppedAck ?? 0));
 
     return {
@@ -333,14 +400,16 @@ export interface AgentWarning {
  * already subtracted; the title carries the detail needed to check journald.
  */
 export function agentWarnings(agent: AgentMetrics | undefined, acks: AgentAcks = {}): AgentWarning | null {
-    if (!agent) { return null; }
+    if (!agent) {
+        return null;
+    }
 
     const counts = agentWarningCounts(agent, acks);
     const parts: string[] = [];
     const details: string[] = [];
     if (counts.collectorErrors > 0) {
         parts.push(`${counts.collectorErrors} collector error${counts.collectorErrors === 1 ? "" : "s"}`);
-        details.push(counts.collectors.map(([ name, count ]) => `${name} ${count}`).join(", "));
+        details.push(counts.collectors.map(([name, count]) => `${name} ${count}`).join(", "));
     }
     if (counts.failedPushes > 0) {
         parts.push(`${counts.failedPushes} push failure${counts.failedPushes === 1 ? "" : "s"}`);
@@ -348,14 +417,20 @@ export function agentWarnings(agent: AgentMetrics | undefined, acks: AgentAcks =
     if (counts.samplesDropped > 0) {
         parts.push(`${counts.samplesDropped} sample${counts.samplesDropped === 1 ? "" : "s"} dropped`);
     }
-    if (!parts.length) { return null; }
+    if (!parts.length) {
+        return null;
+    }
 
-    const title: string[] = [ `Agent ${agent.version ?? "unknown"}` ];
+    const title: string[] = [`Agent ${agent.version ?? "unknown"}`];
     if (agent.uptime !== undefined && Number.isFinite(agent.uptime)) {
         title.push(`running ${formatDuration(agent.uptime) ?? "0s"}`);
     }
-    if (details.length) { title.push(`errors: ${details.join("; ")}`); }
-    if (agent.lastError) { title.push(`last push error: ${agent.lastError}`); }
+    if (details.length) {
+        title.push(`errors: ${details.join("; ")}`);
+    }
+    if (agent.lastError) {
+        title.push(`last push error: ${agent.lastError}`);
+    }
 
     return { text: `Agent: ${parts.join(" · ")}`, title: title.join(" · ") };
 }
@@ -370,19 +445,31 @@ type SmartInfo = NonNullable<MetricsPayload["smart"]>;
  * fine" is not news. The tooltip always carries the per-disk detail when a
  * warning is shown.
  */
-export function smartWarning(smart: SmartInfo | undefined): { text: string; title: string; tone: "warn" | "bad" } | null {
-    if (!smart?.available || !smart.disks?.length) { return null; }
+export function smartWarning(
+    smart: SmartInfo | undefined
+): { text: string; title: string; tone: "warn" | "bad" } | null {
+    if (!smart?.available || !smart.disks?.length) {
+        return null;
+    }
 
-    const title = smart.disks.map((disk) => {
-        const bits = [ disk.health ?? "health unknown" ];
-        if (Number.isFinite(disk.tempC)) { bits.push(`${Math.round(disk.tempC as number)}°C`); }
-        if (Number.isFinite(disk.wearPercent)) { bits.push(`wear ${Math.round(disk.wearPercent as number)}%`); }
-        if (Number.isFinite(disk.reallocatedSectors) && (disk.reallocatedSectors as number) > 0) {
-            bits.push(`${disk.reallocatedSectors} reallocated`);
-        }
-        if (disk.powerOnHours) { bits.push(`${Math.round(disk.powerOnHours / 24)}d on`); }
-        return `${disk.device ?? "disk"}: ${bits.join(", ")}`;
-    }).join(" · ");
+    const title = smart.disks
+        .map((disk) => {
+            const bits = [disk.health ?? "health unknown"];
+            if (Number.isFinite(disk.tempC)) {
+                bits.push(`${Math.round(disk.tempC as number)}°C`);
+            }
+            if (Number.isFinite(disk.wearPercent)) {
+                bits.push(`wear ${Math.round(disk.wearPercent as number)}%`);
+            }
+            if (Number.isFinite(disk.reallocatedSectors) && (disk.reallocatedSectors as number) > 0) {
+                bits.push(`${disk.reallocatedSectors} reallocated`);
+            }
+            if (disk.powerOnHours) {
+                bits.push(`${Math.round(disk.powerOnHours / 24)}d on`);
+            }
+            return `${disk.device ?? "disk"}: ${bits.join(", ")}`;
+        })
+        .join(" · ");
 
     const failing = smart.disks.filter((disk) => disk.health === "failed");
     if (failing.length) {
@@ -421,8 +508,13 @@ export function cleanMonitorName(input: string): string | null {
  * right-click near the wall's edge never pushes the menu off-screen.
  */
 export function clampMenuPosition(
-    x: number, y: number, menuWidth: number, menuHeight: number,
-    viewportWidth: number, viewportHeight: number, margin = 8,
+    x: number,
+    y: number,
+    menuWidth: number,
+    menuHeight: number,
+    viewportWidth: number,
+    viewportHeight: number,
+    margin = 8
 ): { x: number; y: number } {
     return {
         x: Math.max(margin, Math.min(x, viewportWidth - menuWidth - margin)),
@@ -435,7 +527,11 @@ export function clampMenuPosition(
  * become one dash. "Aiel Qorgan" and "aiel-qorgan" address the same board.
  */
 export function groupSlug(name: string): string {
-    return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return name
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
 }
 
 export interface BoardRoute {
@@ -533,15 +629,23 @@ export function matchGroups(monitors: MonitorSummary[], filter: string): Monitor
 }
 
 export function fleetAttention(metrics: MetricsPayload, time: string, interval: number, now = Date.now()) {
-    const freshnessWindow = metrics.sampleInterval && Number.isFinite(metrics.sampleInterval) && metrics.sampleInterval > 0
-        ? Math.max(5, metrics.sampleInterval * 3) : Math.max(60, interval);
+    const freshnessWindow =
+        metrics.sampleInterval && Number.isFinite(metrics.sampleInterval) && metrics.sampleInterval > 0
+            ? Math.max(5, metrics.sampleInterval * 3)
+            : Math.max(60, interval);
     const stale = sampleAgeMs(time, now) > freshnessWindow * 1000;
-    const containers = [...(metrics.docker ?? [])].sort((a, b) =>
-        Number(containerIssue(b)) - Number(containerIssue(a)) || (a.name ?? "").localeCompare(b.name ?? ""));
+    const containers = [...(metrics.docker ?? [])].sort(
+        (a, b) => Number(containerIssue(b)) - Number(containerIssue(a)) || (a.name ?? "").localeCompare(b.name ?? "")
+    );
     const issues = containers.filter(containerIssue).length + Number(Boolean(metrics.dockerError));
-    const hot = [metrics.cpu?.percent, metrics.mem?.percent, ...(metrics.disk ?? []).map(d => d.percent),
-        ...(metrics.gpu?.gpus ?? [metrics.gpu]).flatMap(g => [g?.util,
-            g?.memTotal && g.memUsed !== undefined ? g.memUsed / g.memTotal * 100 : undefined])]
-        .some(value => value !== undefined && Number.isFinite(value) && value >= 90);
+    const hot = [
+        metrics.cpu?.percent,
+        metrics.mem?.percent,
+        ...(metrics.disk ?? []).map((d) => d.percent),
+        ...(metrics.gpu?.gpus ?? [metrics.gpu]).flatMap((g) => [
+            g?.util,
+            g?.memTotal && g.memUsed !== undefined ? (g.memUsed / g.memTotal) * 100 : undefined,
+        ]),
+    ].some((value) => value !== undefined && Number.isFinite(value) && value >= 90);
     return { stale, containers, issues, hot };
 }

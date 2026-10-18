@@ -1,6 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentWarningCounts, agentWarnings, boardRouteFrom, clampMenuPosition, cleanMonitorName, containerIssue, containerStatsSummary, fleetAttention, formatBytes, formatBytesCompact, formatBytesPair, formatDuration, formatRate, groupSlug, matchGroups, percentage, sampleAgeMs, smartWarning, statusSlugFromPath, updatesStatus, containerAgeMs } from "../src/lib/fleet-presentation.ts";
+import {
+    agentWarningCounts,
+    agentWarnings,
+    boardRouteFrom,
+    clampMenuPosition,
+    cleanMonitorName,
+    containerIssue,
+    containerStatsSummary,
+    fleetAttention,
+    formatBytes,
+    formatBytesCompact,
+    formatBytesPair,
+    formatDuration,
+    formatRate,
+    groupSlug,
+    matchGroups,
+    percentage,
+    sampleAgeMs,
+    smartWarning,
+    statusSlugFromPath,
+    updatesStatus,
+    containerAgeMs,
+} from "../src/lib/fleet-presentation.ts";
 
 const now = Date.parse("2026-10-09T12:00:00Z");
 test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", () => {
@@ -11,20 +33,28 @@ test("freshness accepts SQL, UTC and offset timestamps; invalid data is stale", 
     assert.equal(fleetAttention({}, "bad", 180, now).stale, true);
     assert.equal(fleetAttention({}, "2026-10-09 11:58:00", 180, now).stale, false);
     assert.equal(fleetAttention({}, "2026-10-09 11:56:59", 180, now).stale, true);
-    assert.equal(fleetAttention({sampleInterval:1}, "2026-10-09 11:59:54", 180, now).stale, true);
-    assert.equal(fleetAttention({sampleInterval:1}, "2026-10-09 11:59:56", 180, now).stale, false);
+    assert.equal(fleetAttention({ sampleInterval: 1 }, "2026-10-09 11:59:54", 180, now).stale, true);
+    assert.equal(fleetAttention({ sampleInterval: 1 }, "2026-10-09 11:59:56", 180, now).stale, false);
 });
 test("intentional stopped states and starting health are not failures", () => {
-    for (const c of [{state:"exited", health:"unhealthy"}, {state:"created"}, {state:"paused"}, {state:"running", health:"starting"}]) {
+    for (const c of [
+        { state: "exited", health: "unhealthy" },
+        { state: "created" },
+        { state: "paused" },
+        { state: "running", health: "starting" },
+    ]) {
         assert.equal(containerIssue(c), false);
     }
-    for (const c of [{state:"running", health:"unhealthy"}, {state:"dead"}, {state:"restarting"}]) {
+    for (const c of [{ state: "running", health: "unhealthy" }, { state: "dead" }, { state: "restarting" }]) {
         assert.equal(containerIssue(c), true);
     }
 });
 test("issues sort first without mutating the payload; collection failures are visible", () => {
-    const docker = [{name:"a", state:"exited"}, {name:"b", state:"restarting"}];
-    const state = fleetAttention({docker, dockerError:"socket inaccessible"}, "2026-10-09T12:00:00Z", 180, now);
+    const docker = [
+        { name: "a", state: "exited" },
+        { name: "b", state: "restarting" },
+    ];
+    const state = fleetAttention({ docker, dockerError: "socket inaccessible" }, "2026-10-09T12:00:00Z", 180, now);
     assert.equal(state.issues, 2);
     assert.equal(state.containers[0].name, "b");
     assert.equal(docker[0].name, "a");
@@ -51,7 +81,10 @@ test("a required reboot outranks the counts and names what is pending", () => {
     assert.deepEqual(updatesStatus({ total: 0, rebootRequired: true })?.tone, "reboot");
     assert.equal(updatesStatus({ total: 0, rebootRequired: true })?.label, "Reboot required");
     assert.equal(updatesStatus({ total: 12, rebootRequired: true })?.label, "Updates: 12 · reboot required");
-    assert.equal(updatesStatus({ total: 80, security: 8, rebootRequired: true })?.label, "Security Updates: 8 · reboot required");
+    assert.equal(
+        updatesStatus({ total: 80, security: 8, rebootRequired: true })?.label,
+        "Security Updates: 8 · reboot required"
+    );
     assert.equal(updatesStatus({ total: 80, security: 8, rebootRequired: true })?.tone, "reboot");
     // An explicit false is just the ordinary mapping, not a reboot.
     assert.equal(updatesStatus({ total: 12, rebootRequired: false })?.tone, "quiet");
@@ -77,10 +110,22 @@ test("group slugs match names case-insensitively; servers can never match", () =
         { id: 3, name: "work", type: "push" },
         { id: 4, name: "db", type: "push", parent: 1 },
     ];
-    assert.deepEqual(matchGroups(roster, "work").map(g => g.id), [1]);
-    assert.deepEqual(matchGroups(roster, "PERSONAL").map(g => g.id), [2]);
-    assert.deepEqual(matchGroups(roster, "work,personal").map(g => g.id), [1, 2]);
-    assert.deepEqual(matchGroups(roster, "work, work").map(g => g.id), [1]);
+    assert.deepEqual(
+        matchGroups(roster, "work").map((g) => g.id),
+        [1]
+    );
+    assert.deepEqual(
+        matchGroups(roster, "PERSONAL").map((g) => g.id),
+        [2]
+    );
+    assert.deepEqual(
+        matchGroups(roster, "work,personal").map((g) => g.id),
+        [1, 2]
+    );
+    assert.deepEqual(
+        matchGroups(roster, "work, work").map((g) => g.id),
+        [1]
+    );
     assert.deepEqual(matchGroups(roster, "nope"), []);
     assert.deepEqual(matchGroups(roster, ""), []);
 });
@@ -98,8 +143,12 @@ test("agent warnings stay quiet when clean and exclude docker (shown elsewhere)"
     // Docker failures already render as the container-section error line.
     assert.equal(agentWarnings({ collectorErrors: { docker: 8640 } }), null);
     const warn = agentWarnings({
-        version: "1.4.0", uptime: 7200, collectorErrors: { gpu: 3, updates: 2 },
-        failedPushes: 2, samplesDropped: 1, lastError: "push: connection refused",
+        version: "1.4.0",
+        uptime: 7200,
+        collectorErrors: { gpu: 3, updates: 2 },
+        failedPushes: 2,
+        samplesDropped: 1,
+        lastError: "push: connection refused",
     });
     assert.equal(warn?.text, "Agent: 5 collector errors · 2 push failures · 1 sample dropped");
     assert.match(warn.title, /Agent 1\.4\.0/);
@@ -110,14 +159,14 @@ test("agent warnings stay quiet when clean and exclude docker (shown elsewhere)"
 });
 test("acknowledged agent counters stay cleared and only new ones show", () => {
     const agent = {
-        version: "1.7.0", uptime: 600, failedPushes: 7, samplesDropped: 4,
+        version: "1.7.0",
+        uptime: 600,
+        failedPushes: 7,
+        samplesDropped: 4,
         collectorErrors: { gpu: 5, updates: 2, docker: 99 },
     };
     // Nothing acknowledged yet: the whole line shows, docker excluded.
-    assert.equal(
-        agentWarnings(agent)?.text,
-        "Agent: 7 collector errors · 7 push failures · 4 samples dropped",
-    );
+    assert.equal(agentWarnings(agent)?.text, "Agent: 7 collector errors · 7 push failures · 4 samples dropped");
 
     // The operator clears everything the card was showing.
     const acks = { pushFailuresAck: 7, samplesDroppedAck: 4, collectorErrorsAck: { gpu: 5, updates: 2 } };
@@ -127,22 +176,21 @@ test("acknowledged agent counters stay cleared and only new ones show", () => {
     // Only failures past the acknowledged value are news again, per counter.
     const grown = { ...agent, failedPushes: 9, samplesDropped: 5, collectorErrors: { gpu: 8, updates: 2, docker: 99 } };
     const counts = agentWarningCounts(grown, acks);
-    assert.deepEqual(counts.collectors, [ [ "gpu", 3 ] ]);
+    assert.deepEqual(counts.collectors, [["gpu", 3]]);
     assert.equal(counts.collectorErrors, 3);
     assert.equal(counts.failedPushes, 2);
     assert.equal(counts.samplesDropped, 1);
     assert.equal(counts.total, 6);
-    assert.equal(
-        agentWarnings(grown, acks)?.text,
-        "Agent: 3 collector errors · 2 push failures · 1 sample dropped",
-    );
+    assert.equal(agentWarnings(grown, acks)?.text, "Agent: 3 collector errors · 2 push failures · 1 sample dropped");
 
     // A stale ack from before a restart can never drive a count below zero.
     const stale = agentWarningCounts({ collectorErrors: { gpu: 1 } }, { collectorErrorsAck: { gpu: 5 } });
     assert.deepEqual(stale, { collectorErrors: 0, failedPushes: 0, samplesDropped: 0, collectors: [], total: 0 });
 });
 test("durations format compactly for cards and tooltips", () => {
-    for (const v of [undefined, NaN, 0, -5]) { assert.equal(formatDuration(v), null); }
+    for (const v of [undefined, NaN, 0, -5]) {
+        assert.equal(formatDuration(v), null);
+    }
     assert.equal(formatDuration(45), "45s");
     assert.equal(formatDuration(600), "10m");
     assert.equal(formatDuration(7200), "2h");
@@ -174,7 +222,12 @@ test("container stats stay honest: no stats means no label, zero CPU is a readin
     assert.equal(formatBytesCompact(1.5 * 1024 ** 3), "1.5G");
     assert.equal(formatBytesCompact(undefined), null);
 
-    const idle = containerStatsSummary({ cpuPercent: 0, memUsed: 256 * 1024 * 1024, memLimit: 1024 ** 3, memPercent: 25 });
+    const idle = containerStatsSummary({
+        cpuPercent: 0,
+        memUsed: 256 * 1024 * 1024,
+        memLimit: 1024 ** 3,
+        memPercent: 25,
+    });
     assert.equal(idle?.label, "0% · 256M", "an idle container shows 0%, not nothing");
     assert.match(idle.title, /CPU 0\.0%/);
     assert.match(idle.title, /memory 256 MB of 1\.0 GB \(25%\)/);
@@ -191,31 +244,42 @@ test("smart warnings speak only for real trouble", () => {
     assert.equal(smartWarning(undefined), null);
     assert.equal(smartWarning({ available: false }), null);
     assert.equal(smartWarning({ available: true, disks: [] }), null);
-    assert.equal(smartWarning({ available: true, disks: [ { device: "sda", health: "passed" } ] }), null);
+    assert.equal(smartWarning({ available: true, disks: [{ device: "sda", health: "passed" }] }), null);
 
-    const failing = smartWarning({ available: true, disks: [
-        { device: "sda", health: "passed", tempC: 38 },
-        { device: "sdb", health: "failed", reallocatedSectors: 512, powerOnHours: 12345 },
-    ] });
+    const failing = smartWarning({
+        available: true,
+        disks: [
+            { device: "sda", health: "passed", tempC: 38 },
+            { device: "sdb", health: "failed", reallocatedSectors: 512, powerOnHours: 12345 },
+        ],
+    });
     assert.equal(failing?.tone, "bad");
     assert.equal(failing?.text, "SMART sdb: failing");
     assert.match(failing.title, /sda: passed, 38°C/);
     assert.match(failing.title, /sdb: failed, 512 reallocated, 514d on/);
 
-    const many = smartWarning({ available: true, disks: [
-        { device: "sda", health: "failed" }, { device: "sdb", health: "failed" },
-    ] });
+    const many = smartWarning({
+        available: true,
+        disks: [
+            { device: "sda", health: "failed" },
+            { device: "sdb", health: "failed" },
+        ],
+    });
     assert.equal(many?.text, "SMART: 2 disks failing");
 
-    const worn = smartWarning({ available: true, disks: [ { device: "nvme0n1", health: "passed", wearPercent: 85 } ] });
+    const worn = smartWarning({ available: true, disks: [{ device: "nvme0n1", health: "passed", wearPercent: 85 }] });
     assert.equal(worn?.tone, "warn");
     assert.equal(worn?.text, "SSD wear 85% (nvme0n1)");
-    assert.equal(smartWarning({ available: true, disks: [ { device: "nvme0n1", wearPercent: 79 } ] }), null);
+    assert.equal(smartWarning({ available: true, disks: [{ device: "nvme0n1", wearPercent: 79 }] }), null);
 
     // Failing outranks wear when both exist.
-    const both = smartWarning({ available: true, disks: [
-        { device: "sda", health: "failed" }, { device: "nvme0n1", wearPercent: 99 },
-    ] });
+    const both = smartWarning({
+        available: true,
+        disks: [
+            { device: "sda", health: "failed" },
+            { device: "nvme0n1", wearPercent: 99 },
+        ],
+    });
     assert.equal(both?.tone, "bad");
 });
 test("status routes parse slugs; other paths are not status routes", () => {
@@ -228,9 +292,17 @@ test("status routes parse slugs; other paths are not status routes", () => {
     assert.equal(statusSlugFromPath("/superboard/kiosk"), null);
 });
 test("high usage includes memory, disks and legacy GPU VRAM; unknown numbers stay unknown", () => {
-    assert.equal(fleetAttention({gpu:{available:true, memTotal:100, memUsed:95}}, "2026-10-09T12:00:00Z", 180, now).hot, true);
-    assert.equal(fleetAttention({cpu:{percent:NaN}, mem:{percent:3}}, "2026-10-09T12:00:00Z", 180, now).hot, false);
-    for (const v of [undefined, NaN, Infinity]) { assert.equal(percentage(v), "—"); }
+    assert.equal(
+        fleetAttention({ gpu: { available: true, memTotal: 100, memUsed: 95 } }, "2026-10-09T12:00:00Z", 180, now).hot,
+        true
+    );
+    assert.equal(
+        fleetAttention({ cpu: { percent: NaN }, mem: { percent: 3 } }, "2026-10-09T12:00:00Z", 180, now).hot,
+        false
+    );
+    for (const v of [undefined, NaN, Infinity]) {
+        assert.equal(percentage(v), "—");
+    }
     assert.equal(percentage(0.1), "0.1%");
     assert.equal(percentage(110), "100%");
 });

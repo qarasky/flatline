@@ -5,11 +5,11 @@ fleet** rather than a production installation: the hosts, websites, container
 names and measurements all come from `superboard/mockagent`. Nothing here is
 hand-drawn, and no production database is opened.
 
-| Image | Shows |
-|---|---|
+| Image            | Shows                                                                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `superboard.png` | The wall board: eight demo servers, per-core CPU squares, RAM/Disk rows, container rows, linked-website chips, update states and agent warnings. |
-| `dashboard.png` | The operator dashboard: summary bar and the grouped monitor table, with one Down row. |
-| `history.png` | The server history dialog on the 1h range: CPU, RAM, GPU and VRAM with mean, peak and p90/p95/p99. |
+| `dashboard.png`  | The operator dashboard: summary bar and the grouped monitor table, with one Down row.                                                            |
+| `history.png`    | The server history dialog on the 1h range: CPU, RAM, GPU and VRAM with mean, peak and p90/p95/p99.                                               |
 
 ## Regenerating
 

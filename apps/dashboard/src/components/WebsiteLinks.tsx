@@ -1,23 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { SyntheticEvent } from "react";
-import {
-    ApiError,
-    fetchAllMonitors,
-    fetchMonitorLinks,
-    replaceMonitorLinks,
-    type MonitorSummary,
-} from "@/lib/api";
+import { ApiError, fetchAllMonitors, fetchMonitorLinks, replaceMonitorLinks, type MonitorSummary } from "@/lib/api";
 import { buildLinkCandidates, linkTone, type LinkCandidate } from "@/lib/links";
 
 /** Colored dot for a monitor status, shared with the card chips. */
 export function LinkStatusDot({ status }: { status: number }) {
-    return (
-        <span
-            aria-hidden="true"
-            className="fleet-link-dot"
-            data-tone={linkTone(status)}
-        />
-    );
+    return <span aria-hidden="true" className="fleet-link-dot" data-tone={linkTone(status)} />;
 }
 
 /**
@@ -45,7 +33,7 @@ export function LinkPicker({
             return candidates;
         }
         return candidates.filter((candidate) => candidate.label.toLowerCase().includes(needle));
-    }, [ candidates, query ]);
+    }, [candidates, query]);
 
     return (
         <div>
@@ -58,7 +46,11 @@ export function LinkPicker({
                 autoComplete="off"
                 className="mb-2 h-9 w-full rounded-md border border-input bg-surface px-2 text-sm"
             />
-            <div className="max-h-60 overflow-y-auto rounded-md border border-border" role="group" aria-label="Websites and groups">
+            <div
+                className="max-h-60 overflow-y-auto rounded-md border border-border"
+                role="group"
+                aria-label="Websites and groups"
+            >
                 {filtered.length === 0 ? (
                     <p className="px-3 py-3 text-xs text-quiet">No matches.</p>
                 ) : (
@@ -105,7 +97,7 @@ export function WebsiteLinkDialog({ server, onClose }: { server: MonitorSummary;
 
         async function load() {
             try {
-                const [ monitors, links ] = await Promise.all([ fetchAllMonitors(), fetchMonitorLinks(server.id) ]);
+                const [monitors, links] = await Promise.all([fetchAllMonitors(), fetchMonitorLinks(server.id)]);
                 if (cancelled) {
                     return;
                 }
@@ -119,8 +111,10 @@ export function WebsiteLinkDialog({ server, onClose }: { server: MonitorSummary;
         }
 
         void load();
-        return () => { cancelled = true; };
-    }, [ server.id ]);
+        return () => {
+            cancelled = true;
+        };
+    }, [server.id]);
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
@@ -130,7 +124,7 @@ export function WebsiteLinkDialog({ server, onClose }: { server: MonitorSummary;
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [ onClose ]);
+    }, [onClose]);
 
     function toggle(id: number) {
         setSelected((prev) => {
@@ -149,12 +143,16 @@ export function WebsiteLinkDialog({ server, onClose }: { server: MonitorSummary;
         setSaving(true);
         setError(null);
         try {
-            await replaceMonitorLinks(server.id, [ ...selected ]);
+            await replaceMonitorLinks(server.id, [...selected]);
             onClose();
         } catch (e) {
-            setError(e instanceof ApiError && e.status === 403
-                ? "This board token can't change links (needs write scope)."
-                : e instanceof Error ? e.message : "Save failed.");
+            setError(
+                e instanceof ApiError && e.status === 403
+                    ? "This board token can't change links (needs write scope)."
+                    : e instanceof Error
+                      ? e.message
+                      : "Save failed."
+            );
             setSaving(false);
         }
     }
@@ -177,22 +175,21 @@ export function WebsiteLinkDialog({ server, onClose }: { server: MonitorSummary;
             >
                 <h2 className="mb-1 text-base font-semibold">Websites on “{server.name}”</h2>
                 <p className="mb-3 text-xs text-quiet">
-                    Link the website monitors this server hosts. Pick a group to include every website
-                    inside it, including ones added later. Their status appears on the server's card.
+                    Link the website monitors this server hosts. Pick a group to include every website inside it,
+                    including ones added later. Their status appears on the server's card.
                 </p>
 
                 {candidates === null && !error ? (
                     <p className="py-6 text-sm text-quiet">Loading…</p>
                 ) : (
-                    <LinkPicker
-                        candidates={candidates ?? []}
-                        selected={selected}
-                        onToggle={toggle}
-                        disabled={saving}
-                    />
+                    <LinkPicker candidates={candidates ?? []} selected={selected} onToggle={toggle} disabled={saving} />
                 )}
 
-                {error ? <p className="mt-3 text-xs text-bad" role="alert">{error}</p> : null}
+                {error ? (
+                    <p className="mt-3 text-xs text-bad" role="alert">
+                        {error}
+                    </p>
+                ) : null}
 
                 <div className="mt-4 flex items-center justify-between gap-2">
                     <span className="text-xs text-quiet">

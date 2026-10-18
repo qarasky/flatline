@@ -4,10 +4,10 @@ The wall board: one card per server that pushes telemetry, sized and coloured to
 be read from across the room. It is a route in the dashboard app, not a separate
 application.
 
-| Route | Chrome | Use |
-|---|---|---|
-| `/superboard` | Header with navigation | Desk use and setup. |
-| `/superboard/kiosk` | None, fixed viewport | The wall monitor. |
+| Route               | Chrome                 | Use                 |
+| ------------------- | ---------------------- | ------------------- |
+| `/superboard`       | Header with navigation | Desk use and setup. |
+| `/superboard/kiosk` | None, fixed viewport   | The wall monitor.   |
 
 Both accept a comma-separated group scope: `/superboard/kiosk/work`,
 `/superboard/kiosk/work,personal`. Scopes match a monitor group by slug
@@ -78,11 +78,11 @@ board does not depend on colour alone.
 Attention is expressed by the card's 1px border and the headline, never by a
 thicker accent — a troubled card must not be heavier than its neighbours.
 
-| Attention | When |
-|---|---|
-| Bad (red border) | Host down, or a linked website is down. |
+| Attention           | When                                                                                                                               |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Bad (red border)    | Host down, or a linked website is down.                                                                                            |
 | Warn (amber border) | Stale data, container issues, sustained high usage (≥90% on any of CPU/RAM/disk/GPU), pending status, or a linked website pending. |
-| Normal | Healthy. |
+| Normal              | Healthy.                                                                                                                           |
 
 Freshness is separate from reachability: a sample is stale after
 `max(5s, sampleInterval × 3)` when the agent reports its interval, otherwise
@@ -93,12 +93,12 @@ with an amber warning rather than blanking out.
 
 Read-only, from the agent's package-manager checks:
 
-| Label | Meaning |
-|---|---|
-| `No updates` (green) | Report is known and zero. |
-| `Updates: N` (grey) | Fewer than 50 pending. |
-| `Updates: N` (amber) | 50 or more pending. |
-| `Security Updates: N` (red) | At least one security advisory. |
+| Label                                | Meaning                                                                     |
+| ------------------------------------ | --------------------------------------------------------------------------- |
+| `No updates` (green)                 | Report is known and zero.                                                   |
+| `Updates: N` (grey)                  | Fewer than 50 pending.                                                      |
+| `Updates: N` (amber)                 | 50 or more pending.                                                         |
+| `Security Updates: N` (red)          | At least one security advisory.                                             |
 | `… · reboot required` (flashing red) | The host must restart to finish applying updates; this outranks the counts. |
 
 An absent field means unknown (unsupported distribution, failed check) and
@@ -187,10 +187,10 @@ Page size is measured from the viewport against a 340×420 minimum card, with a
 floor of ten hosts so a tall card cannot shrink the fleet to one row per page.
 Small fleets stay on one page instead of rotating.
 
-| Query parameter | Default | Meaning |
-|---|---|---|
-| `rotate` | `5` | Seconds between pages (1–300). Rotation pauses on any interaction and resumes after 30 s idle, and pauses while the tab is hidden. |
-| `perPage` | measured | Explicit page size override. |
+| Query parameter | Default  | Meaning                                                                                                                            |
+| --------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `rotate`        | `5`      | Seconds between pages (1–300). Rotation pauses on any interaction and resumes after 30 s idle, and pauses while the tab is hidden. |
+| `perPage`       | measured | Explicit page size override.                                                                                                       |
 
 Kiosk mode is chrome-free and hides scrollbars. Reaching it is a route, not a
 parameter.

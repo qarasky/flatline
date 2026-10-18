@@ -2,11 +2,11 @@
 
 Flatline is three programs and one database.
 
-| Process | Language | Runs on | Job |
-|---|---|---|---|
-| Backend | Rust | The Flatline server | Check engine, REST API, storage, alerts, and serving the built web app. |
-| Dashboard | React + Vite | Build output in the backend image | Operator dashboard, Superboard, public status pages. Runs in the browser; in development it is a separate Vite server. |
-| Agent (`superboard`) | Go | Each monitored host | Collects telemetry and pushes it outbound. Never listens on a port. |
+| Process              | Language     | Runs on                           | Job                                                                                                                    |
+| -------------------- | ------------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Backend              | Rust         | The Flatline server               | Check engine, REST API, storage, alerts, and serving the built web app.                                                |
+| Dashboard            | React + Vite | Build output in the backend image | Operator dashboard, Superboard, public status pages. Runs in the browser; in development it is a separate Vite server. |
+| Agent (`superboard`) | Go           | Each monitored host               | Collects telemetry and pushes it outbound. Never listens on a port.                                                    |
 
 There is no message broker, no Redis and no second service: one backend process
 owns the SQLite database, the in-memory live cache and the HTTP surface.
@@ -30,17 +30,17 @@ agent ──POST /api/push──┘   (outbound only, per-monitor push token)
 
 ## Backend modules
 
-| Module | Responsibility |
-|---|---|
-| `api/` | The HTTP surface: routers, request validation, JSON shapes. |
-| `monitors/` | The check engine — scheduling, HTTP/ICMP checks, retries, group aggregation, push-timeout detection. |
-| `heartbeats.rs` | Up/down history, uptime windows, retention. |
-| `metrics/` | Telemetry ingest, validation, counter/rate derivation, live cache, archival, hourly rollups, threshold alerts, history summaries. |
-| `notify.rs` | Telegram delivery and its templates. |
-| `links.rs` | Server → hosted-website links, including group expansion. |
-| `status_pages.rs` | Public status page data, host resolution, password gates. |
-| `auth.rs` | Bearer tokens, push tokens, scope checks. |
-| `provisioning.rs` | The runbook, installer, checksums and agent downloads. |
+| Module            | Responsibility                                                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `api/`            | The HTTP surface: routers, request validation, JSON shapes.                                                                       |
+| `monitors/`       | The check engine — scheduling, HTTP/ICMP checks, retries, group aggregation, push-timeout detection.                              |
+| `heartbeats.rs`   | Up/down history, uptime windows, retention.                                                                                       |
+| `metrics/`        | Telemetry ingest, validation, counter/rate derivation, live cache, archival, hourly rollups, threshold alerts, history summaries. |
+| `notify.rs`       | Telegram delivery and its templates.                                                                                              |
+| `links.rs`        | Server → hosted-website links, including group expansion.                                                                         |
+| `status_pages.rs` | Public status page data, host resolution, password gates.                                                                         |
+| `auth.rs`         | Bearer tokens, push tokens, scope checks.                                                                                         |
+| `provisioning.rs` | The runbook, installer, checksums and agent downloads.                                                                            |
 
 ## Data
 
@@ -50,18 +50,18 @@ records which have been applied, and the backend refuses to start if the
 database contains a migration it does not know — so a code rollback also needs
 the matching database (see [operations](operations.md)).
 
-| Table | Holds |
-|---|---|
-| `monitors` | Monitor definitions, including agent-warning acknowledgements and the hosting `provider`. |
-| `monitor_notifications` | Which notifications a monitor alerts through. |
-| `notifications` | Notification configs (Telegram only). |
-| `heartbeats` | One row per up/down/retry transition; retention `FLATLINE_HEARTBEAT_RETENTION_DAYS` (default 90 days, `0` = forever). |
-| `metrics_raw` | Archived telemetry payloads, one per monitor per ~30 s, kept **30 days**. |
-| `metrics_hourly` | Hourly min/max/avg rollups with raw-reading counts, kept **730 days**. |
-| `metrics_rollup_dirty`, `metrics_rollup_state` | Rollup bookkeeping: which hours need re-folding and how far repair has progressed. |
-| `monitor_links` | Server → website links (direct, or via a group). |
-| `tokens` | Bearer tokens, SHA-256 hashed; plaintext is shown once at mint time. |
-| `status_pages`, `status_page_groups`, `status_page_monitors`, `status_page_cnames`, `status_page_incidents` | Public status pages and their content. |
+| Table                                                                                                       | Holds                                                                                                                 |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `monitors`                                                                                                  | Monitor definitions, including agent-warning acknowledgements and the hosting `provider`.                             |
+| `monitor_notifications`                                                                                     | Which notifications a monitor alerts through.                                                                         |
+| `notifications`                                                                                             | Notification configs (Telegram only).                                                                                 |
+| `heartbeats`                                                                                                | One row per up/down/retry transition; retention `FLATLINE_HEARTBEAT_RETENTION_DAYS` (default 90 days, `0` = forever). |
+| `metrics_raw`                                                                                               | Archived telemetry payloads, one per monitor per ~30 s, kept **30 days**.                                             |
+| `metrics_hourly`                                                                                            | Hourly min/max/avg rollups with raw-reading counts, kept **730 days**.                                                |
+| `metrics_rollup_dirty`, `metrics_rollup_state`                                                              | Rollup bookkeeping: which hours need re-folding and how far repair has progressed.                                    |
+| `monitor_links`                                                                                             | Server → website links (direct, or via a group).                                                                      |
+| `tokens`                                                                                                    | Bearer tokens, SHA-256 hashed; plaintext is shown once at mint time.                                                  |
+| `status_pages`, `status_page_groups`, `status_page_monitors`, `status_page_cnames`, `status_page_incidents` | Public status pages and their content.                                                                                |
 
 ### Retention and rollups
 
@@ -69,7 +69,7 @@ Live telemetry is retained at 30-second resolution for 30 days, then folded
 into hourly buckets (min/max/mean plus the number of raw readings) kept for two
 years. The rollup job runs hourly and is idempotent, re-folding the last two
 complete hours so late and backfilled samples land. Raw pruning only deletes a
-sample once it is represented in an hourly bucket, and a *dirty hour* marker is
+sample once it is represented in an hourly bucket, and a _dirty hour_ marker is
 written whenever a sample arrives late for an hour that may already have been
 folded — so pruning can never run ahead of repair.
 
@@ -121,15 +121,15 @@ unlock cookie, and neither grants operator access. See
 
 The backend reads its configuration from the environment:
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `PORT` | `3001` | Listen port. |
-| `DATA_DIR` | `./data` | SQLite database directory. |
-| `UPTIME_KUMA_HOST` | `0.0.0.0` | Bind address. |
-| `FLATLINE_WEB_DIST` | `./dist` | Built web app to serve. |
-| `FLATLINE_AGENT_DIR` | — | Directory of agent binaries served under `/agent/*`. |
-| `FLATLINE_PUBLIC_URL` | request host | Absolute origin used in the provisioning documents. |
-| `FLATLINE_HEARTBEAT_RETENTION_DAYS` | `90` | Heartbeat retention; `0` keeps forever. |
+| Variable                            | Default      | Meaning                                              |
+| ----------------------------------- | ------------ | ---------------------------------------------------- |
+| `PORT`                              | `3001`       | Listen port.                                         |
+| `DATA_DIR`                          | `./data`     | SQLite database directory.                           |
+| `UPTIME_KUMA_HOST`                  | `0.0.0.0`    | Bind address.                                        |
+| `FLATLINE_WEB_DIST`                 | `./dist`     | Built web app to serve.                              |
+| `FLATLINE_AGENT_DIR`                | —            | Directory of agent binaries served under `/agent/*`. |
+| `FLATLINE_PUBLIC_URL`               | request host | Absolute origin used in the provisioning documents.  |
+| `FLATLINE_HEARTBEAT_RETENTION_DAYS` | `90`         | Heartbeat retention; `0` keeps forever.              |
 
 ## Deliberate limits
 

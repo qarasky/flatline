@@ -24,11 +24,7 @@ export interface MenuItem {
  * Closes on Escape, outside pointer, scroll or resize. Focus lands on the
  * first item when the menu opens so keyboard operators are not stranded.
  */
-export function ServerMenu({ anchor, items, onClose }: {
-    anchor: MenuAnchor;
-    items: MenuItem[];
-    onClose: () => void;
-}) {
+export function ServerMenu({ anchor, items, onClose }: { anchor: MenuAnchor; items: MenuItem[]; onClose: () => void }) {
     const ref = useRef<HTMLDivElement>(null);
     const [pos, setPos] = useState({ x: anchor.x, y: anchor.y });
 
@@ -36,7 +32,9 @@ export function ServerMenu({ anchor, items, onClose }: {
         const el = ref.current;
         if (el) {
             const rect = el.getBoundingClientRect();
-            setPos(clampMenuPosition(anchor.x, anchor.y, rect.width, rect.height, window.innerWidth, window.innerHeight));
+            setPos(
+                clampMenuPosition(anchor.x, anchor.y, rect.width, rect.height, window.innerWidth, window.innerHeight)
+            );
             el.querySelector("button")?.focus();
         }
         const onKey = (e: KeyboardEvent) => {
@@ -93,7 +91,12 @@ export function ServerMenu({ anchor, items, onClose }: {
  * PATCHing `parent` broadcasts an invalidate, so every open board and the
  * table resnapshot on their own.
  */
-export function MoveDialog({ monitor, options, currentParent, onClose }: {
+export function MoveDialog({
+    monitor,
+    options,
+    currentParent,
+    onClose,
+}: {
     monitor: MonitorSummary;
     options: GroupOption[];
     currentParent: number | null;
@@ -111,9 +114,13 @@ export function MoveDialog({ monitor, options, currentParent, onClose }: {
             await updateMonitor(monitor.id, { parent: parent ? Number(parent) : null });
             onClose();
         } catch (err) {
-            setError(err instanceof ApiError && err.status === 403
-                ? "This board token can't move monitors (needs write scope)."
-                : err instanceof Error ? err.message : "Move failed.");
+            setError(
+                err instanceof ApiError && err.status === 403
+                    ? "This board token can't move monitors (needs write scope)."
+                    : err instanceof Error
+                      ? err.message
+                      : "Move failed."
+            );
             setSaving(false);
         }
     }
@@ -146,7 +153,9 @@ export function MoveDialog({ monitor, options, currentParent, onClose }: {
             >
                 <h2 className="mb-1 text-base font-semibold">Move to group</h2>
                 <p className="mb-3 text-xs text-quiet">Where should “{monitor.name}” live in the tree?</p>
-                <label className="mb-1 block text-xs text-quiet" htmlFor="monitor-move-select">Group</label>
+                <label className="mb-1 block text-xs text-quiet" htmlFor="monitor-move-select">
+                    Group
+                </label>
                 <select
                     id="monitor-move-select"
                     value={parent}
@@ -157,10 +166,16 @@ export function MoveDialog({ monitor, options, currentParent, onClose }: {
                 >
                     <option value="">— none (top level)</option>
                     {options.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
+                        <option key={option.value} value={option.value}>
+                            {option.label}
+                        </option>
                     ))}
                 </select>
-                {error ? <p className="mb-3 text-xs text-bad" role="alert">{error}</p> : null}
+                {error ? (
+                    <p className="mb-3 text-xs text-bad" role="alert">
+                        {error}
+                    </p>
+                ) : null}
                 <div className="flex justify-end gap-2">
                     <button
                         type="button"
@@ -188,7 +203,14 @@ export function MoveDialog({ monitor, options, currentParent, onClose }: {
  * group's parent, so the tree never orphans anything) or purge the whole
  * subtree in one request. The counts come from the caller's roster.
  */
-export function DeleteGroupDialog({ group, rows, children, parentName, onDelete, onClose }: {
+export function DeleteGroupDialog({
+    group,
+    rows,
+    children,
+    parentName,
+    onDelete,
+    onClose,
+}: {
     group: MonitorSummary;
     /** Non-group monitors in the whole subtree. */
     rows: number;
@@ -261,7 +283,8 @@ export function DeleteGroupDialog({ group, rows, children, parentName, onDelete,
                 </label>
                 {purge && rows > 0 ? (
                     <p className="mb-3 rounded-md bg-destructive/10 px-2.5 py-2 text-xs text-destructive" role="alert">
-                        {rows} {rows === 1 ? "monitor" : "monitors"} will be deleted with their history. This cannot be undone.
+                        {rows} {rows === 1 ? "monitor" : "monitors"} will be deleted with their history. This cannot be
+                        undone.
                     </p>
                 ) : null}
                 <div className="flex justify-end gap-2">
@@ -295,7 +318,11 @@ export function DeleteGroupDialog({ group, rows, children, parentName, onDelete,
  * every connected board resnapshots, so no local roster surgery is
  * needed — the dialog just closes and the new name lands.
  */
-export function RenameDialog({ monitor, currentName, onClose }: {
+export function RenameDialog({
+    monitor,
+    currentName,
+    onClose,
+}: {
     monitor: MonitorSummary;
     currentName: string;
     onClose: () => void;
@@ -321,9 +348,13 @@ export function RenameDialog({ monitor, currentName, onClose }: {
             await updateMonitor(monitor.id, { name: next });
             onClose();
         } catch (err) {
-            setError(err instanceof ApiError && err.status === 403
-                ? "This board token can't rename (needs write scope). Reconnect with a write token."
-                : err instanceof Error ? err.message : "Rename failed.");
+            setError(
+                err instanceof ApiError && err.status === 403
+                    ? "This board token can't rename (needs write scope). Reconnect with a write token."
+                    : err instanceof Error
+                      ? err.message
+                      : "Rename failed."
+            );
             setSaving(false);
         }
     }
@@ -356,7 +387,9 @@ export function RenameDialog({ monitor, currentName, onClose }: {
             >
                 <h2 className="mb-1 text-base font-semibold">Rename server</h2>
                 <p className="mb-3 text-xs text-quiet">Card titles prefer this over the agent-reported hostname.</p>
-                <label className="mb-1 block text-xs text-quiet" htmlFor="server-rename-input">Display name</label>
+                <label className="mb-1 block text-xs text-quiet" htmlFor="server-rename-input">
+                    Display name
+                </label>
                 <input
                     id="server-rename-input"
                     value={name}
@@ -367,7 +400,11 @@ export function RenameDialog({ monitor, currentName, onClose }: {
                     autoComplete="off"
                     className="mb-3 w-full rounded-md border border-input bg-surface px-3 py-2 text-sm focus-visible:outline-none"
                 />
-                {error ? <p className="mb-3 text-xs text-bad" role="alert">{error}</p> : null}
+                {error ? (
+                    <p className="mb-3 text-xs text-bad" role="alert">
+                        {error}
+                    </p>
+                ) : null}
                 <div className="flex justify-end gap-2">
                     <button
                         type="button"

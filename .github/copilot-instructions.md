@@ -13,12 +13,12 @@ Uptime Kuma with its own Rust backend, a Go host agent and a React dashboard.
 The Node/Express backend, the Vue frontend and the standalone Next.js status app
 were **removed**; do not suggest changes to them or look for them.
 
-| Piece | Language | Where |
-|---|---|---|
-| Backend (API, check engine, storage, web app host) | Rust | `backend-rs/` |
-| Host agent pushed to each server | Go | `superboard/` |
-| Dashboard, Superboard, status pages | TypeScript + React (Vite) | `apps/dashboard/` |
-| Shared types | TypeScript | `packages/shared/` |
+| Piece                                              | Language                  | Where              |
+| -------------------------------------------------- | ------------------------- | ------------------ |
+| Backend (API, check engine, storage, web app host) | Rust                      | `backend-rs/`      |
+| Host agent pushed to each server                   | Go                        | `superboard/`      |
+| Dashboard, Superboard, status pages                | TypeScript + React (Vite) | `apps/dashboard/`  |
+| Shared types                                       | TypeScript                | `packages/shared/` |
 
 Runtime requirements: `cargo`, `go`, and Node only for the Vite dev server and
 the dashboard build. Data is SQLite, migrated at startup from
@@ -46,24 +46,24 @@ the dashboard build. Data is SQLite, migrated at startup from
 
 ## Build and validation commands
 
-| Task | Command |
-|---|---|
-| Backend tests | `cargo test --manifest-path backend-rs/Cargo.toml` |
-| Dashboard tests | `npm run test:dashboard` |
-| Dashboard types | `npm run typecheck:dashboard` |
-| Dashboard build | `npm run build:dashboard` |
-| Agent build and vet | `cd superboard && go build ./... && go vet ./...` |
-| Local stack | `./dev.sh` (backend `:3001`, dashboard `:3003`, mock fleet) |
+| Task                | Command                                                     |
+| ------------------- | ----------------------------------------------------------- |
+| Backend tests       | `cargo test --manifest-path backend-rs/Cargo.toml`          |
+| Dashboard tests     | `npm run test:dashboard`                                    |
+| Dashboard types     | `npm run typecheck:dashboard`                               |
+| Dashboard build     | `npm run build:dashboard`                                   |
+| Agent build and vet | `cd superboard && go build ./... && go vet ./...`           |
+| Local stack         | `./dev.sh` (backend `:3001`, dashboard `:3003`, mock fleet) |
 
 ## Style
 
-- TypeScript: 4-space indent, double quotes, spaces inside array brackets
-  (`[ a, b ]`). Keep pure presentation logic in `apps/dashboard/src/lib/` so it
-  can be tested without a DOM.
+- The repository is formatted by Prettier (`npm run fmt`, verified by
+  `npm run fmt:check`). Do not hand-format; run the formatter instead.
+  `.prettierignore` covers the lockfile, local state and build output.
+- Keep pure presentation logic in `apps/dashboard/src/lib/` so it can be tested
+  without a DOM.
 - Rust: small module surfaces, explicit error types, comments that explain
   contracts and reasons. The tree is not uniformly `rustfmt`-formatted.
 - Go: `gofmt` clean, one collector per file, collectors degrade to
   "unavailable" instead of failing a sample.
-- **Do not run `npm run fmt`** — the repository is not Prettier-clean in its
-  current style and the script rewrites unrelated files.
 - Avoid emoji in code comments and commit messages.

@@ -6,17 +6,17 @@ how a release goes out, and how to get back.
 
 ## Topology
 
-| Thing | Location |
-|---|---|
-| Public origin | `https://uptime.mediaboost.kz` |
-| Tunnel target | `http://localhost:3001` on the office host |
-| Compose file | `/home/office/flatline/compose.rust.yaml` (repository copy: `docker/compose.rust.yaml`) |
-| Environment | `/home/office/flatline/.env` — `FLATLINE_PORT=3001`, `FLATLINE_PUBLIC_URL=https://uptime.mediaboost.kz` |
-| Data | `/home/office/flatline/data-rust/flatline.db` (plus `initial-token.txt`, `status-page-secret`) |
-| Backups | `/home/office/flatline/backups/` |
-| Source tree | `/home/office/flatline-src` — the tree the image is built from |
-| Provisioning token | `/home/office/flatline/provisioning-token.txt` (0600, root) |
-| Stack name | `flatline-rust` (container `flatline-rust-flatline-1`) |
+| Thing              | Location                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------- |
+| Public origin      | `https://uptime.mediaboost.kz`                                                                          |
+| Tunnel target      | `http://localhost:3001` on the office host                                                              |
+| Compose file       | `/home/office/flatline/compose.rust.yaml` (repository copy: `docker/compose.rust.yaml`)                 |
+| Environment        | `/home/office/flatline/.env` — `FLATLINE_PORT=3001`, `FLATLINE_PUBLIC_URL=https://uptime.mediaboost.kz` |
+| Data               | `/home/office/flatline/data-rust/flatline.db` (plus `initial-token.txt`, `status-page-secret`)          |
+| Backups            | `/home/office/flatline/backups/`                                                                        |
+| Source tree        | `/home/office/flatline-src` — the tree the image is built from                                          |
+| Provisioning token | `/home/office/flatline/provisioning-token.txt` (0600, root)                                             |
+| Stack name         | `flatline-rust` (container `flatline-rust-flatline-1`)                                                  |
 
 Docker runs **rootful** on this host: every docker command goes through `sudo`,
 and files under `data-rust/` are root-owned. The published port is loopback-only,
@@ -125,12 +125,12 @@ enough. The Node-era rollback path no longer exists — see
 
 Eight monitors push telemetry; the rest are HTTP/ICMP checks and groups.
 
-| Host | Role |
-|---|---|
-| `office-server` | The office machine itself (also runs this stack). |
-| `office-mac-server` | A Mac used as a server. |
-| `home-rpi` | Home Raspberry Pi. |
-| `cmn.kz`, `aiel-qorgan.kz`, `meks-zhkh`, `nationalbusiness.kz`, `zhasalash.kz` | Client hosts. |
+| Host                                                                           | Role                                              |
+| ------------------------------------------------------------------------------ | ------------------------------------------------- |
+| `office-server`                                                                | The office machine itself (also runs this stack). |
+| `office-mac-server`                                                            | A Mac used as a server.                           |
+| `home-rpi`                                                                     | Home Raspberry Pi.                                |
+| `cmn.kz`, `aiel-qorgan.kz`, `meks-zhkh`, `nationalbusiness.kz`, `zhasalash.kz` | Client hosts.                                     |
 
 Monitor ids, group membership and notification links live in the dashboard; the
 provisioning history for the client hosts is in the cabinet record, not here.
@@ -157,10 +157,10 @@ minutes and only real outages page.
 
 ## Release log
 
-| Date | What shipped |
-|---|---|
-| 2026-10-13 | Rust backend cutover (parity-verified against the Node backend, then the Node backend was retired). |
-| 2026-10-14 | Performance/stability follow-up fixes; agent 1.6.0/1.6.1 rolled to the fleet. |
+| Date       | What shipped                                                                                                                                                            |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-13 | Rust backend cutover (parity-verified against the Node backend, then the Node backend was retired).                                                                     |
+| 2026-10-14 | Performance/stability follow-up fixes; agent 1.6.0/1.6.1 rolled to the fleet.                                                                                           |
 | 2026-10-18 | Node backend removed from the repository; Superboard card redesign; hosted-website links; provider logos; agent-warning acknowledgements; agent 1.7.0 with self-update. |
 
 Each release is also recorded in [history](history.md) with the defects it fixed.

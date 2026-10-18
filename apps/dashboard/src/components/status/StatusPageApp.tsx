@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-    fetchStatusPage,
-    NotFoundError,
-    PasswordRequiredError,
-    type StatusPageSnapshot,
-} from "@flatline/shared";
+import { fetchStatusPage, NotFoundError, PasswordRequiredError, type StatusPageSnapshot } from "@flatline/shared";
 import { StatusPageView } from "@/components/status/StatusPageView";
 import { UnlockForm } from "@/components/status/UnlockForm";
 
@@ -40,11 +35,13 @@ async function slugFromHost(): Promise<string | null> {
         return null;
     }
     try {
-        const response = await fetch(`/api/status-page/resolve-host?host=${encodeURIComponent(host)}`, { cache: "no-store" });
+        const response = await fetch(`/api/status-page/resolve-host?host=${encodeURIComponent(host)}`, {
+            cache: "no-store",
+        });
         if (!response.ok) {
             return null;
         }
-        const body = await response.json() as { slug?: string | null };
+        const body = (await response.json()) as { slug?: string | null };
         return typeof body.slug === "string" && body.slug !== "" ? body.slug : null;
     } catch {
         return null;
@@ -68,17 +65,24 @@ export function StatusPageApp({ slug, fallback }: { slug: string | null; fallbac
         try {
             // Empty base: same origin as the app that serves this page.
             const snapshot = await fetchStatusPage("", target);
-            if (request !== requestRef.current) { return; }
+            if (request !== requestRef.current) {
+                return;
+            }
             setState({ phase: "page", slug: target, snapshot });
             document.title = snapshot.data.config.title || "Status";
         } catch (error) {
-            if (request !== requestRef.current) { return; }
+            if (request !== requestRef.current) {
+                return;
+            }
             if (error instanceof PasswordRequiredError) {
                 setState({ phase: "locked", slug: target });
             } else if (error instanceof NotFoundError) {
                 setState({ phase: "notfound" });
             } else {
-                setState({ phase: "error", message: error instanceof Error ? error.message : "Could not load the status page." });
+                setState({
+                    phase: "error",
+                    message: error instanceof Error ? error.message : "Could not load the status page.",
+                });
             }
         }
     }, []);
@@ -92,42 +96,76 @@ export function StatusPageApp({ slug, fallback }: { slug: string | null; fallbac
             return;
         }
         slugFromHost().then((found) => {
-            if (!alive) { return; }
+            if (!alive) {
+                return;
+            }
             setResolved(found);
             setUnmapped(found === null);
         });
-        return () => { alive = false; };
-    }, [ slug ]);
+        return () => {
+            alive = false;
+        };
+    }, [slug]);
 
     // Fetch on target change, then keep refreshing while the tab is visible.
     useEffect(() => {
-        if (!resolved) { return; }
+        if (!resolved) {
+            return;
+        }
         void load(resolved);
         const timer = window.setInterval(() => {
-            if (!document.hidden) { void load(resolved); }
+            if (!document.hidden) {
+                void load(resolved);
+            }
         }, REFRESH_MS);
         return () => window.clearInterval(timer);
-    }, [ resolved, load ]);
+    }, [resolved, load]);
 
     if (unmapped) {
-        return fallback ?? (
-            <div className="status-page"><div className="wrap">
-                <h1 className="site-title">Status</h1>
-                <p className="site-description">This address is not mapped to a status page.</p>
-            </div></div>
+        return (
+            fallback ?? (
+                <div className="status-page">
+                    <div className="wrap">
+                        <h1 className="site-title">Status</h1>
+                        <p className="site-description">This address is not mapped to a status page.</p>
+                    </div>
+                </div>
+            )
         );
     }
 
     if (state.phase === "loading" || (!resolved && !unmapped)) {
-        return <div className="status-page"><div className="wrap"><p className="site-description" role="status">Loading status…</p></div></div>;
+        return (
+            <div className="status-page">
+                <div className="wrap">
+                    <p className="site-description" role="status">
+                        Loading status…
+                    </p>
+                </div>
+            </div>
+        );
     }
 
     if (state.phase === "notfound") {
-        return <div className="status-page"><div className="wrap"><p className="site-description">No status page found.</p></div></div>;
+        return (
+            <div className="status-page">
+                <div className="wrap">
+                    <p className="site-description">No status page found.</p>
+                </div>
+            </div>
+        );
     }
 
     if (state.phase === "error") {
-        return <div className="status-page"><div className="wrap"><p className="site-description" role="alert">{state.message}</p></div></div>;
+        return (
+            <div className="status-page">
+                <div className="wrap">
+                    <p className="site-description" role="alert">
+                        {state.message}
+                    </p>
+                </div>
+            </div>
+        );
     }
 
     if (state.phase === "locked") {

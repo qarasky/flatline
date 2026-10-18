@@ -13,7 +13,7 @@ import path from "node:path";
 const backend = process.env.FLATLINE_DEV_BACKEND || "http://127.0.0.1:3001";
 
 export default defineConfig({
-    plugins: [ react(), tailwindcss() ],
+    plugins: [react(), tailwindcss()],
     resolve: {
         alias: {
             "@": path.resolve(__dirname, "./src"),

@@ -69,7 +69,18 @@ curl -fsS -X POST "{{ORIGIN}}/api/v1/monitors" \
 Response (`201 Created`):
 
 ```json
-{"ok":true,"monitor":{"id":61,"name":"server-01","type":"push","status":2,"pushToken":"pt_xxxxxxxx", "...":"..."},"ignoredFields":[]}
+{
+  "ok": true,
+  "monitor": {
+    "id": 61,
+    "name": "server-01",
+    "type": "push",
+    "status": 2,
+    "pushToken": "pt_xxxxxxxx",
+    "...": "..."
+  },
+  "ignoredFields": []
+}
 ```
 
 **Save `monitor.id` and `monitor.pushToken`.** The push token is the
@@ -134,7 +145,7 @@ than a half-install. Compare `superboard version` on the host with
   recreating the monitor.
 - Full reinstall: `sudo superboard uninstall`, then the §1.3 command.
 - Removing a server: delete the monitor (§5) and run `sudo superboard
-  uninstall` on the host.
+uninstall` on the host.
 
 ## 2. Add an HTTP(s) monitor
 
@@ -225,19 +236,19 @@ above it is the failure reason.
 
 Writable fields on create/PATCH (anything else → `ignoredFields`):
 
-| Field | Notes |
-| --- | --- |
-| `name`, `description`, `active` | display name, free text, pause switch |
-| `type` | `http`, `https`, `push`, `ping`, `group` (create only) |
-| `interval` | seconds, 20–86400 |
-| `retryInterval`, `maxretries`, `timeout`, `resendInterval` | scheduling; timeout defaults to 80% of interval |
-| `upsideDown` | alert when UP instead of down |
-| `parent`, `weight` | group id, ordering weight (higher first) |
-| `url`, `method`, `accepted_statuscodes`, `ignoreTls`, `maxredirects` | HTTP checks |
-| `hostname`, `packetSize`, `pingCount`, `pingNumeric`, `pingPerRequestTimeout` | ping checks |
-| `pushToken` | push monitors; server-generated, re-readable |
-| `metricCpuThreshold`, `metricRamThreshold`, `metricDiskThreshold` | push telemetry alerts (percent; 60s sustained, 5-point recovery) |
-| `notificationIDList` | notification ids to link |
+| Field                                                                         | Notes                                                            |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `name`, `description`, `active`                                               | display name, free text, pause switch                            |
+| `type`                                                                        | `http`, `https`, `push`, `ping`, `group` (create only)           |
+| `interval`                                                                    | seconds, 20–86400                                                |
+| `retryInterval`, `maxretries`, `timeout`, `resendInterval`                    | scheduling; timeout defaults to 80% of interval                  |
+| `upsideDown`                                                                  | alert when UP instead of down                                    |
+| `parent`, `weight`                                                            | group id, ordering weight (higher first)                         |
+| `url`, `method`, `accepted_statuscodes`, `ignoreTls`, `maxredirects`          | HTTP checks                                                      |
+| `hostname`, `packetSize`, `pingCount`, `pingNumeric`, `pingPerRequestTimeout` | ping checks                                                      |
+| `pushToken`                                                                   | push monitors; server-generated, re-readable                     |
+| `metricCpuThreshold`, `metricRamThreshold`, `metricDiskThreshold`             | push telemetry alerts (percent; 60s sustained, 5-point recovery) |
+| `notificationIDList`                                                          | notification ids to link                                         |
 
 Monitor status codes: `0` down, `1` up, `2` pending, `3` maintenance.
 
@@ -250,15 +261,15 @@ Other read endpoints worth knowing:
 
 ## 8. Troubleshooting
 
-| Symptom | Likely cause / fix |
-| --- | --- |
-| Agent push answers `404` | Monitor deleted, paused, or the push token is wrong. `GET /api/v1/monitors/{id}` to check `active` and re-read `pushToken`. |
-| Monitor stays `status: 2` | No push arrived. On the host: `systemctl status superboard`, `journalctl -u superboard -n 50`. Check the config's `server_url` reaches `{{ORIGIN}}`. |
-| Monitor flips down after working | Network path or DNS from the host; the agent buffers samples on disk (`/var/lib/superboard/buffer`) and delivers late. Check `journalctl`. |
-| `install.sh` checksum failure | Download was truncated; rerun. If it persists, the served binary is being rebuilt — retry in a minute. |
-| Update did not change the version | The service did not restart: `systemctl restart superboard`, then `superboard version`. |
-| `superboard install` says "already installed" | Use the §1.5 update path; `install` is for fresh hosts only. |
-| 401 from any endpoint | Token wrong/disabled. The operator can re-enable or mint one in the dashboard's Agents panel. |
+| Symptom                                       | Likely cause / fix                                                                                                                                   |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent push answers `404`                      | Monitor deleted, paused, or the push token is wrong. `GET /api/v1/monitors/{id}` to check `active` and re-read `pushToken`.                          |
+| Monitor stays `status: 2`                     | No push arrived. On the host: `systemctl status superboard`, `journalctl -u superboard -n 50`. Check the config's `server_url` reaches `{{ORIGIN}}`. |
+| Monitor flips down after working              | Network path or DNS from the host; the agent buffers samples on disk (`/var/lib/superboard/buffer`) and delivers late. Check `journalctl`.           |
+| `install.sh` checksum failure                 | Download was truncated; rerun. If it persists, the served binary is being rebuilt — retry in a minute.                                               |
+| Update did not change the version             | The service did not restart: `systemctl restart superboard`, then `superboard version`.                                                              |
+| `superboard install` says "already installed" | Use the §1.5 update path; `install` is for fresh hosts only.                                                                                         |
+| 401 from any endpoint                         | Token wrong/disabled. The operator can re-enable or mint one in the dashboard's Agents panel.                                                        |
 
 ## 9. Downloads and version
 

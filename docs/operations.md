@@ -6,14 +6,14 @@ own semantics live in [superboard](superboard.md).
 
 ## Health checks
 
-| Check | Command / endpoint | Healthy means |
-|---|---|---|
-| Container | `sudo docker compose -f /home/office/flatline/compose.rust.yaml ps` | `healthy`, low restart count. |
-| Backend up | `GET /api/v1/auth/setup` (no token) | 200. Also the container healthcheck. |
-| Fleet summary | `GET /api/v1/health` (token) | `total` matches the expected count, `down` matches reality. |
-| Public origin | `curl -o /dev/null -w '%{http_code}' https://<origin>/` | 200 through the tunnel. |
-| Agents | newest telemetry per push monitor | seconds old, not minutes. |
-| Local dev | `./dev.sh status` | backend 200, dashboard 200. |
+| Check         | Command / endpoint                                                  | Healthy means                                               |
+| ------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Container     | `sudo docker compose -f /home/office/flatline/compose.rust.yaml ps` | `healthy`, low restart count.                               |
+| Backend up    | `GET /api/v1/auth/setup` (no token)                                 | 200. Also the container healthcheck.                        |
+| Fleet summary | `GET /api/v1/health` (token)                                        | `total` matches the expected count, `down` matches reality. |
+| Public origin | `curl -o /dev/null -w '%{http_code}' https://<origin>/`             | 200 through the tunnel.                                     |
+| Agents        | newest telemetry per push monitor                                   | seconds old, not minutes.                                   |
+| Local dev     | `./dev.sh status`                                                   | backend 200, dashboard 200.                                 |
 
 The dashboard itself is the best health signal: a fleet-wide problem shows as a
 wall of stale cards, and `Agent: …` lines surface the host-side cause.
@@ -54,18 +54,18 @@ There is one credential type — a bearer token with full permission — plus
 per-monitor push tokens. Nothing is scoped, so a token is only as narrow as the
 person holding it.
 
-| Credential | Where it lives | Rotating it |
-|---|---|---|
-| Operator token | `data-rust/initial-token.txt` (0600, root) | Mint a replacement in the Agents panel, save it to that file, disable the old row. |
-| Integration tokens | `tokens` table, hashes only | Mint a named token in the Agents panel; disable or delete it to revoke. Plaintext is shown once. |
-| Provisioning token | `/home/office/flatline/provisioning-token.txt` | Disable the key in the Agents panel, mint a replacement, update that file and any shared URL. |
-| Push tokens | `monitors.push_token`, one per agent host | Rotate in the monitor form (or `PATCH` the monitor), then update `/etc/superboard/config.json` on the host and restart the agent. |
+| Credential         | Where it lives                                 | Rotating it                                                                                                                       |
+| ------------------ | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Operator token     | `data-rust/initial-token.txt` (0600, root)     | Mint a replacement in the Agents panel, save it to that file, disable the old row.                                                |
+| Integration tokens | `tokens` table, hashes only                    | Mint a named token in the Agents panel; disable or delete it to revoke. Plaintext is shown once.                                  |
+| Provisioning token | `/home/office/flatline/provisioning-token.txt` | Disable the key in the Agents panel, mint a replacement, update that file and any shared URL.                                     |
+| Push tokens        | `monitors.push_token`, one per agent host      | Rotate in the monitor form (or `PATCH` the monitor), then update `/etc/superboard/config.json` on the host and restart the agent. |
 
 Rules that keep this manageable:
 
 - One named token per integration. A leak then costs one revoke, not a
   fleet-wide credential change.
-- Tokens are bearer credentials: anything holding one *is* the operator. They do
+- Tokens are bearer credentials: anything holding one _is_ the operator. They do
   not belong in a repository, a ticket, a screenshot or a chat log — which is why
   the provisioning documents are token-gated and Git-ignored paths hold the
   copies on disk.
@@ -85,23 +85,23 @@ curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
 
 ## Diagnosing
 
-| Symptom | Look at |
-|---|---|
-| A monitor stays pending | Agent: `systemctl status superboard`, `journalctl -u superboard -n 50`, `sudo superboard check`. Server: `GET /api/v1/monitors/{id}` for `active` and `pushToken`. |
-| A monitor flips down and back | Network path from that host to the origin, and the monitor's `maxretries`/`retryInterval`. The agent buffers on disk, so short blips arrive late rather than lost. |
-| The board is stale but checks work | SSE: the proxy in front of the app must not buffer responses and must allow idle connections longer than the keepalive. |
-| Public origin down, container up | The tunnel, then the published port (`127.0.0.1:3001`). |
-| Cards show agent warnings | The tooltip has the per-collector detail and the last push error; right-click → Clear agent warnings once seen. A collector failing forever usually means a host-side tool (driver mismatch, missing `smartctl`). |
-| Database growing | Expected: 30 days of 30-second samples plus two years of hourly rollups. Monitor `du -sh data-rust/`; a sudden jump usually means a monitor was added, not a leak. |
-| Backend will not start after a downgrade | The database has newer migrations than the binary. Restore the matching backup. |
+| Symptom                                  | Look at                                                                                                                                                                                                           |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A monitor stays pending                  | Agent: `systemctl status superboard`, `journalctl -u superboard -n 50`, `sudo superboard check`. Server: `GET /api/v1/monitors/{id}` for `active` and `pushToken`.                                                |
+| A monitor flips down and back            | Network path from that host to the origin, and the monitor's `maxretries`/`retryInterval`. The agent buffers on disk, so short blips arrive late rather than lost.                                                |
+| The board is stale but checks work       | SSE: the proxy in front of the app must not buffer responses and must allow idle connections longer than the keepalive.                                                                                           |
+| Public origin down, container up         | The tunnel, then the published port (`127.0.0.1:3001`).                                                                                                                                                           |
+| Cards show agent warnings                | The tooltip has the per-collector detail and the last push error; right-click → Clear agent warnings once seen. A collector failing forever usually means a host-side tool (driver mismatch, missing `smartctl`). |
+| Database growing                         | Expected: 30 days of 30-second samples plus two years of hourly rollups. Monitor `du -sh data-rust/`; a sudden jump usually means a monitor was added, not a leak.                                                |
+| Backend will not start after a downgrade | The database has newer migrations than the binary. Restore the matching backup.                                                                                                                                   |
 
 ## Logs
 
-| What | Where |
-|---|---|
-| Backend | `sudo docker logs flatline-rust-flatline-1` (JSON lines, one per event). |
-| Agent | `journalctl -u superboard` on the host. |
-| Local dev | `.dev-logs/` (`dev.sh logs` follows them). |
+| What      | Where                                                                    |
+| --------- | ------------------------------------------------------------------------ |
+| Backend   | `sudo docker logs flatline-rust-flatline-1` (JSON lines, one per event). |
+| Agent     | `journalctl -u superboard` on the host.                                  |
+| Local dev | `.dev-logs/` (`dev.sh logs` follows them).                               |
 
 The backend logs at `info` for lifecycle events and `warn`/`error` for failures;
 ingest and rollup problems are logged with the monitor id, which is what makes a

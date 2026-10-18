@@ -46,7 +46,9 @@ export function stateLabel(state: number | null | undefined): string {
  * @param state Numeric status from the API
  * @returns One of the four severity keys
  */
-export function stateSeverity(state: number | null | undefined): "up" | "degraded" | "down" | "maintenance" | "unknown" {
+export function stateSeverity(
+    state: number | null | undefined
+): "up" | "degraded" | "down" | "maintenance" | "unknown" {
     switch (state) {
         case MonitorState.UP:
             return "up";
@@ -169,7 +171,7 @@ export interface PasswordRequired {
  * @returns The worst severity present
  */
 export function pageSeverity(entries: MonitorStateEntry[]): ReturnType<typeof stateSeverity> {
-    const order = [ "unknown", "up", "degraded", "maintenance", "down" ] as const;
+    const order = ["unknown", "up", "degraded", "maintenance", "down"] as const;
 
     let worst: ReturnType<typeof stateSeverity> = "up";
     let seen = false;

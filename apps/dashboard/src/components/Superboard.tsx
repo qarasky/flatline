@@ -62,10 +62,19 @@ async function toFleetServers(monitors: MonitorSummary[], signal?: AbortSignal):
         return [];
     }
 
-    const samples = {} as Record<number, { time: string; metrics: FleetServer["metrics"]; cpuPeak10m?: FleetServer["cpuPeak10m"] } | null>;
+    const samples = {} as Record<
+        number,
+        { time: string; metrics: FleetServer["metrics"]; cpuPeak10m?: FleetServer["cpuPeak10m"] } | null
+    >;
     const batches = Array.from({ length: Math.ceil(monitors.length / 200) }, (_, index) =>
-        fetchLatestMetricsBulk(monitors.slice(index * 200, (index + 1) * 200).map(m => m.id), signal));
-    for (const batch of await Promise.all(batches)) { Object.assign(samples, batch.samples); }
+        fetchLatestMetricsBulk(
+            monitors.slice(index * 200, (index + 1) * 200).map((m) => m.id),
+            signal
+        )
+    );
+    for (const batch of await Promise.all(batches)) {
+        Object.assign(samples, batch.samples);
+    }
     const out: FleetServer[] = [];
 
     for (const monitor of monitors) {
@@ -106,7 +115,15 @@ function Clock() {
  * servers whose parent group matches stay on the board, including live
  * arrivals. Unknown scopes match nothing rather than everything.
  */
-function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: string | null; onDisconnect: () => void }) {
+function Superboard({
+    kiosk,
+    filter,
+    onDisconnect,
+}: {
+    kiosk: boolean;
+    filter: string | null;
+    onDisconnect: () => void;
+}) {
     const [servers, setServers] = useState<FleetServer[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [loaded, setLoaded] = useState(false);
@@ -119,7 +136,7 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
     const [historyId, setHistoryId] = useState<number | null>(null);
     const openHistory = useCallback((id: number) => setHistoryId(id), []);
     const closeHistory = useCallback(() => setHistoryId(null), []);
-    const historyMonitor = servers.find(server => server.monitor.id === historyId)?.monitor;
+    const historyMonitor = servers.find((server) => server.monitor.id === historyId)?.monitor;
     // Custom right-click menu and the rename dialog it opens. Either open
     // pauses rotation like an open history dialog does.
     const [menu, setMenu] = useState<MenuAnchor | null>(null);
@@ -143,7 +160,9 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
             {
                 label: "Rename…",
                 onSelect: () => {
-                    const name = server ? server.monitor.name || server.metrics.host?.hostname || "Unnamed server" : menu.monitor.name;
+                    const name = server
+                        ? server.monitor.name || server.metrics.host?.hostname || "Unnamed server"
+                        : menu.monitor.name;
                     setRenaming({ monitor: menu.monitor, name });
                     setMenu(null);
                 },
@@ -173,7 +192,7 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
             });
         }
         return items;
-    }, [ menu, servers ]);
+    }, [menu, servers]);
     // Resolved scope names for the wall header; raw filter when unresolvable.
     const [scopeNames, setScopeNames] = useState<string[]>([]);
     const scopeTitle = scopeNames.length > 0 ? scopeNames.join(", ") : filter;
@@ -181,7 +200,9 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
     // Freshness must age even when the last/only host stops sending.
     useEffect(() => {
         const timer = window.setInterval(() => {
-            if (!document.hidden) { refreshFreshness(Date.now()); }
+            if (!document.hidden) {
+                refreshFreshness(Date.now());
+            }
         }, 1000);
         return () => window.clearInterval(timer);
     }, []);
@@ -204,14 +225,15 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
         let scopeIds: Set<number> | null = null;
         const order = (a: FleetServer, b: FleetServer) =>
             (roster.get(a.monitor.parent ?? -1)?.weight ?? 0) - (roster.get(b.monitor.parent ?? -1)?.weight ?? 0) ||
-            (a.monitor.weight ?? 0) - (b.monitor.weight ?? 0) || a.monitor.name.localeCompare(b.monitor.name);
+            (a.monitor.weight ?? 0) - (b.monitor.weight ?? 0) ||
+            a.monitor.name.localeCompare(b.monitor.name);
 
         async function load(signal?: AbortSignal) {
             try {
                 const monitors = await fetchAllMonitors(signal);
-                roster = new Map(monitors.map(m => [m.id, m]));
+                roster = new Map(monitors.map((m) => [m.id, m]));
                 const matched = filter ? matchGroups(monitors, filter) : [];
-                scopeIds = filter ? new Set(matched.map(g => g.id)) : null;
+                scopeIds = filter ? new Set(matched.map((g) => g.id)) : null;
 
                 // Groups are containers, not servers; anything else that has
                 // recent metrics is one. Zero configuration, and a server that
@@ -220,16 +242,26 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
                 // budget instead of drinking it. A group scope narrows the
                 // candidates to that group's children; ungrouped monitors
                 // never match a scope.
-                const candidates = monitors.filter((m) => m.type !== "group" && m.active !== false &&
-                    (!scopeIds || (m.parent != null && scopeIds.has(m.parent))));
+                const candidates = monitors.filter(
+                    (m) =>
+                        m.type !== "group" &&
+                        m.active !== false &&
+                        (!scopeIds || (m.parent != null && scopeIds.has(m.parent)))
+                );
                 const next = await toFleetServers(candidates, signal);
 
                 // Hosted-website links, fetched in the same batches as metrics:
                 // one request per 200 servers, never one per card.
                 const linkBatches = Array.from({ length: Math.ceil(next.length / 200) }, (_, index) =>
-                    fetchBulkMonitorLinks(next.slice(index * 200, (index + 1) * 200).map(s => s.monitor.id), signal));
+                    fetchBulkMonitorLinks(
+                        next.slice(index * 200, (index + 1) * 200).map((s) => s.monitor.id),
+                        signal
+                    )
+                );
                 const linkServers: Record<string, MonitorLinks> = {};
-                for (const batch of await Promise.all(linkBatches)) { Object.assign(linkServers, batch.servers); }
+                for (const batch of await Promise.all(linkBatches)) {
+                    Object.assign(linkServers, batch.servers);
+                }
                 for (const server of next) {
                     server.links = linkServers[String(server.monitor.id)]?.resolved ?? [];
                 }
@@ -238,7 +270,7 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
                     return;
                 }
 
-                setScopeNames(matched.map(g => g.name));
+                setScopeNames(matched.map((g) => g.name));
                 // Operator-controlled order: parent group weight, then the
                 // monitor's own weight, then name. Ties fall back to name so
                 // the board never reshuffles between refreshes.
@@ -269,32 +301,65 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
         // however, skips hidden ticks — no point polling a board nobody sees.
         const stop = watchLive({
             snapshot: load,
-            event: event => {
-                if (!alive) { return; }
+            event: (event) => {
+                if (!alive) {
+                    return;
+                }
                 const monitor = roster.get(event.monitorId);
-                if (event.type === "heartbeat" && monitor) { roster.set(event.monitorId, { ...monitor, ...event.patch }); }
+                if (event.type === "heartbeat" && monitor) {
+                    roster.set(event.monitorId, { ...monitor, ...event.patch });
+                }
                 if (event.type === "metrics") {
                     const current = roster.get(event.monitorId);
-                    if (scopeIds && !(current && current.parent != null && scopeIds.has(current.parent))) { return; }
-                }
-                setServers(previous => {
-                    if (event.type === "metrics" && !previous.some(s => s.monitor.id === event.monitorId) && monitor?.active && monitor.type !== "group") {
-                        return [ ...previous, { monitor, time: event.time, metrics: event.metrics, cpuPeak10m: event.cpuPeak10m, links: [] } ].sort(order);
+                    if (scopeIds && !(current && current.parent != null && scopeIds.has(current.parent))) {
+                        return;
                     }
-                    return previous.map(server => {
+                }
+                setServers((previous) => {
+                    if (
+                        event.type === "metrics" &&
+                        !previous.some((s) => s.monitor.id === event.monitorId) &&
+                        monitor?.active &&
+                        monitor.type !== "group"
+                    ) {
+                        return [
+                            ...previous,
+                            {
+                                monitor,
+                                time: event.time,
+                                metrics: event.metrics,
+                                cpuPeak10m: event.cpuPeak10m,
+                                links: [],
+                            },
+                        ].sort(order);
+                    }
+                    return previous.map((server) => {
                         let next = server;
                         if (server.monitor.id === event.monitorId) {
-                            next = event.type === "metrics"
-                                ? { ...server, time: event.time, metrics: event.metrics, cpuPeak10m: event.cpuPeak10m }
-                                : { ...server, monitor: { ...server.monitor, ...event.patch } };
+                            next =
+                                event.type === "metrics"
+                                    ? {
+                                          ...server,
+                                          time: event.time,
+                                          metrics: event.metrics,
+                                          cpuPeak10m: event.cpuPeak10m,
+                                      }
+                                    : { ...server, monitor: { ...server.monitor, ...event.patch } };
                         }
                         // A linked website's heartbeat updates its chip on every
                         // server that hosts it, without refetching the links.
-                        if (event.type === "heartbeat" && next.links?.some(link => link.id === event.monitorId)) {
+                        if (event.type === "heartbeat" && next.links?.some((link) => link.id === event.monitorId)) {
                             const patch = event.patch;
-                            const links: ResolvedMonitorLink[] = next.links.map(link => link.id === event.monitorId
-                                ? { ...link, status: patch.status ?? link.status, ping: patch.ping ?? link.ping, lastCheck: patch.lastCheck ?? link.lastCheck }
-                                : link);
+                            const links: ResolvedMonitorLink[] = next.links.map((link) =>
+                                link.id === event.monitorId
+                                    ? {
+                                          ...link,
+                                          status: patch.status ?? link.status,
+                                          ping: patch.ping ?? link.ping,
+                                          lastCheck: patch.lastCheck ?? link.lastCheck,
+                                      }
+                                    : link
+                            );
                             next = { ...next, links };
                         }
                         return next;
@@ -302,9 +367,14 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
                 });
                 setError(null);
             },
-            error: error => {
-                if (!alive) { return; }
-                if (error instanceof ApiError && (error.status === 401 || error.status === 403)) { onDisconnect(); return; }
+            error: (error) => {
+                if (!alive) {
+                    return;
+                }
+                if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+                    onDisconnect();
+                    return;
+                }
                 setError("Live updates disconnected; reconnecting. Last readings remain visible.");
                 // A metrics-free/new host is discovered on reconnect snapshot.
             },
@@ -313,7 +383,7 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
             alive = false;
             stop();
         };
-    }, [ onDisconnect, filter ]);
+    }, [onDisconnect, filter]);
 
     // Pause work while the tab is hidden; resume when it comes back.
     useEffect(() => {
@@ -334,8 +404,10 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
             const cols = Math.max(1, Math.floor((el.clientWidth + GAP) / (MIN_CARD_W + GAP)));
             // Content-sized cards can be taller with GPUs or long names.
             // Measure them rather than packing rows against an assumed height.
-            const cardHeight = Math.max(MIN_CARD_H, ...Array.from(el.children)
-                .map(card => card.getBoundingClientRect().height));
+            const cardHeight = Math.max(
+                MIN_CARD_H,
+                ...Array.from(el.children).map((card) => card.getBoundingClientRect().height)
+            );
             const rows = Math.max(1, Math.floor((el.clientHeight + GAP) / (cardHeight + GAP)));
             setLayout((prev) => (prev.cols === cols && prev.rows === rows ? prev : { cols, rows }));
         };
@@ -343,7 +415,7 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
         measure();
         const observer = new ResizeObserver(measure);
         observer.observe(el);
-        Array.from(el.children).forEach(card => observer.observe(card));
+        Array.from(el.children).forEach((card) => observer.observe(card));
         return () => observer.disconnect();
     }, [servers.length]);
 
@@ -358,17 +430,25 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
         if (page >= pageCount) {
             setPage(0);
         }
-    }, [ page, pageCount ]);
+    }, [page, pageCount]);
 
     // -- rotation -----------------------------------------------------------
 
     useEffect(() => {
-        if (paused || !visible || pageCount <= 1 || historyId !== null || menu !== null || renaming !== null || linkServer !== null) {
+        if (
+            paused ||
+            !visible ||
+            pageCount <= 1 ||
+            historyId !== null ||
+            menu !== null ||
+            renaming !== null ||
+            linkServer !== null
+        ) {
             return;
         }
         const timer = window.setInterval(() => setPage((p) => (p + 1) % pageCount), rotateMs);
         return () => window.clearInterval(timer);
-    }, [ paused, visible, pageCount, rotateMs, historyId, menu, renaming, linkServer ]);
+    }, [paused, visible, pageCount, rotateMs, historyId, menu, renaming, linkServer]);
 
     /** Any interaction pauses rotation for a while, so investigation is possible. */
     function noteInteraction() {
@@ -380,10 +460,17 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
     useEffect(() => () => window.clearTimeout(resumeTimer.current), []);
 
     const down = servers.filter((s) => s.monitor.status === 0).length;
-    const attentionCount = servers.filter(s => {
+    const attentionCount = servers.filter((s) => {
         const state = fleetAttention(s.metrics, s.time, s.monitor.interval || 60);
-        const websiteDown = s.links?.some(link => link.status === 0) ?? false;
-        return s.monitor.status === 0 || s.monitor.status === 2 || state.stale || state.issues > 0 || state.hot || websiteDown;
+        const websiteDown = s.links?.some((link) => link.status === 0) ?? false;
+        return (
+            s.monitor.status === 0 ||
+            s.monitor.status === 2 ||
+            state.stale ||
+            state.issues > 0 ||
+            state.hot ||
+            websiteDown
+        );
     }).length;
     const rotated = pageCount > 1;
 
@@ -396,28 +483,37 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
 
     // -- render -------------------------------------------------------------
 
-    const content = loaded && servers.length === 0 ? (
-        <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-            <p className="text-lg font-semibold">{filter ? `No servers in scope “${scopeTitle}”.` : "No servers reporting yet."}</p>
-            <p className="max-w-md text-sm text-quiet">
-                {filter
-                    ? "Check the group name in the URL, or link these monitors to a group in the admin panel."
-                    : "Install the Superboard agent on a box, or POST metrics to a push monitor. Any monitor that sends a metrics sample shows up here automatically."}
-            </p>
-        </div>
-    ) : (
-        <div
-            ref={gridRef}
-            className="fleet-grid grid min-h-0 flex-1 items-start content-start gap-2 overflow-y-auto"
-            style={{
-                gridTemplateColumns: `repeat(${layout.cols}, minmax(0, 1fr))`,
-            }}
-        >
-            {pageServers.map((server) => (
-                <FleetCard key={server.monitor.id} server={server} now={now} onOpenHistory={openHistory} onMenu={openMenu} />
-            ))}
-        </div>
-    );
+    const content =
+        loaded && servers.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
+                <p className="text-lg font-semibold">
+                    {filter ? `No servers in scope “${scopeTitle}”.` : "No servers reporting yet."}
+                </p>
+                <p className="max-w-md text-sm text-quiet">
+                    {filter
+                        ? "Check the group name in the URL, or link these monitors to a group in the admin panel."
+                        : "Install the Superboard agent on a box, or POST metrics to a push monitor. Any monitor that sends a metrics sample shows up here automatically."}
+                </p>
+            </div>
+        ) : (
+            <div
+                ref={gridRef}
+                className="fleet-grid grid min-h-0 flex-1 items-start content-start gap-2 overflow-y-auto"
+                style={{
+                    gridTemplateColumns: `repeat(${layout.cols}, minmax(0, 1fr))`,
+                }}
+            >
+                {pageServers.map((server) => (
+                    <FleetCard
+                        key={server.monitor.id}
+                        server={server}
+                        now={now}
+                        onOpenHistory={openHistory}
+                        onMenu={openMenu}
+                    />
+                ))}
+            </div>
+        );
 
     const body = (
         <div
@@ -466,7 +562,13 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
                     </span>
                     <div className="ml-auto flex items-center gap-3">
                         {position}
-                        <Button size="sm" variant="outline" onClick={() => navigate(filter ? `/superboard/kiosk/${encodeScope(filter)}` : "/superboard/kiosk")}>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                                navigate(filter ? `/superboard/kiosk/${encodeScope(filter)}` : "/superboard/kiosk")
+                            }
+                        >
                             Kiosk
                         </Button>
                         <Button size="sm" variant="ghost" title="Forget token" onClick={onDisconnect}>
@@ -484,25 +586,25 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
 
             <div className={`flex min-h-0 flex-1 flex-col p-4 ${kiosk ? "pt-0" : ""}`}>{content}</div>
             {historyMonitor ? <ServerHistory monitor={historyMonitor} onClose={closeHistory} /> : null}
-            {menu ? (
-                <ServerMenu
-                    anchor={menu}
-                    items={menuItems}
-                    onClose={() => setMenu(null)}
+            {menu ? <ServerMenu anchor={menu} items={menuItems} onClose={() => setMenu(null)} /> : null}
+            {renaming ? (
+                <RenameDialog
+                    monitor={renaming.monitor}
+                    currentName={renaming.name}
+                    onClose={() => setRenaming(null)}
                 />
             ) : null}
-            {renaming ? (
-                <RenameDialog monitor={renaming.monitor} currentName={renaming.name} onClose={() => setRenaming(null)} />
-            ) : null}
-            {linkServer ? (
-                <WebsiteLinkDialog server={linkServer} onClose={() => setLinkServer(null)} />
-            ) : null}
+            {linkServer ? <WebsiteLinkDialog server={linkServer} onClose={() => setLinkServer(null)} /> : null}
         </div>
     );
 
     // Kiosk fills the viewport and does not scroll: the wall URL is opened
     // fullscreen and must never show a scrollbar.
-    return kiosk ? <div className="h-screen w-screen overflow-hidden">{body}</div> : <div className="h-screen">{body}</div>;
+    return kiosk ? (
+        <div className="h-screen w-screen overflow-hidden">{body}</div>
+    ) : (
+        <div className="h-screen">{body}</div>
+    );
 }
 
 /**
@@ -510,7 +612,10 @@ function Superboard({ kiosk, filter, onDisconnect }: { kiosk: boolean; filter: s
  * multi-group delimiter.
  */
 function encodeScope(filter: string): string {
-    return filter.split(",").map((part) => encodeURIComponent(part.trim())).join(",");
+    return filter
+        .split(",")
+        .map((part) => encodeURIComponent(part.trim()))
+        .join(",");
 }
 
 /**

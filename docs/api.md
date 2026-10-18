@@ -8,6 +8,7 @@ and [superboard](superboard.md), [deployment](deployment.md) and
 [operations](operations.md) for the surrounding system.
 
 ## Base URL and same-origin model
+
 - The backend binds `0.0.0.0:3001` by default (`UPTIME_KUMA_HOST`, `PORT`).
   Every path below is absolute to that origin; there is no separate API host.
 - API paths are `/api/...`, `/add-push-server.md`, `/llms.txt`, `/agent/...`
@@ -20,6 +21,7 @@ and [superboard](superboard.md), [deployment](deployment.md) and
   at `/api/v1/openapi.json` is the machine-readable companion to this page.
 
 ## Authentication
+
 **Operator bearer token.** Every `/api/v1` route except `auth/setup`,
 `auth/login` and `openapi.json` requires
 `Authorization: Bearer flatline_<hex>`. Tokens come from the dashboard's
@@ -50,6 +52,7 @@ operator bearer token or a push token, via `Authorization` or `?token=`. A
 paused monitor (`active: false`) has an unusable push token and is excluded.
 
 ## Response envelope and status codes
+
 Success responses carry `"ok": true` plus endpoint data, for example
 `{"ok":true,"monitor":{...}}` or
 `{"ok":true,"monitors":[...],"count":n,"pagination":{...}}`. Failures use
@@ -60,110 +63,122 @@ machine token (`bad_request`, `not_found`, `unauthorized`, `server_error`,
 bad id; a gated status page answers `401` with `error:"password_required"` and a
 missing page is plain-text `404`.
 
-| Code | Meaning | Where it occurs |
-| --- | --- | --- |
-| 200 / 201 | Success / Created | Reads and updates; `POST` monitors and API keys |
-| 400 | Validation failure; on push, "metrics dropped" | Bad type/`name`/range, bad `hours`/`ids`, invalid metrics |
-| 401 | Missing/invalid/inactive/expired token; locked status page | Any `/api/v1` route; gated status-page reads |
-| 403 | Invalid badge id | `/api/badge/{id}/...` with a non-numeric or non-positive id |
-| 404 | Unknown resource, unknown/paused push monitor, no metrics, out-of-range ping | `.../{id}`, `POST /api/push/{pushToken}` |
-| 409 | Not emitted today | A duplicate `pushToken` hits the unique index but is reported as 500 |
-| 413 | Body over the 256 KB limit | `POST /api/push/{pushToken}` |
-| 429 | Too many live SSE connections | `GET /api/v1/events` (`stream_limit`) |
-| 500 | Storage failure | Any handler |
+| Code      | Meaning                                                                      | Where it occurs                                                      |
+| --------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 200 / 201 | Success / Created                                                            | Reads and updates; `POST` monitors and API keys                      |
+| 400       | Validation failure; on push, "metrics dropped"                               | Bad type/`name`/range, bad `hours`/`ids`, invalid metrics            |
+| 401       | Missing/invalid/inactive/expired token; locked status page                   | Any `/api/v1` route; gated status-page reads                         |
+| 403       | Invalid badge id                                                             | `/api/badge/{id}/...` with a non-numeric or non-positive id          |
+| 404       | Unknown resource, unknown/paused push monitor, no metrics, out-of-range ping | `.../{id}`, `POST /api/push/{pushToken}`                             |
+| 409       | Not emitted today                                                            | A duplicate `pushToken` hits the unique index but is reported as 500 |
+| 413       | Body over the 256 KB limit                                                   | `POST /api/push/{pushToken}`                                         |
+| 429       | Too many live SSE connections                                                | `GET /api/v1/events` (`stream_limit`)                                |
+| 500       | Storage failure                                                              | Any handler                                                          |
 
 ## Endpoint reference
+
 ### Auth
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/auth/setup` | Public; always `setupNeeded:false` |
-| POST | `/api/v1/auth/login` | Public; token in `password`, echoed back |
-| GET | `/api/v1/auth/me` | Validate and describe the bearer token |
+
+| Method | Path                 | Purpose                                  |
+| ------ | -------------------- | ---------------------------------------- |
+| GET    | `/api/v1/auth/setup` | Public; always `setupNeeded:false`       |
+| POST   | `/api/v1/auth/login` | Public; token in `password`, echoed back |
+| GET    | `/api/v1/auth/me`    | Validate and describe the bearer token   |
 
 ### Monitors, heartbeats and links
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/monitor-types` | Supported types and `writableFields` |
-| GET | `/api/v1/monitors` | List; `page`, `perPage`, `status`, `active`, `q` |
-| POST | `/api/v1/monitors` | Create a monitor |
-| GET | `/api/v1/monitors/{id}` | One monitor with live status and uptime |
-| PATCH | `/api/v1/monitors/{id}` | Partial update (type is immutable) |
-| DELETE | `/api/v1/monitors/{id}?deleteChildren=true` | Delete, optionally a group subtree |
-| GET | `/api/v1/monitors/{id}/heartbeats?limit=` | Recent heartbeats, newest first |
-| POST | `/api/v1/monitors/{id}/push-failures/clear` | Acknowledge `failedPushes` |
-| POST | `/api/v1/monitors/{id}/agent-warnings/clear` | Acknowledge all agent warning counters |
-| GET | `/api/v1/monitors/links?ids=1,2,3` | Bulk links for many monitors (max 200) |
-| GET | `/api/v1/monitors/{id}/links` | Raw and resolved links |
-| PUT | `/api/v1/monitors/{id}/links` | Replace; body `{"linkedMonitorIds":[1,2]}` |
-| DELETE | `/api/v1/monitors/{id}/links` | Clear all links |
+
+| Method | Path                                         | Purpose                                          |
+| ------ | -------------------------------------------- | ------------------------------------------------ |
+| GET    | `/api/v1/monitor-types`                      | Supported types and `writableFields`             |
+| GET    | `/api/v1/monitors`                           | List; `page`, `perPage`, `status`, `active`, `q` |
+| POST   | `/api/v1/monitors`                           | Create a monitor                                 |
+| GET    | `/api/v1/monitors/{id}`                      | One monitor with live status and uptime          |
+| PATCH  | `/api/v1/monitors/{id}`                      | Partial update (type is immutable)               |
+| DELETE | `/api/v1/monitors/{id}?deleteChildren=true`  | Delete, optionally a group subtree               |
+| GET    | `/api/v1/monitors/{id}/heartbeats?limit=`    | Recent heartbeats, newest first                  |
+| POST   | `/api/v1/monitors/{id}/push-failures/clear`  | Acknowledge `failedPushes`                       |
+| POST   | `/api/v1/monitors/{id}/agent-warnings/clear` | Acknowledge all agent warning counters           |
+| GET    | `/api/v1/monitors/links?ids=1,2,3`           | Bulk links for many monitors (max 200)           |
+| GET    | `/api/v1/monitors/{id}/links`                | Raw and resolved links                           |
+| PUT    | `/api/v1/monitors/{id}/links`                | Replace; body `{"linkedMonitorIds":[1,2]}`       |
+| DELETE | `/api/v1/monitors/{id}/links`                | Clear all links                                  |
 
 ### Metrics
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/monitors/metrics/latest?ids=4,5,6` | Bulk latest (max 200; missing entries are `null`) |
-| GET | `/api/v1/monitors/{id}/metrics/latest` | Latest sample |
-| GET | `/api/v1/monitors/{id}/metrics/summary?hours=` | Windowed summary and chart series |
-| GET | `/api/v1/monitors/{id}/metrics?hours=` | Raw snapshots, newest first |
+
+| Method | Path                                           | Purpose                                           |
+| ------ | ---------------------------------------------- | ------------------------------------------------- |
+| GET    | `/api/v1/monitors/metrics/latest?ids=4,5,6`    | Bulk latest (max 200; missing entries are `null`) |
+| GET    | `/api/v1/monitors/{id}/metrics/latest`         | Latest sample                                     |
+| GET    | `/api/v1/monitors/{id}/metrics/summary?hours=` | Windowed summary and chart series                 |
+| GET    | `/api/v1/monitors/{id}/metrics?hours=`         | Raw snapshots, newest first                       |
 
 ### Notifications and API keys
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/notifications` | List; credential fields are never echoed |
-| POST | `/api/v1/notifications` | Create (`name`, `type`, `active`, `isDefault`, `config`) |
-| PATCH / DELETE | `/api/v1/notifications/{id}` | Update or delete |
-| GET | `/api/v1/api-keys` | List keys (metadata only) |
-| POST | `/api/v1/api-keys` | Mint a full-permission key; `token` returned once |
-| PATCH | `/api/v1/api-keys/{id}` | Enable/disable (`{"active":false}`) |
-| DELETE | `/api/v1/api-keys/{id}` | Revoke |
+
+| Method         | Path                         | Purpose                                                  |
+| -------------- | ---------------------------- | -------------------------------------------------------- |
+| GET            | `/api/v1/notifications`      | List; credential fields are never echoed                 |
+| POST           | `/api/v1/notifications`      | Create (`name`, `type`, `active`, `isDefault`, `config`) |
+| PATCH / DELETE | `/api/v1/notifications/{id}` | Update or delete                                         |
+| GET            | `/api/v1/api-keys`           | List keys (metadata only)                                |
+| POST           | `/api/v1/api-keys`           | Mint a full-permission key; `token` returned once        |
+| PATCH          | `/api/v1/api-keys/{id}`      | Enable/disable (`{"active":false}`)                      |
+| DELETE         | `/api/v1/api-keys/{id}`      | Revoke                                                   |
 
 ### Status pages (public reads, password-gated)
+
 Pages are provisioned by the importer; this backend exposes reads, not page CRUD.
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/status-page/resolve-host?host=` | Resolve a hostname to a page slug |
-| GET | `/api/status-page/{slug}` | Page data (name, groups, monitors) |
-| GET | `/api/status-page/heartbeat/{slug}` | Public heartbeat bars |
-| GET | `/api/status-page/{slug}/incident-history?cursor=` | Paged incident history |
-| GET | `/api/status-page/{slug}/manifest.json` | PWA manifest |
-| GET | `/api/status-page/{slug}/badge` | Aggregate page badge (SVG) |
-| POST | `/api/v1/status-pages/unlock/{slug}` | Submit the password; sets the unlock cookie |
+
+| Method | Path                                               | Purpose                                     |
+| ------ | -------------------------------------------------- | ------------------------------------------- |
+| GET    | `/api/status-page/resolve-host?host=`              | Resolve a hostname to a page slug           |
+| GET    | `/api/status-page/{slug}`                          | Page data (name, groups, monitors)          |
+| GET    | `/api/status-page/heartbeat/{slug}`                | Public heartbeat bars                       |
+| GET    | `/api/status-page/{slug}/incident-history?cursor=` | Paged incident history                      |
+| GET    | `/api/status-page/{slug}/manifest.json`            | PWA manifest                                |
+| GET    | `/api/status-page/{slug}/badge`                    | Aggregate page badge (SVG)                  |
+| POST   | `/api/v1/status-pages/unlock/{slug}`               | Submit the password; sets the unlock cookie |
 
 Gated reads answer `401` until unlocked. The unlock route accepts JSON
 (`{"password":"..."}`) or a form body and, on success, redirects with a signed
 cookie.
 
 ### Badges (public SVG)
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/badge/{id}/status` | Latest status |
-| GET | `/api/badge/{id}/uptime` / `.../uptime/{duration}` | Uptime percentage |
-| GET | `/api/badge/{id}/ping` / `.../ping/{duration}` | Average ping |
-| GET | `/api/badge/{id}/avg-response` / `.../avg-response/{duration}` | Average response (hours, max 720) |
-| GET | `/api/badge/{id}/response` | Latest heartbeat ping |
+
+| Method | Path                                                           | Purpose                           |
+| ------ | -------------------------------------------------------------- | --------------------------------- |
+| GET    | `/api/badge/{id}/status`                                       | Latest status                     |
+| GET    | `/api/badge/{id}/uptime` / `.../uptime/{duration}`             | Uptime percentage                 |
+| GET    | `/api/badge/{id}/ping` / `.../ping/{duration}`                 | Average ping                      |
+| GET    | `/api/badge/{id}/avg-response` / `.../avg-response/{duration}` | Average response (hours, max 720) |
+| GET    | `/api/badge/{id}/response`                                     | Latest heartbeat ping             |
 
 Badges honour `label`, `prefix`/`suffix`, `color` and `style`; only monitors on
 a public status-page group get real values, and everything else is grey `N/A`.
 
 ### Provisioning and agent downloads
+
 Outside `/api/v1`, authenticated by an operator token or a push token.
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/add-push-server.md` | Runbook, rendered with origin, token and version |
-| GET | `/llms.txt` | Pointer file for LLM crawlers |
-| GET | `/agent/install.sh` | Pre-credentialed installer/updater |
-| GET | `/agent/version` | Version, size, SHA-256 and URL per platform |
-| GET | `/agent/sha256sums` | Checksums for the shipped builds |
-| GET | `/agent/{file}` | One `superboard-<os>-<arch>` binary |
-| GET | `/robots.txt` | Public; advisory `Disallow: /` |
+
+| Method | Path                  | Purpose                                          |
+| ------ | --------------------- | ------------------------------------------------ |
+| GET    | `/add-push-server.md` | Runbook, rendered with origin, token and version |
+| GET    | `/llms.txt`           | Pointer file for LLM crawlers                    |
+| GET    | `/agent/install.sh`   | Pre-credentialed installer/updater               |
+| GET    | `/agent/version`      | Version, size, SHA-256 and URL per platform      |
+| GET    | `/agent/sha256sums`   | Checksums for the shipped builds                 |
+| GET    | `/agent/{file}`       | One `superboard-<os>-<arch>` binary              |
+| GET    | `/robots.txt`         | Public; advisory `Disallow: /`                   |
 
 ### Health, live events and the agent push
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/health` | Totals: up/down/pending/paused and `downMonitors` |
-| GET | `/api/v1/events` | SSE stream; `?metrics=0` drops metrics events |
-| GET, POST | `/api/push/{pushToken}` | Agent heartbeat plus optional metrics |
+
+| Method    | Path                    | Purpose                                           |
+| --------- | ----------------------- | ------------------------------------------------- |
+| GET       | `/api/v1/health`        | Totals: up/down/pending/paused and `downMonitors` |
+| GET       | `/api/v1/events`        | SSE stream; `?metrics=0` drops metrics events     |
+| GET, POST | `/api/push/{pushToken}` | Agent heartbeat plus optional metrics             |
 
 ## The push contract
+
 `POST /api/push/{pushToken}` (GET is also accepted for legacy agents) selects an
 active monitor by token in the path; a missing or paused monitor answers `404`.
 
@@ -181,14 +196,16 @@ active monitor by token in the path; a missing or paused monitor answers `404`.
   dropped: ...") because no heartbeat was written.
 
 ## Monitor types and fields
+
 `GET /api/v1/monitor-types` is the source of truth.
-| Type | Required beyond `name`/`type` | Notes |
-| --- | --- | --- |
-| `http` | `url` | HTTP probe |
-| `https` | `url` | HTTPS probe |
-| `push` | — | Gets a `pushToken` at creation |
-| `ping` | `hostname` | ICMP probe |
-| `group` | — | Container; children set `parent` to its id |
+
+| Type    | Required beyond `name`/`type` | Notes                                      |
+| ------- | ----------------------------- | ------------------------------------------ |
+| `http`  | `url`                         | HTTP probe                                 |
+| `https` | `url`                         | HTTPS probe                                |
+| `push`  | —                             | Gets a `pushToken` at creation             |
+| `ping`  | `hostname`                    | ICMP probe                                 |
+| `group` | —                             | Container; children set `parent` to its id |
 
 Create requires `name` and `type`; `PATCH` rejects a `type` change. `status` is
 `1` up, `0` down, `2` pending, `3` maintenance; a monitor with no heartbeat
@@ -209,6 +226,7 @@ post its whole payload. `interval` must be at least 20 and a bad value is a
 `400`, never a silent clamp.
 
 ## Pagination, filters and retention
+
 - **Monitor list** — `page` (default 1, min 1) and `perPage` (default 50, max
   200). `status` filters after the latest heartbeat is resolved (`up`, `down`,
   `pending`, `maintenance`); `active` is `true`/`false`; `q` matches `name` or
@@ -231,6 +249,7 @@ kept 730 days. Pruning runs as a background job, so `capped: true` and empty
 windows are normal at the edges.
 
 ## curl examples
+
 ```sh
 # Create an HTTP monitor.
 curl -sS -X POST https://uptime.example/api/v1/monitors \

@@ -48,7 +48,9 @@ export function TokenGate({ onSaved }: { onSaved: () => void }) {
                 </p>
 
                 {error ? (
-                    <div className="mb-3 rounded-md bg-destructive/12 px-2.5 py-2 text-xs text-destructive">{error}</div>
+                    <div className="mb-3 rounded-md bg-destructive/12 px-2.5 py-2 text-xs text-destructive">
+                        {error}
+                    </div>
                 ) : null}
 
                 <label className="mb-3 block">

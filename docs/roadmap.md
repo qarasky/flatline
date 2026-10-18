@@ -21,57 +21,57 @@ per-container one-shot CPU/memory stats, SMART disk health, agent self-update
 
 ## Telemetry & history
 
-| Item | Rationale |
-|---|---|
+| Item                                             | Rationale                                                                                                                                                                   |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Per-container CPU/memory **history** and streams | One-shot stats ship per Docker refresh, but there is no per-container time series or live stream — the "which container is eating the box over time" question is unanswered |
-| Dedicated **network / disk-I/O history charts** | Raw counters are collected and live rates derived, but the card shows only CPU/RAM/disk and there is no historical throughput chart |
-| **Per-minute (Netdata-style) storage tiers** | Retention is 30s raw for 30 days plus hourly for two years; there is no intermediate tier, so week-scale history is coarse |
+| Dedicated **network / disk-I/O history charts**  | Raw counters are collected and live rates derived, but the card shows only CPU/RAM/disk and there is no historical throughput chart                                         |
+| **Per-minute (Netdata-style) storage tiers**     | Retention is 30s raw for 30 days plus hourly for two years; there is no intermediate tier, so week-scale history is coarse                                                  |
 
 ## Agent & fleet
 
-| Item | Rationale |
-|---|---|
-| **Docker event subscriptions** | The agent polls the Docker API; it does not subscribe to daemon events, so container start/stop/die transitions are only observed on the next poll |
-| **Agent 1.7.0 rollout to the rest of the fleet** | The image ships 1.7.0; hosts on 1.6.1 need one manual `install.sh --update` hop before self-update can take over (operational, not a code gap) |
+| Item                                             | Rationale                                                                                                                                          |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Docker event subscriptions**                   | The agent polls the Docker API; it does not subscribe to daemon events, so container start/stop/die transitions are only observed on the next poll |
+| **Agent 1.7.0 rollout to the rest of the fleet** | The image ships 1.7.0; hosts on 1.6.1 need one manual `install.sh --update` hop before self-update can take over (operational, not a code gap)     |
 
 ## Monitors, tags & API surface
 
-| Item | Rationale |
-|---|---|
-| **Tags** | Dropped from the Rust v1 surface; the API returns `tags: []`. The production status page has `show_tags = 0`, so nothing renders differently today, but the feature does not exist |
-| **Certificate-expiry fields** (`certExpiryDaysRemaining`, `validCert`) and group `sendUrl` | Explicitly out of the Rust v1 surface; the monitor list/detail does not expose TLS certificate expiry |
-| **Monitor types beyond push / http / https / ping / group** | The rewrite locked scope to what the fleet measures; ~24 upstream types (TCP, DNS, MQTT, Docker, Postgres, MySQL, MongoDB, Redis, Kafka, SFTP, NTP, Oracle, gRPC, Steam, Websocket, keyword/JSON, …) were never ported. Revisit only if a measured need appears |
-| **Maintenance windows** | Dropped from the Rust v1 surface along with tags. Whether they will return is not stated in the current sources — treat as unresolved rather than scheduled |
-| **Status-page authoring CRUD** | The Rust backend keeps only a read-only status-page API (config, heartbeats, incidents, unlock); creating pages and editing incidents via REST was left "until a later pass", so pages are effectively frozen |
+| Item                                                                                       | Rationale                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Tags**                                                                                   | Dropped from the Rust v1 surface; the API returns `tags: []`. The production status page has `show_tags = 0`, so nothing renders differently today, but the feature does not exist                                                                              |
+| **Certificate-expiry fields** (`certExpiryDaysRemaining`, `validCert`) and group `sendUrl` | Explicitly out of the Rust v1 surface; the monitor list/detail does not expose TLS certificate expiry                                                                                                                                                           |
+| **Monitor types beyond push / http / https / ping / group**                                | The rewrite locked scope to what the fleet measures; ~24 upstream types (TCP, DNS, MQTT, Docker, Postgres, MySQL, MongoDB, Redis, Kafka, SFTP, NTP, Oracle, gRPC, Steam, Websocket, keyword/JSON, …) were never ported. Revisit only if a measured need appears |
+| **Maintenance windows**                                                                    | Dropped from the Rust v1 surface along with tags. Whether they will return is not stated in the current sources — treat as unresolved rather than scheduled                                                                                                     |
+| **Status-page authoring CRUD**                                                             | The Rust backend keeps only a read-only status-page API (config, heartbeats, incidents, unlock); creating pages and editing incidents via REST was left "until a later pass", so pages are effectively frozen                                                   |
 
 ## Alerts & notifications
 
-| Item | Rationale |
-|---|---|
-| **Group-level threshold defaults** | Per-monitor CPU/RAM/disk thresholds ship; group-level defaults were deliberately left out of that pass |
-| **Notification configuration UI** | Telegram config arrives through the importer and is edited over the API; the rewrite plan flagged a "tiny settings form" as an optional follow-up and it is not recorded as built |
+| Item                               | Rationale                                                                                                                                                                         |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Group-level threshold defaults** | Per-monitor CPU/RAM/disk thresholds ship; group-level defaults were deliberately left out of that pass                                                                            |
+| **Notification configuration UI**  | Telegram config arrives through the importer and is edited over the API; the rewrite plan flagged a "tiny settings form" as an optional follow-up and it is not recorded as built |
 
 ## Status pages
 
-| Item | Rationale |
-|---|---|
+| Item                                          | Rationale                                                                                                                                     |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Private aggregate saved status-page views** | A dashboard-only aggregate across all groups was specced but is "still specced, not scheduled"; it is deliberately not a public `status_page` |
 
 ## Security & hardening
 
-| Item | Rationale |
-|---|---|
+| Item                              | Rationale                                                                                                                                                                                                                         |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Dependency-advisory hardening** | Carried over as an outstanding pass. The Node backend's removal shrank the npm surface substantially, but no dedicated audit of the remaining Rust crates has been recorded — verify which advisories still apply before starting |
 
 ## Explicitly out of scope (deliberately not planned)
 
-| Idea | Why not |
-|---|---|
-| Pull-based scraping | Clients are NAT'd; push is the documented, intended transport |
-| Multi-user silos / OAuth / OIDC | The shared-instance model is deliberate |
-| Clustering / HA / parent aggregation | Needless at the documented fleet size (≤ 10–50); a single backend process is a documented limit |
-| Edge anomaly detection (Netdata-style) | Too much machinery for a wall board; thresholds cover the need |
-| Log shipping | Explicitly out of product scope from day one |
+| Idea                                     | Why not                                                                                               |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Pull-based scraping                      | Clients are NAT'd; push is the documented, intended transport                                         |
+| Multi-user silos / OAuth / OIDC          | The shared-instance model is deliberate                                                               |
+| Clustering / HA / parent aggregation     | Needless at the documented fleet size (≤ 10–50); a single backend process is a documented limit       |
+| Edge anomaly detection (Netdata-style)   | Too much machinery for a wall board; thresholds cover the need                                        |
+| Log shipping                             | Explicitly out of product scope from day one                                                          |
 | Rebuilding upstream push-retry semantics | Upstream's own tracker shows it is a tarpit; Flatline's silence-based host-down is simpler and honest |
 
 ## Not open items (noted so they are not mistaken for gaps)

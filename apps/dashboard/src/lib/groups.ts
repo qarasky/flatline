@@ -24,7 +24,7 @@ export function groupPath(monitors: MonitorSummary[], id: number | null | undefi
     if (id == null) {
         return null;
     }
-    const groups = new Map(monitors.filter((m) => m.type === "group").map((m) => [ m.id, m ]));
+    const groups = new Map(monitors.filter((m) => m.type === "group").map((m) => [m.id, m]));
     const names: string[] = [];
     let cursor: number | null | undefined = id;
     for (let depth = 0; depth < MAX_DEPTH && cursor != null; depth++) {
@@ -51,11 +51,11 @@ export function descendantGroupIds(monitors: MonitorSummary[], id: number): Set<
         if (monitor.type !== "group" || monitor.parent == null) {
             continue;
         }
-        children.set(monitor.parent, [ ...(children.get(monitor.parent) ?? []), monitor.id ]);
+        children.set(monitor.parent, [...(children.get(monitor.parent) ?? []), monitor.id]);
     }
 
-    const seen = new Set<number>([ id ]);
-    const stack = [ id ];
+    const seen = new Set<number>([id]);
+    const stack = [id];
     while (stack.length) {
         const current = stack.pop() as number;
         for (const child of children.get(current) ?? []) {

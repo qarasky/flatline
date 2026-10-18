@@ -11,7 +11,8 @@
     },
     "//": "Node is a build/test tool only: the backend is Rust, the agent is Go, and the dashboard is bundled by Vite. Nothing here is a runtime dependency.",
     "scripts": {
-        "fmt": "prettier --write \"**/*.{ts,tsx,css,json,md,yml,yaml}\"",
+        "fmt": "prettier --write .",
+        "fmt:check": "prettier --check .",
         "test:dashboard": "node --import=tsx --test apps/dashboard/test/*.mjs",
         "build:dashboard": "npm --prefix apps/dashboard run build",
         "typecheck:dashboard": "npm --prefix apps/dashboard run typecheck"

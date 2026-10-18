@@ -56,11 +56,7 @@
         "schemas": {
             "Error": {
                 "type": "object",
-                "required": [
-                    "ok",
-                    "error",
-                    "message"
-                ],
+                "required": ["ok", "error", "message"],
                 "properties": {
                     "ok": {
                         "type": "boolean",
@@ -119,16 +115,10 @@
                         "description": "1 = up, 0 = down, 2 = pending, 3 = maintenance"
                     },
                     "ping": {
-                        "type": [
-                            "number",
-                            "null"
-                        ]
+                        "type": ["number", "null"]
                     },
                     "url": {
-                        "type": [
-                            "string",
-                            "null"
-                        ]
+                        "type": ["string", "null"]
                     },
                     "interval": {
                         "type": "integer"
@@ -137,34 +127,19 @@
                         "type": "boolean"
                     },
                     "lastCheck": {
-                        "type": [
-                            "string",
-                            "null"
-                        ]
+                        "type": ["string", "null"]
                     },
                     "lastMessage": {
-                        "type": [
-                            "string",
-                            "null"
-                        ]
+                        "type": ["string", "null"]
                     },
                     "uptime24h": {
-                        "type": [
-                            "number",
-                            "null"
-                        ]
+                        "type": ["number", "null"]
                     },
                     "uptime7d": {
-                        "type": [
-                            "number",
-                            "null"
-                        ]
+                        "type": ["number", "null"]
                     },
                     "uptime30d": {
-                        "type": [
-                            "number",
-                            "null"
-                        ]
+                        "type": ["number", "null"]
                     },
                     "tags": {
                         "type": "array",
@@ -173,24 +148,15 @@
                         }
                     },
                     "metricCpuThreshold": {
-                        "type": [
-                            "integer",
-                            "null"
-                        ],
+                        "type": ["integer", "null"],
                         "description": "Alert when server-derived CPU stays at or above this percent for 60s. null disables."
                     },
                     "metricRamThreshold": {
-                        "type": [
-                            "integer",
-                            "null"
-                        ],
+                        "type": ["integer", "null"],
                         "description": "Alert when RAM stays at or above this percent for 60s. null disables."
                     },
                     "metricDiskThreshold": {
-                        "type": [
-                            "integer",
-                            "null"
-                        ],
+                        "type": ["integer", "null"],
                         "description": "Alert when the fullest reported mount stays at or above this percent for 60s. null disables."
                     },
                     "pushFailuresAck": {
@@ -220,10 +186,7 @@
                         "type": "integer"
                     },
                     "ping": {
-                        "type": [
-                            "number",
-                            "null"
-                        ]
+                        "type": ["number", "null"]
                     },
                     "msg": {
                         "type": "string"
@@ -235,10 +198,7 @@
             },
             "MonitorInput": {
                 "type": "object",
-                "required": [
-                    "name",
-                    "type"
-                ],
+                "required": ["name", "type"],
                 "properties": {
                     "name": {
                         "type": "string"
@@ -269,23 +229,14 @@
                         "description": "Map of notification id to enabled."
                     },
                     "metricCpuThreshold": {
-                        "type": [
-                            "integer",
-                            "null"
-                        ],
+                        "type": ["integer", "null"],
                         "description": "1-100, or null to disable. See the Monitor schema for alert semantics."
                     },
                     "metricRamThreshold": {
-                        "type": [
-                            "integer",
-                            "null"
-                        ]
+                        "type": ["integer", "null"]
                     },
                     "metricDiskThreshold": {
-                        "type": [
-                            "integer",
-                            "null"
-                        ]
+                        "type": ["integer", "null"]
                     }
                 }
             }
@@ -379,10 +330,7 @@
                         "in": "query",
                         "schema": {
                             "type": "string",
-                            "enum": [
-                                "0",
-                                "1"
-                            ],
+                            "enum": ["0", "1"],
                             "default": "1"
                         },
                         "description": "0 suppresses telemetry for ordinary monitor dashboards."
@@ -472,10 +420,7 @@
                                                 },
                                                 "status": {
                                                     "type": "string",
-                                                    "enum": [
-                                                        "up",
-                                                        "down"
-                                                    ]
+                                                    "enum": ["up", "down"]
                                                 },
                                                 "downMonitors": {
                                                     "type": "array",
@@ -520,12 +465,7 @@
                         "in": "query",
                         "schema": {
                             "type": "string",
-                            "enum": [
-                                "up",
-                                "down",
-                                "pending",
-                                "maintenance"
-                            ]
+                            "enum": ["up", "down", "pending", "maintenance"]
                         }
                     },
                     {
@@ -540,10 +480,7 @@
                         "in": "query",
                         "schema": {
                             "type": "string",
-                            "enum": [
-                                "true",
-                                "false"
-                            ]
+                            "enum": ["true", "false"]
                         }
                     },
                     {
@@ -725,10 +662,7 @@
                         "in": "query",
                         "schema": {
                             "type": "string",
-                            "enum": [
-                                "true",
-                                "false"
-                            ]
+                            "enum": ["true", "false"]
                         }
                     }
                 ],
@@ -840,10 +774,7 @@
                                             "type": "integer"
                                         },
                                         "reported": {
-                                            "type": [
-                                                "integer",
-                                                "null"
-                                            ]
+                                            "type": ["integer", "null"]
                                         }
                                     }
                                 }
@@ -1088,9 +1019,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1112,9 +1041,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1148,9 +1075,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1172,9 +1097,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1218,10 +1141,7 @@
                     "in": "query",
                     "schema": {
                         "type": "string",
-                        "enum": [
-                            "up",
-                            "down"
-                        ],
+                        "enum": ["up", "down"],
                         "default": "up"
                     }
                 },
@@ -1230,9 +1150,7 @@
                     "in": "query",
                     "schema": {
                         "type": "string",
-                        "enum": [
-                            "1"
-                        ]
+                        "enum": ["1"]
                     },
                     "description": "POST only: 1Hz telemetry fast path."
                 }
@@ -1246,9 +1164,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1270,9 +1186,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1289,9 +1203,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1308,9 +1220,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1469,9 +1379,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1505,9 +1413,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1524,9 +1430,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1543,9 +1447,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1579,9 +1481,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1598,9 +1498,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1617,9 +1515,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1660,9 +1556,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1679,9 +1573,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1698,9 +1590,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1737,9 +1627,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1756,9 +1644,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1794,9 +1680,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1831,9 +1715,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1866,9 +1748,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",
@@ -1901,9 +1781,7 @@
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": [
-                                        "ok"
-                                    ],
+                                    "required": ["ok"],
                                     "properties": {
                                         "ok": {
                                             "type": "boolean",

@@ -14,7 +14,14 @@ import {
 } from "@/lib/api";
 import { MonitorForm } from "@/components/MonitorForm";
 import { MonitorDetail } from "@/components/MonitorDetail";
-import { DeleteGroupDialog, MoveDialog, RenameDialog, ServerMenu, type MenuAnchor, type MenuItem } from "@/components/ServerMenu";
+import {
+    DeleteGroupDialog,
+    MoveDialog,
+    RenameDialog,
+    ServerMenu,
+    type MenuAnchor,
+    type MenuItem,
+} from "@/components/ServerMenu";
 import { directChildren, groupOptions, groupPath, subtreeMonitorCount } from "@/lib/groups";
 import { buildLinkCandidates } from "@/lib/links";
 import { AgentPanel } from "@/components/AgentPanel";
@@ -163,7 +170,10 @@ interface GroupNode {
 function groupTree(monitors: MonitorSummary[]): { roots: GroupNode[]; ungrouped: MonitorSummary[] } {
     const groups = monitors.filter((m) => m.type === "group");
     const nodes = new Map<number, GroupNode>(
-        groups.map((group) => [ group.id, { id: group.id, name: group.name, weight: group.weight ?? 0, groups: [], monitors: [], group } ])
+        groups.map((group) => [
+            group.id,
+            { id: group.id, name: group.name, weight: group.weight ?? 0, groups: [], monitors: [], group },
+        ])
     );
 
     const roots: GroupNode[] = [];
@@ -295,9 +305,7 @@ function MonitorRow({
                     >
                         {monitor.name}
                     </button>
-                    <span className="truncate text-xs text-quiet">
-                        {monitorTarget(monitor)}
-                    </span>
+                    <span className="truncate text-xs text-quiet">{monitorTarget(monitor)}</span>
                 </div>
             </td>
             <td className="py-2 whitespace-nowrap">
@@ -305,16 +313,12 @@ function MonitorRow({
                     <span className="size-1.5 rounded-full bg-current" />
                     {status.label}
                 </Badge>
-                {!monitor.active ? (
-                    <span className="ml-2 text-[11px] text-quiet">paused</span>
-                ) : null}
+                {!monitor.active ? <span className="ml-2 text-[11px] text-quiet">paused</span> : null}
             </td>
             <td className="tnum py-2 pl-3 text-right whitespace-nowrap">{formatUptime(monitor.uptime24h)}</td>
             <td className="tnum py-2 pl-3 text-right whitespace-nowrap">{formatUptime(monitor.uptime7d)}</td>
             <td className="tnum py-2 pl-3 text-right whitespace-nowrap">{formatPing(monitor.ping)}</td>
-            <td className="tnum py-2 pl-3 text-right whitespace-nowrap text-quiet">
-                {ageOf(monitor.lastCheck)} ago
-            </td>
+            <td className="tnum py-2 pl-3 text-right whitespace-nowrap text-quiet">{ageOf(monitor.lastCheck)} ago</td>
             <td className="py-2 pr-4 pl-3 text-xs whitespace-nowrap text-quiet">{monitor.type}</td>
             <td className="py-2 pr-4 pl-3 text-right">
                 {onContextMenu ? (
@@ -392,26 +396,26 @@ function MonitorTable({
 }) {
     return (
         <div className="overflow-x-auto">
-        {/* table-fixed with an explicit colgroup: an auto layout table lets the
+            {/* table-fixed with an explicit colgroup: an auto layout table lets the
             name column absorb all the width, which squeezes the numeric columns
             until their headers collide. Fixed widths keep rows comparable down
             a column, which is the point of this view. */}
-        <table className="w-full table-fixed border-collapse text-sm">
-            <MonitorColgroup />
-            <MonitorHead />
-            <tbody>
-                {monitors.map((monitor) => (
-                    <MonitorRow
-                        key={monitor.id}
-                        monitor={monitor}
-                        selected={selected}
-                        onToggle={onToggle}
-                        onEdit={onEdit}
-                        onContextMenu={onContextMenu}
-                    />
-                ))}
-            </tbody>
-        </table>
+            <table className="w-full table-fixed border-collapse text-sm">
+                <MonitorColgroup />
+                <MonitorHead />
+                <tbody>
+                    {monitors.map((monitor) => (
+                        <MonitorRow
+                            key={monitor.id}
+                            monitor={monitor}
+                            selected={selected}
+                            onToggle={onToggle}
+                            onEdit={onEdit}
+                            onContextMenu={onContextMenu}
+                        />
+                    ))}
+                </tbody>
+            </table>
         </div>
     );
 }
@@ -457,7 +461,7 @@ function GroupedTable({
                 next.add(id);
             }
             try {
-                window.localStorage.setItem("flatline.collapsedGroups", JSON.stringify([ ...next ]));
+                window.localStorage.setItem("flatline.collapsedGroups", JSON.stringify([...next]));
             } catch {
                 // Storage can be unavailable; collapsing just will not persist.
             }
@@ -479,11 +483,7 @@ function GroupedTable({
                     onGroupMenu(node.group, event.clientX, event.clientY);
                 }}
             >
-                <td
-                    colSpan={9}
-                    className="py-1.5 pr-4 pl-4"
-                    style={{ paddingLeft: `${16 + depth * 18}px` }}
-                >
+                <td colSpan={9} className="py-1.5 pr-4 pl-4" style={{ paddingLeft: `${16 + depth * 18}px` }}>
                     <button
                         type="button"
                         onClick={() => toggle(node.id)}
@@ -549,43 +549,47 @@ function GroupedTable({
 
     return (
         <div className="overflow-x-auto">
-        <table className="w-full table-fixed border-collapse text-sm">
-            <MonitorColgroup />
-            <MonitorHead />
-            {roots.map((node) => renderNode(node, 0, 0))}
-            {ungrouped.length > 0 ? (
-                <tbody key="ungrouped">
-                    <tr className="border-b border-border bg-surface/60">
-                        <td colSpan={9} className="py-1.5 pr-4 pl-4">
-                            <span className="inline-flex items-center gap-2 text-xs font-semibold tracking-wide text-quiet uppercase">
-                                <span className="inline-block w-3" />
-                                Ungrouped
-                            </span>
-                            <span className="ml-2 text-xs text-quiet">
-                                <span className="tnum">{ungrouped.length}</span>
-                                {ungrouped.some((m) => m.status === 0) ? (
-                                    <span className="ml-1 font-semibold text-bad">
-                                        · <span className="tnum">{ungrouped.filter((m) => m.status === 0).length}</span> down
-                                    </span>
-                                ) : (
-                                    <span className="ml-1">· all up</span>
-                                )}
-                            </span>
-                        </td>
-                    </tr>
-                    {ungrouped.map((monitor) => (
-                        <MonitorRow
-                            key={monitor.id}
-                            monitor={monitor}
-                            selected={selected}
-                            onToggle={onToggle}
-                            onEdit={onEdit}
-                            onContextMenu={onContextMenu}
-                        />
-                    ))}
-                </tbody>
-            ) : null}
-        </table>
+            <table className="w-full table-fixed border-collapse text-sm">
+                <MonitorColgroup />
+                <MonitorHead />
+                {roots.map((node) => renderNode(node, 0, 0))}
+                {ungrouped.length > 0 ? (
+                    <tbody key="ungrouped">
+                        <tr className="border-b border-border bg-surface/60">
+                            <td colSpan={9} className="py-1.5 pr-4 pl-4">
+                                <span className="inline-flex items-center gap-2 text-xs font-semibold tracking-wide text-quiet uppercase">
+                                    <span className="inline-block w-3" />
+                                    Ungrouped
+                                </span>
+                                <span className="ml-2 text-xs text-quiet">
+                                    <span className="tnum">{ungrouped.length}</span>
+                                    {ungrouped.some((m) => m.status === 0) ? (
+                                        <span className="ml-1 font-semibold text-bad">
+                                            ·{" "}
+                                            <span className="tnum">
+                                                {ungrouped.filter((m) => m.status === 0).length}
+                                            </span>{" "}
+                                            down
+                                        </span>
+                                    ) : (
+                                        <span className="ml-1">· all up</span>
+                                    )}
+                                </span>
+                            </td>
+                        </tr>
+                        {ungrouped.map((monitor) => (
+                            <MonitorRow
+                                key={monitor.id}
+                                monitor={monitor}
+                                selected={selected}
+                                onToggle={onToggle}
+                                onEdit={onEdit}
+                                onContextMenu={onContextMenu}
+                            />
+                        ))}
+                    </tbody>
+                ) : null}
+            </table>
         </div>
     );
 }
@@ -597,7 +601,7 @@ function Dashboard() {
     const [authed, setAuthed] = useState(() => Boolean(getToken()));
     const [monitors, setMonitors] = useState<MonitorSummary[]>([]);
     const [rosterLoaded, setRosterLoaded] = useState(false);
-    const health = useMemo(() => rosterLoaded ? healthFromMonitors(monitors) : null, [monitors, rosterLoaded]);
+    const health = useMemo(() => (rosterLoaded ? healthFromMonitors(monitors) : null), [monitors, rosterLoaded]);
     const tree = useMemo(() => groupTree(monitors), [monitors]);
     const loadEpoch = useRef(0);
     const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -605,7 +609,11 @@ function Dashboard() {
     const [menu, setMenu] = useState<MenuAnchor | null>(null);
     const [renaming, setRenaming] = useState<MonitorSummary | null>(null);
     const [moving, setMoving] = useState<MonitorSummary | null>(null);
-    const [deletingGroup, setDeletingGroup] = useState<{ group: MonitorSummary; rows: number; children: number } | null>(null);
+    const [deletingGroup, setDeletingGroup] = useState<{
+        group: MonitorSummary;
+        rows: number;
+        children: number;
+    } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [formState, setFormState] = useState<
@@ -620,19 +628,25 @@ function Dashboard() {
         const epoch = ++loadEpoch.current;
         try {
             const next = await fetchAllMonitors(signal);
-            if (epoch !== loadEpoch.current) { return; }
+            if (epoch !== loadEpoch.current) {
+                return;
+            }
             setMonitors(next);
             setRosterLoaded(true);
             setError(null);
         } catch (e) {
-            if (epoch !== loadEpoch.current) { return; }
+            if (epoch !== loadEpoch.current) {
+                return;
+            }
             if (e instanceof ApiError && e.status === 401) {
                 setToken(null);
                 setAuthed(false);
                 return;
             }
             setError(e instanceof Error ? e.message : "Failed to load.");
-            if (strict) { throw e; }
+            if (strict) {
+                throw e;
+            }
         }
     }, []);
 
@@ -644,21 +658,32 @@ function Dashboard() {
 
         const stop = watchLive({
             metrics: false,
-            snapshot: signal => load(true, signal),
-            event: event => {
-                if (event.type !== "heartbeat") { return; }
-                setMonitors(previous => previous.map(monitor => monitor.id === event.monitorId ? { ...monitor, ...event.patch } : monitor));
+            snapshot: (signal) => load(true, signal),
+            event: (event) => {
+                if (event.type !== "heartbeat") {
+                    return;
+                }
+                setMonitors((previous) =>
+                    previous.map((monitor) =>
+                        monitor.id === event.monitorId ? { ...monitor, ...event.patch } : monitor
+                    )
+                );
                 setError(null);
             },
-            error: error => {
+            error: (error) => {
                 if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-                    setToken(null); setAuthed(false); return;
+                    setToken(null);
+                    setAuthed(false);
+                    return;
                 }
                 setError("Live updates disconnected; reconnecting.");
             },
         });
-        return () => { loadEpoch.current++; stop(); };
-    }, [ authed, load ]);
+        return () => {
+            loadEpoch.current++;
+            stop();
+        };
+    }, [authed, load]);
 
     // "/" focuses search, escape clears it and any selection.
     useEffect(() => {
@@ -693,7 +718,7 @@ function Dashboard() {
                 (m.url ?? "").toLowerCase().includes(needle) ||
                 m.type.toLowerCase().includes(needle)
         );
-    }, [ monitors, query ]);
+    }, [monitors, query]);
 
     async function applyToSelection(action: "pause" | "resume" | "delete") {
         if (action === "delete") {
@@ -705,7 +730,7 @@ function Dashboard() {
         setBusy(true);
         try {
             await Promise.all(
-                [ ...selected ].map((id) => {
+                [...selected].map((id) => {
                     if (action === "pause") {
                         return pauseMonitor(id);
                     }
@@ -727,15 +752,19 @@ function Dashboard() {
     // Group options for the form's Group picker. A group being edited cannot
     // move inside itself, so its own subtree is excluded from the choices.
     const groupChoices = useMemo(
-        () => groupOptions(monitors, formState?.mode === "edit" && formState.monitor.type === "group" ? formState.monitor.id : null),
-        [ monitors, formState ]
+        () =>
+            groupOptions(
+                monitors,
+                formState?.mode === "edit" && formState.monitor.type === "group" ? formState.monitor.id : null
+            ),
+        [monitors, formState]
     );
 
     // Link targets for the form's "Linked websites" picker: groups and
     // monitors, never the server being edited itself.
     const linkCandidates = useMemo(
         () => buildLinkCandidates(monitors, formState?.mode === "edit" ? formState.monitor.id : null),
-        [ monitors, formState ]
+        [monitors, formState]
     );
 
     // Right-click/⋯ menu contents: groups manage the tree, monitors move
@@ -754,8 +783,20 @@ function Dashboard() {
                         setMenu(null);
                     },
                 },
-                { label: "Rename group…", onSelect: () => { setRenaming(monitor); setMenu(null); } },
-                { label: "Move group…", onSelect: () => { setMoving(monitor); setMenu(null); } },
+                {
+                    label: "Rename group…",
+                    onSelect: () => {
+                        setRenaming(monitor);
+                        setMenu(null);
+                    },
+                },
+                {
+                    label: "Move group…",
+                    onSelect: () => {
+                        setMoving(monitor);
+                        setMenu(null);
+                    },
+                },
                 {
                     label: "Delete group…",
                     danger: true,
@@ -771,10 +812,22 @@ function Dashboard() {
             ];
         }
         return [
-            { label: "Rename…", onSelect: () => { setRenaming(monitor); setMenu(null); } },
-            { label: "Move to group…", onSelect: () => { setMoving(monitor); setMenu(null); } },
+            {
+                label: "Rename…",
+                onSelect: () => {
+                    setRenaming(monitor);
+                    setMenu(null);
+                },
+            },
+            {
+                label: "Move to group…",
+                onSelect: () => {
+                    setMoving(monitor);
+                    setMenu(null);
+                },
+            },
         ];
-    }, [ menu, monitors ]);
+    }, [menu, monitors]);
 
     /**
      * Delete a group. "keep" re-parents its direct children to the group's
@@ -792,7 +845,9 @@ function Dashboard() {
                 await deleteMonitor(target.group.id, true);
             } else {
                 const children = directChildren(monitors, target.group.id);
-                await Promise.all(children.map((child) => updateMonitor(child.id, { parent: target.group.parent ?? null })));
+                await Promise.all(
+                    children.map((child) => updateMonitor(child.id, { parent: target.group.parent ?? null }))
+                );
                 await deleteMonitor(target.group.id);
             }
             setDeletingGroup(null);
@@ -843,7 +898,11 @@ function Dashboard() {
                     >
                         Agents
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => setFormState({ mode: "create", initial: { type: "group" } })}>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setFormState({ mode: "create", initial: { type: "group" } })}
+                    >
                         New group
                     </Button>
                     <Button size="sm" onClick={() => setFormState({ mode: "create" })}>
@@ -968,19 +1027,9 @@ function Dashboard() {
                 />
             )}
 
-            {menu ? (
-                <ServerMenu
-                    anchor={menu}
-                    items={menuItems}
-                    onClose={() => setMenu(null)}
-                />
-            ) : null}
+            {menu ? <ServerMenu anchor={menu} items={menuItems} onClose={() => setMenu(null)} /> : null}
             {renaming ? (
-                <RenameDialog
-                    monitor={renaming}
-                    currentName={renaming.name}
-                    onClose={() => setRenaming(null)}
-                />
+                <RenameDialog monitor={renaming} currentName={renaming.name} onClose={() => setRenaming(null)} />
             ) : null}
             {moving ? (
                 <MoveDialog
@@ -1012,7 +1061,9 @@ function Dashboard() {
                     >
                         <h2 className="mb-4 text-base font-semibold">
                             {formState.mode === "create"
-                                ? formState.initial?.type === "group" ? "New group" : "New monitor"
+                                ? formState.initial?.type === "group"
+                                    ? "New group"
+                                    : "New monitor"
                                 : `Edit ${formState.monitor.name}`}
                         </h2>
                         <MonitorForm

@@ -15,11 +15,11 @@ keeps upstream's `LICENSE` and Louis Lam's copyright and adds its own.
 
 The runtime stack as of 2026-10-18:
 
-| Piece | Path | Notes |
-|---|---|---|
-| Backend | `backend-rs/` | Rust: `axum` + `tokio` + `sqlx`/SQLite, one binary serving API + dashboard + status pages on one origin |
-| Web app | `apps/dashboard/` | React/Vite SPA: operator dashboard, Superboard, Agents panel, public status-page routes |
-| Agent | `superboard/` | Go single static binary on each monitored host; pushes telemetry |
+| Piece   | Path              | Notes                                                                                                   |
+| ------- | ----------------- | ------------------------------------------------------------------------------------------------------- |
+| Backend | `backend-rs/`     | Rust: `axum` + `tokio` + `sqlx`/SQLite, one binary serving API + dashboard + status pages on one origin |
+| Web app | `apps/dashboard/` | React/Vite SPA: operator dashboard, Superboard, Agents panel, public status-page routes                 |
+| Agent   | `superboard/`     | Go single static binary on each monitored host; pushes telemetry                                        |
 
 The original fork inherited, and then progressively deleted, a Node/Express
 backend, the Vue frontend, a separate Next.js status app, most notification
@@ -36,15 +36,15 @@ upstream workflows, issue templates, `AGENTS.md`, `CLAUDE.md`, Dependabot and
 funding config were all deleted). The underlying advice still applies: run the
 local lint and tests, because nothing enforces them any more.
 
-| Area | Upstream Uptime Kuma | Flatline |
-|---|---|---|
-| Users | Multi-user with roles; self-signup disabled by default | **Shared instance**: every operator sees and edits the same data. Accounts, invite links and per-user silos existed in the Node era and were removed with the Rust rewrite |
-| Auth | Sessions, API keys, token scopes, 2FA/TOTP | **One token type, full permission**; sign in with the operator token; API keys are SHA-256 at rest (imported keys keep their bcrypt hashes so existing automation survives) |
-| Notifications | ~110 providers | **Telegram only** (108 non-Telegram providers deleted, plus the Webpush service worker and VAPID infrastructure) |
-| Frontend | Vue 3 Options API (182 `.vue` components) | One React/Vite SPA for dashboard **and** public status pages |
-| API | Read-only badges, basic-auth + API-key | **REST API v1** with bearer-token auth and a self-describing OpenAPI document; agentic provisioning endpoints |
-| Monitor types | 29 advertised types | `push`, `http`, `https`, `ping`, `group` only; the rest were not ported |
-| Telemetry | None | Go-agent push pipeline, Superboard, threshold alerts, two-tier retention |
+| Area          | Upstream Uptime Kuma                                   | Flatline                                                                                                                                                                    |
+| ------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Users         | Multi-user with roles; self-signup disabled by default | **Shared instance**: every operator sees and edits the same data. Accounts, invite links and per-user silos existed in the Node era and were removed with the Rust rewrite  |
+| Auth          | Sessions, API keys, token scopes, 2FA/TOTP             | **One token type, full permission**; sign in with the operator token; API keys are SHA-256 at rest (imported keys keep their bcrypt hashes so existing automation survives) |
+| Notifications | ~110 providers                                         | **Telegram only** (108 non-Telegram providers deleted, plus the Webpush service worker and VAPID infrastructure)                                                            |
+| Frontend      | Vue 3 Options API (182 `.vue` components)              | One React/Vite SPA for dashboard **and** public status pages                                                                                                                |
+| API           | Read-only badges, basic-auth + API-key                 | **REST API v1** with bearer-token auth and a self-describing OpenAPI document; agentic provisioning endpoints                                                               |
+| Monitor types | 29 advertised types                                    | `push`, `http`, `https`, `ping`, `group` only; the rest were not ported                                                                                                     |
+| Telemetry     | None                                                   | Go-agent push pipeline, Superboard, threshold alerts, two-tier retention                                                                                                    |
 
 Additions that were later retired are listed under "Retired things".
 
@@ -53,7 +53,7 @@ Additions that were later retired are listed under "Retired things".
 ### Why it was assessed
 
 A separate assessment document (2026-10-12, since removed) weighed the rewrite
-*before* any code. The Node runtime was already reduced to one process by the v2
+_before_ any code. The Node runtime was already reduced to one process by the v2
 consolidation, so it was "not slow, not unstable". The realistic gains were
 supply chain (102 direct npm deps, ~599 MB `node_modules`, a steady advisory
 stream), deployment weight (tens of MB vs ~150 MB+), and dropping the Node
@@ -138,22 +138,22 @@ Both documents have since been removed; this table is the surviving record. All
 24 were fixed, one commit each, each with a regression test for its failing
 scenario. Rather than restating them, the classes of defect and their fixes:
 
-| Failure mode | Class | Fix |
-|---|---|---|
-| Hourly rollups judged coverage by hour (not per monitor+hour), ignored older backfills, and a late backfill could rebuild a complete bucket from partial raw rows | History loss | Track coverage per `(monitor, hour)`; mark dirty hours; prune hour-aligned and never rebuild over an existing richer bucket |
-| Raw pruning ran independently of rollup, so evidence could be deleted before it was folded | Permanent history loss | Repair-before-prune: folding and the raw prune are one maintenance run; prune only pairs a bucket covers, report `skippedRaw` |
-| A permanently rejected sample (400/413) blocked the agent's whole buffered queue | Delivery stall | Quarantine permanent rejects (counted), keep the backlog for credential errors, retry transients |
-| Postgres/gRPC, then Redis/MySQL checks could wait forever | Monitoring stall | Connection/operation deadlines; cancel and close on expiry |
-| A hung Telegram request froze a monitor before the heartbeat persisted | Monitoring stall | Bounded 30s notification deadline; heartbeat persists independently of delivery |
-| A hung dashboard REST snapshot disabled SSE recovery | Availability | Deadlines + cancellation on snapshots; stream recovery independent of snapshots |
-| Failed/transient notification deliveries were dropped, and shutdown did not flush | Lost alerts | Bounded retry queue (3 attempts, backoff, Telegram `retry_after`), shutdown drain, health counters |
-| Every rollup recounted the entire raw retention window | Scaling | Dirty buckets + durable repair cursor; full comparison once after upgrade |
-| Rust recomputed 30-day uptime on the heartbeat publication path | Scaling | Stale-while-revalidate + single-flight background refresh per monitor |
-| Docker collection walked containers sequentially with no deadline, so old container health looked fresh | Misleading monitoring | One 20s budget on a 4-worker pool; keep previous list and report age (`dockerAt`) |
-| A nameless Docker entry panicked the agent; MongoDB/gRPC clients leaked | Crash / leak | Validate before indexing; close clients in `finally` |
-| Rust heartbeats had no retention; latest-heartbeat reads scanned full history | Unbounded growth / scaling | 90-day retention (configurable) preserving a boundary sample; indexed `LIMIT 1` lookups |
-| Concurrent ingestion bypassed the 30s archive gate; alert debounce counted sub-threshold time; stale backfill could raise current alerts | Correctness | Serialize ingestion per monitor; restart debounce on sub-threshold time; archive-but-pause stale samples |
-| Login lost its token when browser storage failed; legacy zero-timeout fallback multiplied by 1000 twice | Availability / bug | In-memory token copy; normalize the timeout fallback |
+| Failure mode                                                                                                                                                      | Class                      | Fix                                                                                                                           |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Hourly rollups judged coverage by hour (not per monitor+hour), ignored older backfills, and a late backfill could rebuild a complete bucket from partial raw rows | History loss               | Track coverage per `(monitor, hour)`; mark dirty hours; prune hour-aligned and never rebuild over an existing richer bucket   |
+| Raw pruning ran independently of rollup, so evidence could be deleted before it was folded                                                                        | Permanent history loss     | Repair-before-prune: folding and the raw prune are one maintenance run; prune only pairs a bucket covers, report `skippedRaw` |
+| A permanently rejected sample (400/413) blocked the agent's whole buffered queue                                                                                  | Delivery stall             | Quarantine permanent rejects (counted), keep the backlog for credential errors, retry transients                              |
+| Postgres/gRPC, then Redis/MySQL checks could wait forever                                                                                                         | Monitoring stall           | Connection/operation deadlines; cancel and close on expiry                                                                    |
+| A hung Telegram request froze a monitor before the heartbeat persisted                                                                                            | Monitoring stall           | Bounded 30s notification deadline; heartbeat persists independently of delivery                                               |
+| A hung dashboard REST snapshot disabled SSE recovery                                                                                                              | Availability               | Deadlines + cancellation on snapshots; stream recovery independent of snapshots                                               |
+| Failed/transient notification deliveries were dropped, and shutdown did not flush                                                                                 | Lost alerts                | Bounded retry queue (3 attempts, backoff, Telegram `retry_after`), shutdown drain, health counters                            |
+| Every rollup recounted the entire raw retention window                                                                                                            | Scaling                    | Dirty buckets + durable repair cursor; full comparison once after upgrade                                                     |
+| Rust recomputed 30-day uptime on the heartbeat publication path                                                                                                   | Scaling                    | Stale-while-revalidate + single-flight background refresh per monitor                                                         |
+| Docker collection walked containers sequentially with no deadline, so old container health looked fresh                                                           | Misleading monitoring      | One 20s budget on a 4-worker pool; keep previous list and report age (`dockerAt`)                                             |
+| A nameless Docker entry panicked the agent; MongoDB/gRPC clients leaked                                                                                           | Crash / leak               | Validate before indexing; close clients in `finally`                                                                          |
+| Rust heartbeats had no retention; latest-heartbeat reads scanned full history                                                                                     | Unbounded growth / scaling | 90-day retention (configurable) preserving a boundary sample; indexed `LIMIT 1` lookups                                       |
+| Concurrent ingestion bypassed the 30s archive gate; alert debounce counted sub-threshold time; stale backfill could raise current alerts                          | Correctness                | Serialize ingestion per monitor; restart debounce on sub-threshold time; archive-but-pause stale samples                      |
+| Login lost its token when browser storage failed; legacy zero-timeout fallback multiplied by 1000 twice                                                           | Availability / bug         | In-memory token copy; normalize the timeout fallback                                                                          |
 
 On the agent side, `failedPushes` was redefined to mean **lost** samples
 (quarantined rejects and fallback failures) rather than every retried failure,
@@ -163,23 +163,23 @@ climb forever, while a genuinely broken collector contributes one.
 
 ## Retired things
 
-| Retired | When / why |
-|---|---|
-| Node/Express backend (`server/`) | Replaced by `backend-rs/` at the 2026-10-13 cutover; deleted 2026-10-18, so no rollback path remains |
-| Vue 3 frontend (`src/`, 182 components) | Replaced by `apps/dashboard/` at the v2 consolidation (2026-10-12) |
-| Standalone Next.js status site (`apps/status-site`) | Collapsed into the dashboard SPA; the backend serves the built app itself |
-| Accounts, users, invite links, per-user scopes/roles | The Node-era fork added single-use invite links; the Rust rewrite dropped them for a shared instance with **one full-permission token type** |
-| 108 non-Telegram notification providers | Telegram only; orphaned DB rows now raise a named error instead of a bare "not supported" |
-| Webpush provider + `serviceWorker.js` + VAPID | Removing it kept "Telegram only" consistent |
-| Monitor types never ported | Everything except `push`, `http`, `https`, `ping`, `group` (TCP, DNS, MQTT, Docker, SFTP, NTP, Postgres, MySQL, MSSQL, MongoDB, Redis, RabbitMQ, Kafka, Oracle, gRPC, Steam, Websocket, keyword/JSON, …) |
-| `client-cli/` SSH launchers | Credential-store launchers used during early provisioning; superseded by the served installer, removed 2026-10-18 |
-| Upstream contributor policy and CI | 21 workflows, issue/PR templates, review guidelines, Dependabot and funding config |
-| `extra/` (healthcheck, push examples, `uptime-kuma-push`) | Upstream Node-era helpers for the Kuma image and legacy push scripts; removed 2026-10-18 |
-| Planning and audit documents | The assessment, rewrite plan, parity record, both performance reviews and the fork/improvement roadmaps were folded into this document and [roadmap](roadmap.md), then removed, so there is one place to read rather than six. |
+| Retired                                                   | When / why                                                                                                                                                                                                                     |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Node/Express backend (`server/`)                          | Replaced by `backend-rs/` at the 2026-10-13 cutover; deleted 2026-10-18, so no rollback path remains                                                                                                                           |
+| Vue 3 frontend (`src/`, 182 components)                   | Replaced by `apps/dashboard/` at the v2 consolidation (2026-10-12)                                                                                                                                                             |
+| Standalone Next.js status site (`apps/status-site`)       | Collapsed into the dashboard SPA; the backend serves the built app itself                                                                                                                                                      |
+| Accounts, users, invite links, per-user scopes/roles      | The Node-era fork added single-use invite links; the Rust rewrite dropped them for a shared instance with **one full-permission token type**                                                                                   |
+| 108 non-Telegram notification providers                   | Telegram only; orphaned DB rows now raise a named error instead of a bare "not supported"                                                                                                                                      |
+| Webpush provider + `serviceWorker.js` + VAPID             | Removing it kept "Telegram only" consistent                                                                                                                                                                                    |
+| Monitor types never ported                                | Everything except `push`, `http`, `https`, `ping`, `group` (TCP, DNS, MQTT, Docker, SFTP, NTP, Postgres, MySQL, MSSQL, MongoDB, Redis, RabbitMQ, Kafka, Oracle, gRPC, Steam, Websocket, keyword/JSON, …)                       |
+| `client-cli/` SSH launchers                               | Credential-store launchers used during early provisioning; superseded by the served installer, removed 2026-10-18                                                                                                              |
+| Upstream contributor policy and CI                        | 21 workflows, issue/PR templates, review guidelines, Dependabot and funding config                                                                                                                                             |
+| `extra/` (healthcheck, push examples, `uptime-kuma-push`) | Upstream Node-era helpers for the Kuma image and legacy push scripts; removed 2026-10-18                                                                                                                                       |
+| Planning and audit documents                              | The assessment, rewrite plan, parity record, both performance reviews and the fork/improvement roadmaps were folded into this document and [roadmap](roadmap.md), then removed, so there is one place to read rather than six. |
 
 ## Reading the history of a specific behaviour
 
 When something is removed, the reason goes in the table above; when something is
-*planned*, it goes in [roadmap](roadmap.md). Anything not in either place is
+_planned_, it goes in [roadmap](roadmap.md). Anything not in either place is
 current behaviour, documented in [architecture](architecture.md),
 [superboard](superboard.md) and [agent](agent.md).

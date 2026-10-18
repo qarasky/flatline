@@ -45,7 +45,10 @@ export function UsageBar({ percent, tone, label }: { percent: number | undefined
     return (
         <div className="fleet-meter-track" role="img" aria-label={label ? `${label}: ${text}` : text} title={text}>
             <div
-                className={cn("fleet-meter-fill transition-[width] duration-300 motion-reduce:transition-none", FILL[resolved])}
+                className={cn(
+                    "fleet-meter-fill transition-[width] duration-300 motion-reduce:transition-none",
+                    FILL[resolved]
+                )}
                 style={{ width: safe === null ? "0%" : `${safe}%` }}
             />
         </div>
@@ -76,7 +79,12 @@ export function MetricBar({
     return (
         <div className="metric-bar">
             <div className="flex items-baseline justify-between gap-2">
-                <span className="metric-label min-w-0 truncate text-xs font-medium tracking-wide text-muted-foreground uppercase" title={label}>{label}</span>
+                <span
+                    className="metric-label min-w-0 truncate text-xs font-medium tracking-wide text-muted-foreground uppercase"
+                    title={label}
+                >
+                    {label}
+                </span>
                 <span className="metric-value tnum text-sm font-semibold">
                     {safe === null ? "—" : `${safe.toFixed(safe < 10 ? 1 : 0)}%`}
                 </span>
@@ -84,7 +92,10 @@ export function MetricBar({
             {detail ? <p className="metric-detail mt-1 text-xs text-quiet">{detail}</p> : null}
             <div className="metric-track mt-2 h-2 overflow-hidden rounded-full bg-white/10">
                 <div
-                    className={cn("h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none", FILL[resolved])}
+                    className={cn(
+                        "h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none",
+                        FILL[resolved]
+                    )}
                     style={{ width: safe === null ? "0%" : `${safe}%` }}
                 />
             </div>

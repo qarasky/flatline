@@ -43,13 +43,13 @@ Flags: `--server`, `--token`, `--interval SECONDS`, `--update`.
 
 `superboard install` (root) creates:
 
-| Path | Purpose |
-|---|---|
-| `/usr/local/bin/superboard` | The agent binary (mode 0755). |
-| `/etc/superboard/config.json` | Configuration, **mode 0600** (owner-only; holds the push token). |
-| `/etc/systemd/system/superboard.service` | The `superboard` systemd unit. |
-| `/usr/local/bin/superboard.bak` | Copy of any binary that was replaced. |
-| `/var/lib/superboard/buffer` | Disk buffer for undelivered samples (mode 0700). |
+| Path                                     | Purpose                                                          |
+| ---------------------------------------- | ---------------------------------------------------------------- |
+| `/usr/local/bin/superboard`              | The agent binary (mode 0755).                                    |
+| `/etc/superboard/config.json`            | Configuration, **mode 0600** (owner-only; holds the push token). |
+| `/etc/systemd/system/superboard.service` | The `superboard` systemd unit.                                   |
+| `/usr/local/bin/superboard.bak`          | Copy of any binary that was replaced.                            |
+| `/var/lib/superboard/buffer`             | Disk buffer for undelivered samples (mode 0700).                 |
 
 The unit runs `superboard run --config /etc/superboard/config.json` as
 `User=root` (the Docker socket is root-owned; the agent only reads it), with
@@ -86,17 +86,17 @@ the [provisioning runbook](provisioning.md).
 `/etc/superboard/config.json`; only `server_url` and `push_token` are required.
 `run` reads it, `install` writes it.
 
-| Key | Default | Meaning |
-|---|---|---|
-| `server_url` | — (required) | Flatline origin, e.g. `https://uptime.example`. Plain `http://` is refused unless `allow_insecure`. |
-| `push_token` | — (required) | The monitor's push token. Bearer secret: keep the file 0600. Rotation is one server-side regenerate plus one line here. |
-| `interval_seconds` | `1` | Seconds between live samples. An explicitly configured interval is preserved on upgrade. |
-| `allow_insecure` | `false` | Permit plain HTTP. Off by default because metrics (hostnames, container names, versions) are useful recon in cleartext. |
-| `buffer_dir` | `/var/lib/superboard/buffer` | Disk-backed queue for undelivered samples. Holds hostnames and container names: keep it 0700, root-owned. |
-| `buffer_max_bytes` | `33554432` (32 MiB) | Byte cap on the buffer. Oldest samples are dropped first when full, so an endless outage cannot fill the disk. |
-| `self_update` | `true` | Let the agent replace its own binary from a server-shipped release. Set `false` on a host you update by hand. |
-| `self_update_interval_hours` | `24` | How often the agent asks the server for a newer release. |
-| `self_update_allow_downgrade` | `false` | Permit installing an older release, for recovering a bad rollout without host access. |
+| Key                           | Default                      | Meaning                                                                                                                 |
+| ----------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `server_url`                  | — (required)                 | Flatline origin, e.g. `https://uptime.example`. Plain `http://` is refused unless `allow_insecure`.                     |
+| `push_token`                  | — (required)                 | The monitor's push token. Bearer secret: keep the file 0600. Rotation is one server-side regenerate plus one line here. |
+| `interval_seconds`            | `1`                          | Seconds between live samples. An explicitly configured interval is preserved on upgrade.                                |
+| `allow_insecure`              | `false`                      | Permit plain HTTP. Off by default because metrics (hostnames, container names, versions) are useful recon in cleartext. |
+| `buffer_dir`                  | `/var/lib/superboard/buffer` | Disk-backed queue for undelivered samples. Holds hostnames and container names: keep it 0700, root-owned.               |
+| `buffer_max_bytes`            | `33554432` (32 MiB)          | Byte cap on the buffer. Oldest samples are dropped first when full, so an endless outage cannot fill the disk.          |
+| `self_update`                 | `true`                       | Let the agent replace its own binary from a server-shipped release. Set `false` on a host you update by hand.           |
+| `self_update_interval_hours`  | `24`                         | How often the agent asks the server for a newer release.                                                                |
+| `self_update_allow_downgrade` | `false`                      | Permit installing an older release, for recovering a bad rollout without host access.                                   |
 
 ## Collectors
 
@@ -104,21 +104,21 @@ Fast values (RAM, load, net/disk I/O counters, the raw CPU snapshot) are read
 every sample; expensive sources refresh in background workers on their own
 schedule and are cached until then, so a slow source never blocks the push loop.
 
-| Collected | Source | Cadence | Failure surfaced as |
-|---|---|---|---|
-| Host identity (hostname, OS, uptime) | `host.Info` | Once at startup | Fatal only if the host cannot be identified at all. |
-| CPU utilization | Cumulative `/proc/stat` counters, diffed over 30s | Every push (value), refresh every 30s | Counters omitted → server falls back to compat percent; `cpu` error counted. |
-| CPU temperature | hwmon sensors (`coretemp`, `k10temp`, `zenpower`, …) | Every 30s | Hidden when zero ("no sensor"). |
-| RAM | `mem.VirtualMemory` | Every sample (~1s) | The one sample-fatal read. |
-| Memory temperature | hwmon (`dimm`, `ddr`, `memory`) | Every 30s | Hidden when zero. |
-| Disks (per mount) | `disk.Partitions`/`Usage`, pseudo-fs skipped | Every 30s | Unreadable mount skipped and logged; empty list means "cannot read mounts". |
-| Disk I/O | Cumulative per-disk counters, whole disks only | Every push | `diskio` error counted; field omitted. |
-| Network I/O | Cumulative per-interface counters, loopback excluded | Every push | `net` error counted; field omitted. |
-| Load average | `load.Avg` (gauge, no delta) | Every push | `load` error counted; field omitted. |
-| Docker containers + one-shot stats | Docker Unix socket (`docker ps` fallback) | Every 10s | Keeps last list and reports `dockerError` + `dockerAt`. |
-| Pending OS updates | apt / dnf / yum / pacman / apk, read-only | Every 4h | Field omitted (unknown); `updates` error counted. |
-| GPU | `nvidia-smi` CSV | Every 5s | `gpu.available:false`; backoff after 3 consecutive failures. |
-| SMART disk health | `smartctl -j -H -A` | Every 6h | `smart.available:false` or skipped device; `smart` error counted. |
+| Collected                            | Source                                               | Cadence                               | Failure surfaced as                                                          |
+| ------------------------------------ | ---------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| Host identity (hostname, OS, uptime) | `host.Info`                                          | Once at startup                       | Fatal only if the host cannot be identified at all.                          |
+| CPU utilization                      | Cumulative `/proc/stat` counters, diffed over 30s    | Every push (value), refresh every 30s | Counters omitted → server falls back to compat percent; `cpu` error counted. |
+| CPU temperature                      | hwmon sensors (`coretemp`, `k10temp`, `zenpower`, …) | Every 30s                             | Hidden when zero ("no sensor").                                              |
+| RAM                                  | `mem.VirtualMemory`                                  | Every sample (~1s)                    | The one sample-fatal read.                                                   |
+| Memory temperature                   | hwmon (`dimm`, `ddr`, `memory`)                      | Every 30s                             | Hidden when zero.                                                            |
+| Disks (per mount)                    | `disk.Partitions`/`Usage`, pseudo-fs skipped         | Every 30s                             | Unreadable mount skipped and logged; empty list means "cannot read mounts".  |
+| Disk I/O                             | Cumulative per-disk counters, whole disks only       | Every push                            | `diskio` error counted; field omitted.                                       |
+| Network I/O                          | Cumulative per-interface counters, loopback excluded | Every push                            | `net` error counted; field omitted.                                          |
+| Load average                         | `load.Avg` (gauge, no delta)                         | Every push                            | `load` error counted; field omitted.                                         |
+| Docker containers + one-shot stats   | Docker Unix socket (`docker ps` fallback)            | Every 10s                             | Keeps last list and reports `dockerError` + `dockerAt`.                      |
+| Pending OS updates                   | apt / dnf / yum / pacman / apk, read-only            | Every 4h                              | Field omitted (unknown); `updates` error counted.                            |
+| GPU                                  | `nvidia-smi` CSV                                     | Every 5s                              | `gpu.available:false`; backoff after 3 consecutive failures.                 |
+| SMART disk health                    | `smartctl -j -H -A`                                  | Every 6h                              | `smart.available:false` or skipped device; `smart` error counted.            |
 
 Failure policy is consistent:
 
@@ -152,27 +152,66 @@ changes shape.
 
 ```json
 {
-  "v": 1, "sampleInterval": 1, "sampledAt": "2026-10-18T09:00:00.000Z",
+  "v": 1,
+  "sampleInterval": 1,
+  "sampledAt": "2026-10-18T09:00:00.000Z",
   "host": { "hostname": "web-01", "os": "linux", "uptime": 518400 },
-  "cpu": { "percent": 12.4, "cores": 8, "perCore": [12, 9, 15, 8], "temp": 46,
-           "counters": { "total": 123456789, "idle": 100000000,
-                         "perCore": [ { "total": 15432098, "idle": 12500000 } ] } },
+  "cpu": {
+    "percent": 12.4,
+    "cores": 8,
+    "perCore": [12, 9, 15, 8],
+    "temp": 46,
+    "counters": {
+      "total": 123456789,
+      "idle": 100000000,
+      "perCore": [{ "total": 15432098, "idle": 12500000 }]
+    }
+  },
   "mem": { "total": 68719476736, "used": 12884901888, "percent": 18.8 },
-  "disk": [ { "mount": "/", "total": 549755813888, "used": 225485783040, "percent": 41 } ],
+  "disk": [{ "mount": "/", "total": 549755813888, "used": 225485783040, "percent": 41 }],
   "gpu": { "available": false },
-  "docker": [ { "name": "api", "image": "ghcr.io/acme/api:1.6.2", "state": "running",
-                "health": "healthy", "ports": ["8080:80"], "uptime": 432000,
-                "stats": { "cpuPercent": 22.0, "memUsed": 943718400, "memLimit": 2147483648,
-                           "memPercent": 43.9 } } ],
-  "dockerError": "no docker access (…)", "dockerAt": "2026-10-18T08:59:57Z",
+  "docker": [
+    {
+      "name": "api",
+      "image": "ghcr.io/acme/api:1.6.2",
+      "state": "running",
+      "health": "healthy",
+      "ports": ["8080:80"],
+      "uptime": 432000,
+      "stats": {
+        "cpuPercent": 22.0,
+        "memUsed": 943718400,
+        "memLimit": 2147483648,
+        "memPercent": 43.9
+      }
+    }
+  ],
+  "dockerError": "no docker access (…)",
+  "dockerAt": "2026-10-18T08:59:57Z",
   "updates": { "total": 41, "security": 6, "rebootRequired": true },
-  "agent": { "version": "1.7.0", "uptime": 86400, "samplesDropped": 4, "failedPushes": 3,
-             "lastError": "connect: connection timed out", "collectorErrors": { "gpu": 2 } },
+  "agent": {
+    "version": "1.7.0",
+    "uptime": 86400,
+    "samplesDropped": 4,
+    "failedPushes": 3,
+    "lastError": "connect: connection timed out",
+    "collectorErrors": { "gpu": 2 }
+  },
   "load": { "avg1": 0.42, "avg5": 0.51, "avg15": 0.6 },
-  "net": [ { "iface": "eth0", "rxBytes": 193273528320, "txBytes": 96636764160 } ],
-  "diskIo": [ { "device": "sda", "readBytes": 687194767360, "writeBytes": 236223201280 } ],
-  "smart": { "available": true, "disks": [ { "device": "sda", "health": "passed", "tempC": 34,
-             "reallocatedSectors": 0, "powerOnHours": 20000 } ] }
+  "net": [{ "iface": "eth0", "rxBytes": 193273528320, "txBytes": 96636764160 }],
+  "diskIo": [{ "device": "sda", "readBytes": 687194767360, "writeBytes": 236223201280 }],
+  "smart": {
+    "available": true,
+    "disks": [
+      {
+        "device": "sda",
+        "health": "passed",
+        "tempC": 34,
+        "reallocatedSectors": 0,
+        "powerOnHours": 20000
+      }
+    ]
+  }
 }
 ```
 
@@ -193,14 +232,14 @@ are ordered, lossless lists — the server decides what to sum or show.
   it and falls back to receive time. It lets a backlog drained after an outage
   archive at its real cadence; the server stays the clock authority.
 - **`dockerError` / `dockerAt`.** Why a container collection failed, and when
-  the last *complete* one ran — a stale list looks old rather than current.
+  the last _complete_ one ran — a stale list looks old rather than current.
 - **`updates` / `rebootRequired`.** Absent means unknown (no board display);
   `total: 0` means fully updated. `security` exists only where the platform
   exposes severity. `rebootRequired` is orthogonal and is the loudest state — no
   package check clears a staged kernel.
 - **`agent` self-report.** Version, process uptime, `samplesDropped`,
   `failedPushes`, `lastError`, nonzero `collectorErrors`. `failedPushes` counts
-  samples delivery *lost*, not retried attempts, so a recovered blip only sets
+  samples delivery _lost_, not retried attempts, so a recovered blip only sets
   `lastError`; counts reset on restart, so tiny `uptime` means a crash loop.
 - **`net` / `diskIo`.** Raw cumulative counters, not rates. `net` excludes
   loopback and keeps virtual interfaces (the server excludes them when summing
@@ -233,11 +272,11 @@ bounded FIFO** at `buffer_dir`:
 
 Failures are classified, because retrying the wrong kind wedges a queue:
 
-| Server answer | Meaning | Agent response |
-|---|---|---|
-| 400, 413 | Server understood and refused the payload; retry fails identically | **Quarantine** under `buffer/quarantine/` (newest 20 kept) and count it lost; the queue keeps draining. |
-| 401, 403, 404 | Auth/config problem (unknown or inactive token) | Keep the backlog and keep sampling; fix the token and the accumulated history delivers. Logged at most once per 5 minutes. |
-| 5xx, network error | Transient | Retry the same sample with jittered exponential backoff capped at 30s. |
+| Server answer      | Meaning                                                            | Agent response                                                                                                             |
+| ------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| 400, 413           | Server understood and refused the payload; retry fails identically | **Quarantine** under `buffer/quarantine/` (newest 20 kept) and count it lost; the queue keeps draining.                    |
+| 401, 403, 404      | Auth/config problem (unknown or inactive token)                    | Keep the backlog and keep sampling; fix the token and the accumulated history delivers. Logged at most once per 5 minutes. |
+| 5xx, network error | Transient                                                          | Retry the same sample with jittered exponential backoff capped at 30s.                                                     |
 
 **Silence is the signal.** A failed push is never reported locally as
 host-down; the server turns sustained silence into a down state via the
@@ -267,7 +306,7 @@ agent keeps itself current by default.
   HTTPS is required; plain HTTP is refused unless `allow_insecure` (dev only).
 - **Staged-binary check.** The download must run and report the expected
   version; a truncated or wrong-architecture binary is discarded.
-- **Detached swap.** A helper — a copy of the *current* binary, so it survives
+- **Detached swap.** A helper — a copy of the _current_ binary, so it survives
   replacement — is detached with `setsid`, swaps the binary in, and keeps the
   previous build at `/usr/local/bin/superboard.bak`.
 - **Health window and rollback.** It restarts the service and waits up to **45s**
@@ -288,29 +327,29 @@ by the fleet.
 
 ## Commands
 
-| Command | Purpose |
-|---|---|
-| `superboard version` | Print the version (e.g. `superboard 1.7.0`). Release builds stamp it via `-ldflags`. |
-| `superboard check [--verbose]` | Collect and push **once**, print the outcome, exit 0 on accept. `--verbose` prints the full payload. A fast diagnostic (1s CPU window), never a load average. |
-| `superboard install --server URL --token TOKEN [--interval SECS] [--insecure] [--config PATH]` | Write config, install the service, and start it. Must run as root; refuses to double-install. |
-| `superboard uninstall [--config PATH]` | Stop and remove everything install created: service (or cron entry), buffer directory, and config. Must run as root. |
-| `superboard self-update [--check]` | Apply a server-shipped release immediately. `--check` only reports what would happen and installs nothing. |
-| `superboard run [--config PATH]` | Collect and push forever; this is what the service runs. Not normally invoked by hand. |
+| Command                                                                                        | Purpose                                                                                                                                                       |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `superboard version`                                                                           | Print the version (e.g. `superboard 1.7.0`). Release builds stamp it via `-ldflags`.                                                                          |
+| `superboard check [--verbose]`                                                                 | Collect and push **once**, print the outcome, exit 0 on accept. `--verbose` prints the full payload. A fast diagnostic (1s CPU window), never a load average. |
+| `superboard install --server URL --token TOKEN [--interval SECS] [--insecure] [--config PATH]` | Write config, install the service, and start it. Must run as root; refuses to double-install.                                                                 |
+| `superboard uninstall [--config PATH]`                                                         | Stop and remove everything install created: service (or cron entry), buffer directory, and config. Must run as root.                                          |
+| `superboard self-update [--check]`                                                             | Apply a server-shipped release immediately. `--check` only reports what would happen and installs nothing.                                                    |
+| `superboard run [--config PATH]`                                                               | Collect and push forever; this is what the service runs. Not normally invoked by hand.                                                                        |
 
 A hidden `apply-update` entry point is used by the detached swap helper, not by
 operators.
 
 ## Troubleshooting
 
-| Symptom | Likely cause | What to do |
-|---|---|---|
-| Host card stays pending, no telemetry | Wrong `push_token`/`server_url`, agent not running, or no outbound HTTPS | `superboard check --verbose` as root; inspect `/etc/superboard/config.json`; check the unit (`systemctl status superboard`) or the `@reboot` cron line. A 404 means the token is unknown or inactive. |
-| Monitor flips down while the host is fine | Push interval too close to the monitor timeout, or transient push failures | Keep the check interval ≥ 3× `interval_seconds` (30–180s is typical). Check `agent.lastError`/`failedPushes` on the card: sustained failure is the server's silence path firing. |
-| Install fails at checksum verification | Truncated download, a proxy rewriting bytes, or a mismatched `sha256sums` | Rerun the one-liner (the installer retries three times); confirm the origin serves the matching `sha256sums` and that nothing rewrites the response. |
+| Symptom                                                      | Likely cause                                                                                                                              | What to do                                                                                                                                                                                                 |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host card stays pending, no telemetry                        | Wrong `push_token`/`server_url`, agent not running, or no outbound HTTPS                                                                  | `superboard check --verbose` as root; inspect `/etc/superboard/config.json`; check the unit (`systemctl status superboard`) or the `@reboot` cron line. A 404 means the token is unknown or inactive.      |
+| Monitor flips down while the host is fine                    | Push interval too close to the monitor timeout, or transient push failures                                                                | Keep the check interval ≥ 3× `interval_seconds` (30–180s is typical). Check `agent.lastError`/`failedPushes` on the card: sustained failure is the server's silence path firing.                           |
+| Install fails at checksum verification                       | Truncated download, a proxy rewriting bytes, or a mismatched `sha256sums`                                                                 | Rerun the one-liner (the installer retries three times); confirm the origin serves the matching `sha256sums` and that nothing rewrites the response.                                                       |
 | `self-update` reports success but the version did not change | No build for this platform, a downgrade with `self_update_allow_downgrade` false, no systemd, or a health-window rollback restored `.bak` | Run `superboard self-update --check` to see what the server ships; check the `self_update*` keys; on non-systemd hosts use `install.sh --update`; inspect `apply.log` under `/var/lib/superboard/update/`. |
-| Push returns 401/403/404 | Token missing, inactive, or rotated and not updated on the host | Regenerate the monitor's push token server-side, update `push_token` in `/etc/superboard/config.json`, and restart the agent. The backlog is kept while the token is wrong and delivers once it is fixed. |
-| `docker` shows unavailable, not "no containers" | No reachable socket (permission, rootless path, exotic `DOCKER_HOST`) | Check `dockerError` on the card; confirm the agent can read a Docker socket or that the `docker` CLI is on `PATH`. The agent only reads the socket. |
-| Agent uptime is tiny on a long-running host | Crash loop | Check the journal for `collector panic` or a config error; the self-report's `lastError` and `collectorErrors` name the failing collector. |
+| Push returns 401/403/404                                     | Token missing, inactive, or rotated and not updated on the host                                                                           | Regenerate the monitor's push token server-side, update `push_token` in `/etc/superboard/config.json`, and restart the agent. The backlog is kept while the token is wrong and delivers once it is fixed.  |
+| `docker` shows unavailable, not "no containers"              | No reachable socket (permission, rootless path, exotic `DOCKER_HOST`)                                                                     | Check `dockerError` on the card; confirm the agent can read a Docker socket or that the `docker` CLI is on `PATH`. The agent only reads the socket.                                                        |
+| Agent uptime is tiny on a long-running host                  | Crash loop                                                                                                                                | Check the journal for `collector panic` or a config error; the self-report's `lastError` and `collectorErrors` name the failing collector.                                                                 |
 
 Deployment topologies and the served installer are in
 [deployment](deployment.md); the surrounding architecture and API are in

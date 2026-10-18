@@ -14,15 +14,7 @@
  * reported back in `ignoredFields`.
  */
 
-export type FieldKind =
-    | "text"
-    | "number"
-    | "password"
-    | "url"
-    | "select"
-    | "boolean"
-    | "textarea"
-    | "list";
+export type FieldKind = "text" | "number" | "password" | "url" | "select" | "boolean" | "textarea" | "list";
 
 export interface FieldDef {
     /** API field name. */
@@ -61,11 +53,43 @@ export const COMMON_FIELDS: FieldDef[] = [
 
 /** Scheduling fields, always advanced because defaults are usually right. */
 export const SCHEDULING_FIELDS: FieldDef[] = [
-    { key: "retryInterval", label: "Retry interval", kind: "number", help: "Seconds between retries when down.", advanced: true },
-    { key: "maxretries", label: "Retries before alerting", kind: "number", default: 0, help: "0 alerts on the first failure.", advanced: true },
-    { key: "resendInterval", label: "Re-notify every", kind: "number", default: 0, help: "Minutes. 0 disables.", advanced: true },
-    { key: "timeout", label: "Timeout", kind: "number", help: "Seconds before the check is treated as failed.", advanced: true },
-    { key: "upsideDown", label: "Invert status", kind: "boolean", help: "Alert when the service is UP instead of down.", advanced: true },
+    {
+        key: "retryInterval",
+        label: "Retry interval",
+        kind: "number",
+        help: "Seconds between retries when down.",
+        advanced: true,
+    },
+    {
+        key: "maxretries",
+        label: "Retries before alerting",
+        kind: "number",
+        default: 0,
+        help: "0 alerts on the first failure.",
+        advanced: true,
+    },
+    {
+        key: "resendInterval",
+        label: "Re-notify every",
+        kind: "number",
+        default: 0,
+        help: "Minutes. 0 disables.",
+        advanced: true,
+    },
+    {
+        key: "timeout",
+        label: "Timeout",
+        kind: "number",
+        help: "Seconds before the check is treated as failed.",
+        advanced: true,
+    },
+    {
+        key: "upsideDown",
+        label: "Invert status",
+        kind: "boolean",
+        help: "Alert when the service is UP instead of down.",
+        advanced: true,
+    },
     { key: "parent", label: "Group", kind: "number", help: "Parent group monitor id.", advanced: true },
 ];
 
@@ -78,7 +102,13 @@ export const SCHEDULING_FIELDS: FieldDef[] = [
 export const ALERT_THRESHOLD_FIELDS: FieldDef[] = [
     { key: "metricCpuThreshold", label: "CPU %", kind: "number", placeholder: "90", help: "Sustained for 60s." },
     { key: "metricRamThreshold", label: "RAM %", kind: "number", placeholder: "90", help: "Sustained for 60s." },
-    { key: "metricDiskThreshold", label: "Disk %", kind: "number", placeholder: "90", help: "Fullest mount, sustained for 60s." },
+    {
+        key: "metricDiskThreshold",
+        label: "Disk %",
+        kind: "number",
+        placeholder: "90",
+        help: "Fullest mount, sustained for 60s.",
+    },
 ];
 
 const HTTP_AUTH: FieldDef[] = [
@@ -101,9 +131,23 @@ export const TYPE_SCHEMAS: Record<string, TypeSchema> = {
         supportsConditions: true,
         basics: [
             { key: "url", label: "URL", kind: "url", required: true, placeholder: "https://example.com/health" },
-            { key: "method", label: "Method", kind: "select", default: "GET",
-              options: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"].map((m) => ({ value: m, label: m })) },
-            { key: "accepted_statuscodes", label: "Accept status codes", kind: "list", default: [ "200-299" ], help: "Ranges allowed. Anything else is a failure." },
+            {
+                key: "method",
+                label: "Method",
+                kind: "select",
+                default: "GET",
+                options: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"].map((m) => ({
+                    value: m,
+                    label: m,
+                })),
+            },
+            {
+                key: "accepted_statuscodes",
+                label: "Accept status codes",
+                kind: "list",
+                default: ["200-299"],
+                help: "Ranges allowed. Anything else is a failure.",
+            },
         ],
         advanced: [
             { key: "keyword", label: "Keyword must appear", kind: "text", advanced: true },
@@ -134,12 +178,8 @@ export const TYPE_SCHEMAS: Record<string, TypeSchema> = {
         type: "ping",
         label: "Ping",
         summary: "ICMP echo to a host.",
-        basics: [
-            { key: "hostname", label: "Hostname", kind: "text", required: true, placeholder: "1.1.1.1" },
-        ],
-        advanced: [
-            { key: "packetSize", label: "Packet size", kind: "number", default: 56, advanced: true },
-        ],
+        basics: [{ key: "hostname", label: "Hostname", kind: "text", required: true, placeholder: "1.1.1.1" }],
+        advanced: [{ key: "packetSize", label: "Packet size", kind: "number", default: 56, advanced: true }],
     },
 
     dns: {
@@ -149,8 +189,16 @@ export const TYPE_SCHEMAS: Record<string, TypeSchema> = {
         supportsConditions: true,
         basics: [
             { key: "hostname", label: "Hostname", kind: "text", required: true, placeholder: "example.com" },
-            { key: "dns_resolve_type", label: "Record type", kind: "select", default: "A",
-              options: [ "A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "SRV", "CAA", "PTR" ].map((v) => ({ value: v, label: v })) },
+            {
+                key: "dns_resolve_type",
+                label: "Record type",
+                kind: "select",
+                default: "A",
+                options: ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "SRV", "CAA", "PTR"].map((v) => ({
+                    value: v,
+                    label: v,
+                })),
+            },
         ],
         advanced: [
             { key: "dns_resolve_server", label: "Resolve using", kind: "text", default: "1.1.1.1", advanced: true },
@@ -177,9 +225,7 @@ export const TYPE_SCHEMAS: Record<string, TypeSchema> = {
         type: "group",
         label: "Group",
         summary: "A folder for other monitors. Its status follows its children.",
-        basics: [
-            { key: "name", label: "Group name", kind: "text", required: true, placeholder: "Client A" },
-        ],
+        basics: [{ key: "name", label: "Group name", kind: "text", required: true, placeholder: "Client A" }],
         advanced: [],
     },
 
@@ -187,11 +233,15 @@ export const TYPE_SCHEMAS: Record<string, TypeSchema> = {
         type: "manual",
         label: "Manual / push",
         summary: "Nothing is checked. Status is reported by an external call.",
-        basics: [
-            { key: "name", label: "Name", kind: "text", required: true },
-        ],
+        basics: [{ key: "name", label: "Name", kind: "text", required: true }],
         advanced: [
-            { key: "pushToken", label: "Push token", kind: "text", advanced: true, help: "POST to /api/push/<token> to report." },
+            {
+                key: "pushToken",
+                label: "Push token",
+                kind: "text",
+                advanced: true,
+                help: "POST to /api/push/<token> to report.",
+            },
         ],
     },
 };
@@ -239,7 +289,7 @@ export function fieldsFor(type: string): FieldDef[] {
     const seen = new Set<string>();
     const out: FieldDef[] = [];
 
-    for (const field of [ ...schema.basics, ...schema.advanced ]) {
+    for (const field of [...schema.basics, ...schema.advanced]) {
         if (seen.has(field.key)) {
             continue;
         }

@@ -7,12 +7,12 @@ serves the built output, so in production there is no separate frontend origin.
 
 ## Routes
 
-| Path | Shows |
-|---|---|
-| `/` | Token gate, then the monitor table. |
-| `/superboard`, `/superboard/kiosk/…` | The wall board ([superboard](superboard.md)). |
-| `/status/:slug` | A public status page ([status pages](status-pages.md)). |
-| any other path | The dashboard, so a deep link never 404s. |
+| Path                                 | Shows                                                   |
+| ------------------------------------ | ------------------------------------------------------- |
+| `/`                                  | Token gate, then the monitor table.                     |
+| `/superboard`, `/superboard/kiosk/…` | The wall board ([superboard](superboard.md)).           |
+| `/status/:slug`                      | A public status page ([status pages](status-pages.md)). |
+| any other path                       | The dashboard, so a deep link never 404s.               |
 
 The router is ~40 lines in `src/lib/router.ts`; there is no routing dependency.
 

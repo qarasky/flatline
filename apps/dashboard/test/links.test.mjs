@@ -18,7 +18,7 @@ const roster = [
 test("only websites count as linkable monitors", () => {
     assert.equal(isWebsiteMonitor({ type: "http" }), true);
     assert.equal(isWebsiteMonitor({ type: "https" }), true);
-    for (const type of [ "push", "ping", "group" ]) {
+    for (const type of ["push", "ping", "group"]) {
         assert.equal(isWebsiteMonitor({ type }), false, `${type} is not a website`);
     }
 });
@@ -29,12 +29,18 @@ test("the picker offers websites and the groups holding one", () => {
     // "Servers" group holds only a server, so it is not offered; nor are the
     // server (2, also the excluded one), db-01 or the ping check.
     assert.deepEqual(
-        candidates.map((candidate) => [ candidate.id, candidate.kind ]),
-        [ [ 1, "group" ], [ 8, "group" ], [ 4, "monitor" ], [ 9, "monitor" ], [ 3, "monitor" ] ],
+        candidates.map((candidate) => [candidate.id, candidate.kind]),
+        [
+            [1, "group"],
+            [8, "group"],
+            [4, "monitor"],
+            [9, "monitor"],
+            [3, "monitor"],
+        ]
     );
     assert.deepEqual(
         candidates.map((candidate) => candidate.label),
-        [ "Work", "Work / nested", "blog", "deep", "shop" ],
+        ["Work", "Work / nested", "blog", "deep", "shop"]
     );
 });
 
@@ -48,11 +54,11 @@ test("a group holding a website only in a nested group is still offered", () => 
     const groupIds = buildLinkCandidates(nested, null)
         .filter((candidate) => candidate.kind === "group")
         .map((candidate) => candidate.id);
-    assert.deepEqual(groupIds, [ 10, 11, 1, 8 ]);
+    assert.deepEqual(groupIds, [10, 11, 1, 8]);
 });
 
 test("the server being edited is never offered as its own link", () => {
     const server = { id: 3, name: "shop", type: "https", status: 1 };
-    const candidates = buildLinkCandidates([ ...roster, server ], 3);
+    const candidates = buildLinkCandidates([...roster, server], 3);
     assert.ok(!candidates.some((candidate) => candidate.id === 3));
 });

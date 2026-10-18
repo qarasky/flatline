@@ -54,8 +54,13 @@ function Beats({ beats }: { beats: Heartbeat[] }) {
                         key={i}
                         title={beat.time}
                         className={`beat ${
-                            beat.status === 1 ? "up" : beat.status === 0 ? "down"
-                            : beat.status === 3 ? "maintenance" : "pending"
+                            beat.status === 1
+                                ? "up"
+                                : beat.status === 0
+                                  ? "down"
+                                  : beat.status === 3
+                                    ? "maintenance"
+                                    : "pending"
                         }`}
                     />
                 ))}
@@ -69,8 +74,8 @@ function Beats({ beats }: { beats: Heartbeat[] }) {
 
 /** One monitor row. */
 function MonitorRow({ monitor, state }: { monitor: MonitorEntry; state: { status: number; beats: Heartbeat[] } }) {
-    const severity = state.status === 1 ? "up" : state.status === 0 ? "down"
-        : state.status === 3 ? "maintenance" : "degraded";
+    const severity =
+        state.status === 1 ? "up" : state.status === 0 ? "down" : state.status === 3 ? "maintenance" : "degraded";
 
     return (
         <div className="monitor">
@@ -93,7 +98,11 @@ function MonitorRow({ monitor, state }: { monitor: MonitorEntry; state: { status
  * @param props.history Resolved incidents
  * @returns The rendered page
  */
-export function StatusPageView({ data, heartbeats, history = [] }: {
+export function StatusPageView({
+    data,
+    heartbeats,
+    history = [],
+}: {
     data: StatusPageData;
     heartbeats: Record<string, Heartbeat[]>;
     history?: Incident[];
@@ -101,7 +110,7 @@ export function StatusPageView({ data, heartbeats, history = [] }: {
     // Status lives in the heartbeat feed, not the config payload, so pair the
     // two before deciding anything about overall health.
     const states = resolveMonitorStates(data.publicGroupList, heartbeats);
-    const byMonitor = new Map(states.map((s) => [ s.monitor.id, s ]));
+    const byMonitor = new Map(states.map((s) => [s.monitor.id, s]));
 
     const severity = pageSeverity(states);
     const monitorCount = states.length;
@@ -109,9 +118,7 @@ export function StatusPageView({ data, heartbeats, history = [] }: {
     // StatusPage.getIcon() returns "/icon.svg" when no logo is set, which is a
     // path on the Flatline server. Treat that default as "no logo" rather
     // than rendering a broken image.
-    const logoUrl = data.config.icon && !data.config.icon.includes("icon.svg")
-        ? data.config.icon
-        : null;
+    const logoUrl = data.config.icon && !data.config.icon.includes("icon.svg") ? data.config.icon : null;
 
     // data.incidents holds pinned *active* incidents only; resolved ones come
     // from the separate history fetch.

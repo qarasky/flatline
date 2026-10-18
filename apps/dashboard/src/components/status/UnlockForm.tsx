@@ -45,25 +45,27 @@ export function UnlockForm({ slug, onUnlocked }: { slug: string; onUnlocked: () 
     }
 
     return (
-        <div className="status-page"><div className="wrap">
-            <form className="unlock" onSubmit={onSubmit}>
-                <h1>This status page is private</h1>
-                <p className="sub">Enter the password you were given.</p>
+        <div className="status-page">
+            <div className="wrap">
+                <form className="unlock" onSubmit={onSubmit}>
+                    <h1>This status page is private</h1>
+                    <p className="sub">Enter the password you were given.</p>
 
-                {error ? <div className="error">{error}</div> : null}
+                    {error ? <div className="error">{error}</div> : null}
 
-                <input
-                    type="password"
-                    name="password"
-                    placeholder="Password"
-                    autoComplete="current-password"
-                    autoFocus
-                    required
-                />
-                <button type="submit" disabled={pending}>
-                    {pending ? "Checking…" : "Unlock"}
-                </button>
-            </form>
-        </div></div>
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="Password"
+                        autoComplete="current-password"
+                        autoFocus
+                        required
+                    />
+                    <button type="submit" disabled={pending}>
+                        {pending ? "Checking…" : "Unlock"}
+                    </button>
+                </form>
+            </div>
+        </div>
     );
 }

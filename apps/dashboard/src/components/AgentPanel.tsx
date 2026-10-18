@@ -1,13 +1,6 @@
 import { useEffect, useState } from "react";
 import type { SyntheticEvent } from "react";
-import {
-    ApiError,
-    createApiKey,
-    deleteApiKey,
-    fetchApiKeys,
-    setApiKeyActive,
-    type ApiKeySummary,
-} from "@/lib/api";
+import { ApiError, createApiKey, deleteApiKey, fetchApiKeys, setApiKeyActive, type ApiKeySummary } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +13,7 @@ const SCOPE_HELP: Record<string, string> = {
     publish: "Everything, including making status pages public. Hand out rarely.",
 };
 
-const ALL_SCOPES = [ "read", "write", "publish" ];
+const ALL_SCOPES = ["read", "write", "publish"];
 
 /**
  * Agent panel: mint scoped tokens, revoke them, and hand an agent everything
@@ -37,7 +30,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
     const [keys, setKeys] = useState<ApiKeySummary[]>([]);
     const [availableScopes, setAvailableScopes] = useState<string[]>(ALL_SCOPES);
     const [name, setName] = useState("");
-    const [scopes, setScopes] = useState<Set<string>>(new Set([ "read" ]));
+    const [scopes, setScopes] = useState<Set<string>>(new Set(["read"]));
     const [freshToken, setFreshToken] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
@@ -83,13 +76,15 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
 
         setBusy(true);
         try {
-            const res = await createApiKey({ name: name.trim(), scopes: [ ...scopes ] });
+            const res = await createApiKey({ name: name.trim(), scopes: [...scopes] });
             setFreshToken(res.token);
             setName("");
-            setScopes(new Set([ "read" ]));
+            setScopes(new Set(["read"]));
             await load();
         } catch (e) {
-            setError(e instanceof ApiError ? `${e.message} (${e.code})` : e instanceof Error ? e.message : "Minting failed.");
+            setError(
+                e instanceof ApiError ? `${e.message} (${e.code})` : e instanceof Error ? e.message : "Minting failed."
+            );
         } finally {
             setBusy(false);
         }
@@ -191,9 +186,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
                             />
                             <span>
                                 <span className="font-mono text-xs">{scope}</span>
-                                <span className="block text-[11px] text-quiet">
-                                    {SCOPE_HELP[scope] ?? ""}
-                                </span>
+                                <span className="block text-[11px] text-quiet">{SCOPE_HELP[scope] ?? ""}</span>
                             </span>
                         </label>
                     ))}
@@ -223,17 +216,14 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
                         <Button
                             size="sm"
                             variant="outline"
-                            onClick={() =>
-                                void copy(`curl -H "Authorization: Bearer <token>" ${BASE}/api/v1/health`)
-                            }
+                            onClick={() => void copy(`curl -H "Authorization: Bearer <token>" ${BASE}/api/v1/health`)}
                         >
                             Copy
                         </Button>
                     </div>
                     <p className="text-[11px] text-quiet">
-                        Give agents <span className="font-mono">read</span> unless they genuinely need
-                        to mutate monitors. Never hand out <span className="font-mono">publish</span> to
-                        anything unattended.
+                        Give agents <span className="font-mono">read</span> unless they genuinely need to mutate
+                        monitors. Never hand out <span className="font-mono">publish</span> to anything unattended.
                     </p>
                 </div>
             </div>

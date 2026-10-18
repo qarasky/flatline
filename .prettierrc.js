@@ -1,14 +1,14 @@
 /**
- * Prettier Configuration for Flatline
+ * Prettier configuration for Flatline.
  *
- * Usage:
- *   npm run fmt              - Format all files (auto-runs in CI via autofix workflow)
- *   npm run fmt -- --check   - Check formatting without making changes
+ * The whole repository follows this style: `npm run fmt` writes it, and
+ * `npm run fmt:check` verifies it without touching anything.
  *
- * TIP: This formatter is automatically run in CI, so no need to worry about it
+ * Rust and Go are not covered — `cargo fmt` is not enforced (the tree is not
+ * uniformly rustfmt-formatted) and Go is expected to stay `gofmt` clean.
  */
 module.exports = {
-    // Core formatting options - matching original ESLint rules
+    // Core formatting options
     semi: true,
     singleQuote: false,
     trailingComma: "es5",
@@ -20,21 +20,10 @@ module.exports = {
     bracketSpacing: true,
     bracketSameLine: false,
 
-    // Vue-specific settings
-    vueIndentScriptAndStyle: false,
-    singleAttributePerLine: false,
-    htmlWhitespaceSensitivity: "ignore", // More forgiving with whitespace in HTML
-
     // Override settings for specific file types
     overrides: [
         {
-            files: "*.vue",
-            options: {
-                parser: "vue",
-            },
-        },
-        {
-            files: ["*.json"],
+            files: ["*.json", "*.jsonc"],
             options: {
                 tabWidth: 4,
                 trailingComma: "none",
@@ -45,12 +34,6 @@ module.exports = {
             options: {
                 tabWidth: 2,
                 trailingComma: "none",
-            },
-        },
-        {
-            files: ["src/icon.js"],
-            options: {
-                trailingComma: "all",
             },
         },
         {

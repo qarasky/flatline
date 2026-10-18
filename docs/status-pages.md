@@ -7,9 +7,9 @@ in the dashboard app and are served by the backend on the same origin, under
 
 ## How a page is reached
 
-| Path | Purpose |
-|---|---|
-| `/status/:slug` | The page itself (SPA route). |
+| Path                 | Purpose                                      |
+| -------------------- | -------------------------------------------- |
+| `/status/:slug`      | The page itself (SPA route).                 |
 | `status.client-a.kz` | Same page, resolved from the request `Host`. |
 
 `GET /api/status-page/resolve-host?host=…` maps a hostname (with or without
@@ -19,13 +19,13 @@ back to a default page.
 
 ## Reading a page (public, no token)
 
-| Endpoint | Returns |
-|---|---|
-| `GET /api/status-page/{slug}` | Page config, public groups with their monitors, incidents, maintenance list. |
-| `GET /api/status-page/heartbeat/{slug}` | Recent heartbeat rows and uptime windows per monitor. |
-| `GET /api/status-page/{slug}/incident-history` | Cursor-paginated incident history. |
-| `GET /api/status-page/{slug}/manifest.json` | Web app manifest (title and icon). |
-| `GET /api/status-page/{slug}/badge` | A badge for the page. |
+| Endpoint                                       | Returns                                                                      |
+| ---------------------------------------------- | ---------------------------------------------------------------------------- |
+| `GET /api/status-page/{slug}`                  | Page config, public groups with their monitors, incidents, maintenance list. |
+| `GET /api/status-page/heartbeat/{slug}`        | Recent heartbeat rows and uptime windows per monitor.                        |
+| `GET /api/status-page/{slug}/incident-history` | Cursor-paginated incident history.                                           |
+| `GET /api/status-page/{slug}/manifest.json`    | Web app manifest (title and icon).                                           |
+| `GET /api/status-page/{slug}/badge`            | A badge for the page.                                                        |
 
 These endpoints are public by design: a status page exists to be read by people
 who are not operators. They expose status, latency and uptime — **not** the
@@ -71,13 +71,13 @@ the rest of the legacy badge surface.
 
 ## Data model
 
-| Table | Holds |
-|---|---|
-| `status_pages` | Slug, title, icon, published flag, optional password hash, branding. |
-| `status_page_groups` | Sections within a page, with a `public` flag and ordering. |
-| `status_page_monitors` | Which monitors appear, in which section, and whether the check URL is sent. |
-| `status_page_cnames` | Host → page mappings for branded domains. |
-| `status_page_incidents` | Incident posts: style, title, content, pin, active, timestamps. |
+| Table                   | Holds                                                                       |
+| ----------------------- | --------------------------------------------------------------------------- |
+| `status_pages`          | Slug, title, icon, published flag, optional password hash, branding.        |
+| `status_page_groups`    | Sections within a page, with a `public` flag and ordering.                  |
+| `status_page_monitors`  | Which monitors appear, in which section, and whether the check URL is sent. |
+| `status_page_cnames`    | Host → page mappings for branded domains.                                   |
+| `status_page_incidents` | Incident posts: style, title, content, pin, active, timestamps.             |
 
 ## Editing a page
 

@@ -88,7 +88,7 @@ async function readJson<T>(url: string, options: FetchOptions): Promise<T> {
         throw new Error(`Status page request failed: ${response.status}`);
     }
 
-    return await response.json() as T;
+    return (await response.json()) as T;
 }
 
 /**
@@ -110,7 +110,13 @@ export async function fetchStatusPage(
 
     // An empty page must still render, so a failing history fetch degrades to
     // "no recent incidents" rather than a 500.
-    const fallbackHistory: IncidentHistoryPage = { ok: true, incidents: [], total: 0, nextCursor: null, hasMore: false };
+    const fallbackHistory: IncidentHistoryPage = {
+        ok: true,
+        incidents: [],
+        total: 0,
+        nextCursor: null,
+        hasMore: false,
+    };
 
     const [data, heartbeat, history] = await Promise.all([
         readJson<StatusPageData>(joinUrl(baseUrl, `/api/status-page/${encoded}`), options),
@@ -118,10 +124,9 @@ export async function fetchStatusPage(
             joinUrl(baseUrl, `/api/status-page/heartbeat/${encoded}`),
             options
         ).catch(() => ({ ok: false, heartbeatList: {} })),
-        readJson<IncidentHistoryPage>(
-            joinUrl(baseUrl, `/api/status-page/${encoded}/incident-history`),
-            options
-        ).catch(() => fallbackHistory),
+        readJson<IncidentHistoryPage>(joinUrl(baseUrl, `/api/status-page/${encoded}/incident-history`), options).catch(
+            () => fallbackHistory
+        ),
     ]);
 
     return {
@@ -139,9 +144,5 @@ export async function fetchStatusPage(
  * @returns True when the page needs a password
  */
 export function isPasswordRequired(body: unknown): body is PasswordRequired {
-    return (
-        typeof body === "object" &&
-        body !== null &&
-        (body as { error?: string }).error === "password_required"
-    );
+    return typeof body === "object" && body !== null && (body as { error?: string }).error === "password_required";
 }
