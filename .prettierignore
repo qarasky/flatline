@@ -13,3 +13,7 @@ superboard/flatline-superboard
 
 # Generated files: npm owns the lockfile's formatting.
 package-lock.json
+
+# Go backup agent build artifacts.
+backup-agent/flatline-backup
+backup-agent/flatline-backup-*
