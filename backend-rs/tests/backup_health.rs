@@ -767,3 +767,41 @@ async fn verification_is_operator_only() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn latest_failure_survives_receipt_order() {
+    let h = harness().await;
+    let now = chrono::Utc::now();
+    let (agent_id, _) = register_at(&h, "ordering", None, now).await;
+
+    // A failed attempt at T must remain the latest attempt even when an older
+    // export is received later.
+    let mut failed = RunSeed::new(&agent_id);
+    failed.status = "failed".to_string();
+    failed.error_code = Some("export_failed".to_string());
+    failed.export_started_at = (now - chrono::Duration::minutes(5)).to_rfc3339();
+    failed.created_at = (now - chrono::Duration::minutes(5)).to_rfc3339();
+    failed.export_finished_at = Some((now - chrono::Duration::minutes(4)).to_rfc3339());
+    failed.total_bytes = None;
+    insert_seed(&h.pool, &failed).await;
+
+    let mut old_success = RunSeed::new(&agent_id);
+    old_success.status = "completed".to_string();
+    old_success.export_started_at = (now - chrono::Duration::days(2)).to_rfc3339();
+    old_success.export_finished_at = Some((now - chrono::Duration::days(2)).to_rfc3339());
+    old_success.created_at = now.to_rfc3339();
+    old_success.completed_at = Some(now.to_rfc3339());
+    old_success.received_bytes = 1024;
+    insert_seed(&h.pool, &old_success).await;
+
+    let (_, agents) = common::get_json(&h.app, "/api/v1/backup-agents", &h.token).await;
+    let ordering = agents["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["id"] == agent_id)
+        .unwrap();
+    assert_eq!(ordering["latestRun"]["status"], "failed");
+    assert_eq!(ordering["lastErrorCode"], "export_failed");
+    assert_eq!(ordering["health"], "failed");
+}

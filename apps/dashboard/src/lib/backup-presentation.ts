@@ -39,9 +39,22 @@ export function verificationLabel(run: BackupRunSummary): string {
         return run.restoreVerification.status === "passed" ? "Restore tested" : "Restore failed";
     }
     if (run.archiveVerification) {
-        return run.archiveVerification.status === "passed" ? "Archive verified" : "Archive failed";
+        return run.archiveVerification.status === "passed" ? "Transfer verified" : "Transfer failed";
     }
-    return run.status === "completed" ? "Not restore-tested" : "Not completed";
+    return run.status === "completed" ? "Transfer verified" : "Not completed";
+}
+
+/**
+ * Agent-level restore result. It points at the run that was actually tested,
+ * even when a newer untested backup exists.
+ * @param agent Backup agent summary
+ */
+export function restoreLabel(agent: BackupAgentSummary): string {
+    const verification = agent.latestRestoreVerification;
+    if (!verification) {
+        return "Not restore-tested";
+    }
+    return verification.status === "passed" ? "Restore tested" : "Restore failed";
 }
 
 /**

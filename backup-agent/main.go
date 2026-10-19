@@ -173,7 +173,11 @@ func runRestore(args []string) int {
 	defer cancel()
 	report, err := RestoreBundle(ctx, bundle, identity, target)
 	printJSON(report)
-	if err != nil || report.RestoreStatus != "passed" {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "restore failed: %v\n", err)
+		return 1
+	}
+	if report.RestoreStatus != "passed" {
 		fmt.Fprintln(os.Stderr, "restore did not pass")
 		return 1
 	}
@@ -190,7 +194,11 @@ func runCompare(args []string) int {
 	defer cancel()
 	report, err := CompareRestore(ctx, bundle, identity, target)
 	printJSON(report)
-	if err != nil || report.RestoreStatus != "passed" {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "comparison failed: %v\n", err)
+		return 1
+	}
+	if report.RestoreStatus != "passed" {
 		fmt.Fprintln(os.Stderr, "comparison did not pass")
 		return 1
 	}
@@ -207,7 +215,11 @@ func runRestoreGlobals(args []string) int {
 	defer cancel()
 	report, err := RestoreGlobals(ctx, bundle, identity, target)
 	printJSON(report)
-	if err != nil || report.RestoreStatus != "passed" {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "globals restore failed: %v\n", err)
+		return 1
+	}
+	if report.RestoreStatus != "passed" {
 		fmt.Fprintln(os.Stderr, "globals restore did not pass")
 		return 1
 	}

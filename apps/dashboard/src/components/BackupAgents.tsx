@@ -5,6 +5,7 @@ import {
     backupSourceSummary,
     backupTime,
     formatBytes,
+    restoreLabel,
     verificationLabel,
 } from "@/lib/backup-presentation";
 import { Badge } from "@/components/ui/badge";
@@ -54,12 +55,13 @@ export function BackupAgents({
                             const health = backupHealth(agent);
                             const run = agent.latestRun;
                             const completed = agent.lastCompletedRun;
-                            // Show the last good recovery point's verification,
-                            // while the error code below still identifies the
-                            // latest failed attempt.
-                            const restore = verificationLabel(
-                                completed ?? run ?? ({ status: "failed" } as BackupRunSummary)
-                            );
+                            // Transfer and restore are separate states. The
+                            // agent-level restore result points at the run that
+                            // was actually tested, even if a newer backup has
+                            // not been restore-tested yet.
+                            const transferRun = completed ?? run;
+                            const transfer = transferRun ? verificationLabel(transferRun) : "Not completed";
+                            const restore = restoreLabel(agent);
                             return (
                                 <tr key={agent.id} className="border-b border-border/60 last:border-0">
                                     <td className="py-2 pl-3 pr-4">
@@ -94,7 +96,8 @@ export function BackupAgents({
                                         {backupSourceSummary(completed ?? run)}
                                     </td>
                                     <td className="py-2 text-xs">
-                                        <div>{restore}</div>
+                                        <div>{transfer}</div>
+                                        <div className="text-[11px] text-quiet">{restore}</div>
                                         {run?.errorCode ? (
                                             <div className="text-[11px] text-destructive">{run.errorCode}</div>
                                         ) : null}

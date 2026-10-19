@@ -134,6 +134,15 @@ impl Storage {
                 "backup storage root must be a real directory".to_string(),
             ));
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(StorageError::Unavailable(
+                    "backup storage root must be mode 0700".to_string(),
+                ));
+            }
+        }
 
         let marker =
             fs::read_to_string(root.join(STORAGE_MARKER)).map_err(|error| match error.kind() {
@@ -156,6 +165,11 @@ impl Storage {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The provisioned UUID from the marker, used for cross-restart pinning.
+    pub fn provisioned_id(&self) -> &str {
+        &self.provisioned
     }
 
     /// Re-read the marker before a mutation; a replaced mount must not be
@@ -224,6 +238,10 @@ impl Storage {
         ensure_directory(&self.agent_dir(agent_id)?)?;
         ensure_directory(&run_dir)?;
         ensure_regular(&run_dir.join(PARTIAL_NAME), true)?;
+        sync_directory(&run_dir)?;
+        sync_directory(&self.agent_dir(agent_id)?)?;
+        sync_directory(&self.root.join("agents"))?;
+        sync_directory(&self.root)?;
         Ok(())
     }
 
@@ -235,6 +253,10 @@ impl Storage {
         remove_regular(&run_dir.join(FINAL_NAME))?;
         ensure_directory(&run_dir)?;
         ensure_regular(&run_dir.join(PARTIAL_NAME), true)?;
+        sync_directory(&run_dir)?;
+        sync_directory(&self.agent_dir(agent_id)?)?;
+        sync_directory(&self.root.join("agents"))?;
+        sync_directory(&self.root)?;
         Ok(())
     }
 
@@ -368,7 +390,8 @@ impl Storage {
                     )));
                 }
                 remove_regular(&partial)?;
-                File::open(&run_dir)?.sync_all()?;
+                sync_directory(&run_dir)?;
+                sync_directory(&self.agent_dir(agent_id)?)?;
                 return self.verify_final(agent_id, run_id, total, sha256);
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -396,7 +419,8 @@ impl Storage {
             .hit(FaultPoint::BeforeRename)
             .map_err(StorageError::Io)?;
         fs::rename(&partial, &final_path)?;
-        File::open(&run_dir)?.sync_all()?;
+        sync_directory(&run_dir)?;
+        sync_directory(&self.agent_dir(agent_id)?)?;
         self.faults
             .hit(FaultPoint::AfterRename)
             .map_err(StorageError::Io)?;
@@ -413,14 +437,25 @@ impl Storage {
         match fs::remove_dir(&run_dir) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => {}
             Err(error) => return Err(StorageError::Io(error)),
         }
+        sync_directory_if_exists(&self.agent_dir(agent_id)?)?;
         Ok(())
     }
 
     pub fn fault(&self, point: FaultPoint) -> Result<(), StorageError> {
         self.faults.hit(point).map_err(StorageError::Io)
+    }
+}
+
+fn sync_directory(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
+fn sync_directory_if_exists(path: &Path) -> io::Result<()> {
+    match sync_directory(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
     }
 }
 
@@ -449,6 +484,11 @@ fn ensure_directory(path: &Path) -> io::Result<()> {
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             fs::create_dir(path)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+            }
             Ok(())
         }
         Err(error) => Err(error),

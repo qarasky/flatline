@@ -189,7 +189,8 @@ Then start the stack with the opt-in override:
 
 ```bash
 cd /home/office/flatline
-sudo docker compose -f compose.rust.yaml -f docker/compose.backups.yaml up -d
+sudo docker compose -f compose.rust.yaml \
+  -f /home/office/flatline-src/docker/compose.backups.yaml up -d
 ```
 
 The override sets `FLATLINE_BACKUP_DIR=/app/backups` and refuses to create the

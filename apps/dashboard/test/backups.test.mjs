@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { backupHealth, verificationLabel } from "../src/lib/backup-presentation.ts";
+import { backupHealth, restoreLabel, verificationLabel } from "../src/lib/backup-presentation.ts";
 
 function run(overrides = {}) {
     return {
@@ -52,12 +52,12 @@ test("each named agent has its own health label", () => {
 });
 
 test("transfer verification is never called a restore test", () => {
-    assert.equal(verificationLabel(run()), "Not restore-tested");
+    assert.equal(verificationLabel(run()), "Transfer verified");
     assert.equal(
         verificationLabel(
             run({ archiveVerification: { runId: "run-1", status: "passed", checkedAt: "x", summary: "ok" } })
         ),
-        "Archive verified"
+        "Transfer verified"
     );
     assert.equal(
         verificationLabel(
@@ -72,6 +72,18 @@ test("transfer verification is never called a restore test", () => {
         "Restore failed"
     );
     assert.equal(verificationLabel(run({ status: "uploading", exportFinishedAt: null })), "Not completed");
+});
+
+test("the agent-level restore result points at the tested run", () => {
+    const tested = agent("meks", "healthy", {
+        latestRestoreVerification: { runId: "older-run", status: "passed", checkedAt: "x", summary: "ok" },
+    });
+    assert.equal(restoreLabel(tested), "Restore tested");
+    const failed = agent("meks", "healthy", {
+        latestRestoreVerification: { runId: "older-run", status: "failed", checkedAt: "x", summary: "no" },
+    });
+    assert.equal(restoreLabel(failed), "Restore failed");
+    assert.equal(restoreLabel(agent("meks", "healthy")), "Not restore-tested");
 });
 
 test("API reads send Authorization and keep agents separate", async () => {

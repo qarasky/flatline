@@ -593,9 +593,25 @@ async fn missing_storage_never_falls_back() {
     // Restoring the exact provisioned marker re-enables storage; the root is
     // never silently recreated.
     std::fs::create_dir(&root).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
     std::fs::write(root.join(STORAGE_MARKER), marker).unwrap();
     let (status, body) = start_run(&h, &token, "restored", data.len() as u64, &digest(data)).await;
     assert_eq!(status, 200, "restored storage: {body}");
+
+    // The marker UUID is pinned across requests and restarts: a different
+    // provisioned tree is refused instead of silently accepting new uploads.
+    let replacement = uuid::Uuid::new_v4().to_string();
+    std::fs::write(root.join(STORAGE_MARKER), replacement).unwrap();
+    let (status, body) = start_run(&h, &token, "replaced", data.len() as u64, &digest(data)).await;
+    assert_eq!(status, 503, "replaced storage: {body}");
+    assert!(
+        h.state.config.data_dir.join("backup-storage-id").exists(),
+        "the marker pin must be durable"
+    );
 }
 
 #[tokio::test]

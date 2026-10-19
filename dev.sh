@@ -42,6 +42,7 @@ mkdir -p "$LOGS" "$DATA_DIR" "$AGENT_DIR"
 # directory. Never point this at the office mirror in development.
 BACKUP_DIR="$DATA_DIR/backend-backups"
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 if [ ! -f "$BACKUP_DIR/.flatline-backup-storage" ]; then
     if command -v uuidgen >/dev/null 2>&1; then
         uuidgen | tr 'A-Z' 'a-z' >"$BACKUP_DIR/.flatline-backup-storage"

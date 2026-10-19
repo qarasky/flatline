@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,7 @@ type fakeRestoreExecutor struct {
 	bucketEmpty   map[string]bool
 	databaseEmpty map[string]bool
 	tables        map[string]map[string]int64
+	extensions    map[string][]string
 	puts          []fakePut
 	putErrAt      int
 	databaseErr   bool
@@ -76,6 +79,20 @@ func (f *fakeRestoreExecutor) PutObject(ctx context.Context, target RestoreS3Tar
 	return nil
 }
 
+func (f *fakeRestoreExecutor) ObjectDigest(ctx context.Context, target RestoreS3Target, key string) (int64, string, string, error) {
+	for _, put := range f.puts {
+		if put.bucket == target.Bucket && put.key == key {
+			sum := sha256.Sum256(put.body)
+			return int64(len(put.body)), hex.EncodeToString(sum[:]), put.contentType, nil
+		}
+	}
+	return 0, "", "", errors.New("object missing")
+}
+
+func (f *fakeRestoreExecutor) Extensions(ctx context.Context, target RestorePostgresTarget, database string) ([]string, error) {
+	return f.extensions[database], nil
+}
+
 func (f *fakeRestoreExecutor) ListObjects(ctx context.Context, target RestoreS3Target) (map[string]int64, error) {
 	objects := make(map[string]int64)
 	for _, put := range f.puts {
@@ -94,6 +111,10 @@ func (f *fakeRestoreExecutor) RestoreGlobals(ctx context.Context, target Restore
 }
 
 func makeRestoreBundle(t *testing.T, identity *age.X25519Identity, objects map[string][]byte, database, globals bool) string {
+	return makeRestoreBundleWithGlobalsSQL(t, identity, objects, database, globals, []byte("-- globals"))
+}
+
+func makeRestoreBundleWithGlobalsSQL(t *testing.T, identity *age.X25519Identity, objects map[string][]byte, database, globals bool, globalsBody []byte) string {
 	t.Helper()
 	spool, err := NewSpool(t.TempDir(), 64<<20)
 	if err != nil {
@@ -126,7 +147,7 @@ func makeRestoreBundle(t *testing.T, identity *age.X25519Identity, objects map[s
 		}}
 	}
 	if globals {
-		sql := writeSource(t, spool, "globals/000001.sql", []byte("-- globals"))
+		sql := writeSource(t, spool, "globals/000001.sql", globalsBody)
 		files = append(files, ExportFile{Path: "globals/000001.sql", SourcePath: sql, Kind: kindGlobals})
 	}
 	bundle, err := WriteBundle(context.Background(), Config{Name: "meks", recipient: identity.Recipient()}, spool, Export{
@@ -346,16 +367,34 @@ func TestGlobalsRequireSeparateCommand(t *testing.T) {
 	target := writeRestoreTarget(t, fixture, "", "", "modernization", "restore_modernization", true)
 	executor := &fakeRestoreExecutor{}
 	report, err := restoreBundleWith(context.Background(), bundle, identityFile, mustLoadTarget(t, target), executor)
-	if err == nil || report.RestoreStatus == "passed" {
-		t.Fatalf("normal restore must refuse globals: %+v %v", report, err)
+	if err != nil || report.RestoreStatus != "passed" {
+		t.Fatalf("normal restore must skip globals but restore the database: %+v %v", report, err)
 	}
-	if executor.writes != 0 {
-		t.Fatalf("globals were written by a normal restore")
+	if executor.globalsUsed {
+		t.Fatal("normal restore executed globals")
+	}
+	if len(report.Databases) != 1 {
+		t.Fatalf("normal restore databases = %v", report.Databases)
 	}
 
 	report, err = restoreGlobalsWith(context.Background(), bundle, identityFile, mustLoadTarget(t, target), executor)
 	if err != nil || report.RestoreStatus != "passed" || !executor.globalsUsed {
 		t.Fatalf("explicit globals restore = %+v err=%v used=%v", report, err, executor.globalsUsed)
+	}
+}
+
+func TestGlobalsRejectMetaCommands(t *testing.T) {
+	identity, identityFile := testIdentity(t)
+	fixture := newFixture(t)
+	bundle := makeRestoreBundleWithGlobalsSQL(t, identity, nil, false, true, []byte("\\! touch /tmp/pwned\n"))
+	target := writeRestoreTarget(t, fixture, "", "", "", "", true)
+	executor := &fakeRestoreExecutor{}
+	report, err := restoreGlobalsWith(context.Background(), bundle, identityFile, mustLoadTarget(t, target), executor)
+	if err == nil || report.RestoreStatus == "passed" {
+		t.Fatalf("psql meta-command must be refused: %+v %v", report, err)
+	}
+	if executor.globalsUsed {
+		t.Fatal("meta-command SQL reached the executor")
 	}
 }
 

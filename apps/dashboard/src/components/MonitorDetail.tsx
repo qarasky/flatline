@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
     downloadBackup,
     fetchBackupAgents,
@@ -194,6 +194,9 @@ export function MonitorDetail({
     const [backups, setBackups] = useState<BackupAgentSummary[]>([]);
     const [backupRuns, setBackupRuns] = useState<Record<string, BackupRunSummary[]>>({});
     const [backupError, setBackupError] = useState<string | null>(null);
+    const currentMonitor = useRef(id);
+    currentMonitor.current = id;
+    const loadGeneration = useRef(0);
 
     useEffect(() => {
         let cancelled = false;
@@ -204,9 +207,11 @@ export function MonitorDetail({
         setBackupError(null);
 
         async function load(signal?: AbortSignal) {
+            const generation = ++loadGeneration.current;
+            const stale = () => cancelled || currentMonitor.current !== id || loadGeneration.current !== generation;
             try {
                 const [m, h] = await Promise.all([fetchMonitor(id, signal), fetchHeartbeats(id, 120, signal)]);
-                if (cancelled) {
+                if (stale()) {
                     return;
                 }
                 setMonitor(m.monitor);
@@ -214,7 +219,7 @@ export function MonitorDetail({
                 setTotal(h.total);
                 setError(null);
             } catch (e) {
-                if (!cancelled) {
+                if (!stale()) {
                     setError(e instanceof Error ? e.message : "Could not load monitor.");
                 }
                 return;
@@ -233,7 +238,7 @@ export function MonitorDetail({
                             .catch(() => [])
                     )
                 );
-                if (!cancelled) {
+                if (!stale()) {
                     setBackups(result.agents);
                     setBackupRuns(
                         Object.fromEntries(result.agents.map((agent, index) => [agent.id, histories[index]]))
@@ -241,7 +246,7 @@ export function MonitorDetail({
                     setBackupError(null);
                 }
             } catch (e) {
-                if (!cancelled) {
+                if (!stale()) {
                     setBackupError(e instanceof Error ? `Backups unavailable: ${e.message}` : "Backups unavailable.");
                 }
             }
@@ -290,8 +295,10 @@ export function MonitorDetail({
             const anchor = document.createElement("a");
             anchor.href = url;
             anchor.download = `flatline-backup-${runId}.age`;
+            document.body.appendChild(anchor);
             anchor.click();
-            URL.revokeObjectURL(url);
+            anchor.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch (e) {
             setBackupError(e instanceof Error ? `Download failed: ${e.message}` : "Download failed.");
         }

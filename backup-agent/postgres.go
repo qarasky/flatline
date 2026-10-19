@@ -152,7 +152,7 @@ func (s *psqlSnapshot) Metadata(ctx context.Context) (PostgresMetadata, error) {
 	}
 
 	clientVersion := ""
-	command := exec.CommandContext(ctx, s.docker, "exec", s.container, "psql", "--version")
+	command := exec.CommandContext(ctx, s.docker, "exec", "--", s.container, "psql", "--version")
 	if output, err := command.Output(); err == nil {
 		clientVersion = lastField(string(output))
 	}
@@ -219,10 +219,14 @@ func (d dockerPostgresExecutor) stream(ctx context.Context, args []string, outpu
 		return errors.New("start database command")
 	}
 	_, copyErr := io.Copy(output, stdout)
-	waitErr := command.Wait()
 	if copyErr != nil {
+		// The child blocks once the pipe is full after the spool cap is hit.
+		// Kill it before Wait so a bounded spool failure is reported promptly.
+		_ = command.Process.Kill()
+		_ = command.Wait()
 		return copyErr
 	}
+	waitErr := command.Wait()
 	if waitErr != nil {
 		return errors.New("database command failed")
 	}
@@ -331,7 +335,7 @@ func nonEmpty(lines []string) []string {
 // never an option or command.
 func psqlArgs(source PostgresSource, database string) []string {
 	return []string{
-		"exec", "-i", source.Container,
+		"exec", "-i", "--", source.Container,
 		"psql", "-X", "-q", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1",
 		"-U", source.User, "--dbname=" + database,
 	}
@@ -339,14 +343,14 @@ func psqlArgs(source PostgresSource, database string) []string {
 
 func dumpArgs(source PostgresSource, database, snapshotID string) []string {
 	return []string{
-		"exec", source.Container,
+		"exec", "--", source.Container,
 		"pg_dump", "-Fc", "--snapshot=" + snapshotID,
 		"--dbname=" + database, "-U", source.User,
 	}
 }
 
 func globalsArgs(source PostgresSource) []string {
-	return []string{"exec", source.Container, "pg_dumpall", "--globals-only", "-U", source.User}
+	return []string{"exec", "--", source.Container, "pg_dumpall", "--globals-only", "-U", source.User}
 }
 
 // buildCountQuery uses table names already quoted server-side with

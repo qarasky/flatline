@@ -78,16 +78,30 @@ func (r Runner) Run(ctx context.Context, cfg Config) error {
 
 	pending, exists, err := loadPending(cfg, spool)
 	if err != nil {
-		return err
+		// A corrupt descriptor or bundle must not wedge every future backup.
+		// Preserve it under quarantine/ and start a fresh export.
+		if quarantineErr := quarantinePending(cfg, spool, "invalid-pending"); quarantineErr != nil {
+			return fmt.Errorf("quarantine invalid pending bundle: %w", quarantineErr)
+		}
+		exists = false
 	}
 	if exists {
 		if err := cleanSpool(spool, filepath.Base(pending.Path)); err != nil {
 			return err
 		}
 		if _, err := r.Upload(ctx, cfg, pending); err != nil {
-			return fmt.Errorf("deliver pending bundle: %w", err)
+			if !errors.Is(err, errRunTerminal) {
+				return fmt.Errorf("deliver pending bundle: %w", err)
+			}
+			// The server refused to reopen a terminal run. Preserve the
+			// bundle for inspection and create a new client run below.
+			if quarantineErr := quarantinePending(cfg, spool, "terminal-run"); quarantineErr != nil {
+				return fmt.Errorf("quarantine terminal pending bundle: %w", quarantineErr)
+			}
+			exists = false
+		} else {
+			return clearPending(cfg, spool)
 		}
-		return clearPending(cfg, spool)
 	}
 	if err := cleanSpool(spool, ""); err != nil {
 		return err
@@ -245,6 +259,19 @@ func loadPending(cfg Config, spool *Spool) (Bundle, bool, error) {
 		ExportFinishedAt: descriptor.ExportFinishedAt,
 		Summary:          descriptor.Summary,
 	}, true, nil
+}
+
+func quarantinePending(cfg Config, spool *Spool, reason string) error {
+	stamp := time.Now().UTC().Format("20060102T150405.000000000")
+	directory := filepath.Join(cfg.StateDir, "quarantine", stamp+"-"+reason)
+	if err := spool.Quarantine(filepath.Join(directory, "spool")); err != nil {
+		return err
+	}
+	if err := os.Rename(pendingPath(cfg), filepath.Join(directory, "pending.json")); err != nil &&
+		!errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func clearPending(cfg Config, spool *Spool) error {

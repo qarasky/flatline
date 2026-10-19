@@ -126,6 +126,25 @@ func (s *Spool) Remove(name string) error {
 }
 
 // Rename changes a spool file's name without changing its counted bytes.
+// Quarantine moves the whole spool aside and starts an empty one. Used only
+// for a corrupt or terminal pending bundle; bytes are preserved under the
+// state directory for operator inspection.
+func (s *Spool) Quarantine(destination string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+		return err
+	}
+	if err := os.Rename(s.root, destination); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.root, 0o700); err != nil {
+		return err
+	}
+	s.used = 0
+	return nil
+}
+
 func (s *Spool) Rename(oldName, newName string) error {
 	if err := validateSpoolName(oldName); err != nil {
 		return err
@@ -136,7 +155,17 @@ func (s *Spool) Rename(oldName, newName string) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return os.Rename(filepath.Join(s.root, oldName), filepath.Join(s.root, newName))
+	oldPath := filepath.Join(s.root, oldName)
+	newPath := filepath.Join(s.root, newName)
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return err
+	}
+	directory, err := os.Open(filepath.Dir(newPath))
+	if err == nil {
+		_ = directory.Sync()
+		_ = directory.Close()
+	}
+	return nil
 }
 
 func validateSpoolName(name string) error {

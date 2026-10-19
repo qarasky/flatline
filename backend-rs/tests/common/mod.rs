@@ -48,6 +48,11 @@ async fn harness_inner(storage: Option<(Arc<dyn FreeSpace>, Arc<dyn FaultInjecto
         Some((free, faults)) => {
             let root = dir.path().join("backups");
             std::fs::create_dir(&root).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
             std::fs::write(root.join(STORAGE_MARKER), uuid::Uuid::new_v4().to_string()).unwrap();
             (Some(root.clone()), Some(root), free, faults)
         }

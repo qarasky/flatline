@@ -88,10 +88,14 @@ pub async fn run() -> anyhow::Result<()> {
 
     // Finish interrupted uploads/finalizations/deletions before the listener
     // accepts new work, then run maintenance and health every minute.
-    state
+    // A backup mount problem must never prevent monitoring from starting.
+    if let Err(error) = state
         .backups
         .reconcile(chrono::Utc::now().timestamp_millis())
-        .await?;
+        .await
+    {
+        tracing::error!("backup reconciliation deferred: {error}");
+    }
     state.backups.start_jobs();
 
     let listener = tokio::net::TcpListener::bind(&address).await?;

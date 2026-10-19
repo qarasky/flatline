@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,6 +78,8 @@ type RestoreExecutor interface {
 	BucketEmpty(ctx context.Context, target RestoreS3Target) (bool, error)
 	PutObject(ctx context.Context, target RestoreS3Target, key, contentType string, body *os.File, size int64) error
 	ListObjects(ctx context.Context, target RestoreS3Target) (map[string]int64, error)
+	ObjectDigest(ctx context.Context, target RestoreS3Target, key string) (int64, string, string, error)
+	Extensions(ctx context.Context, target RestorePostgresTarget, database string) ([]string, error)
 	RestoreGlobals(ctx context.Context, target RestoreGlobalsTarget, sql io.Reader) error
 }
 
@@ -106,6 +110,7 @@ func LoadRestoreTarget(path string) (RestoreTargetConfig, error) {
 	}
 
 	databases := make(map[string]struct{})
+	targetDatabases := make(map[string]struct{})
 	for _, source := range target.Postgres {
 		if source.Container == "" || source.User == "" || len(source.Databases) == 0 {
 			return RestoreTargetConfig{}, errors.New("postgres targets need container, user and database mappings")
@@ -120,7 +125,11 @@ func LoadRestoreTarget(path string) (RestoreTargetConfig, error) {
 			if _, exists := databases[mapping.Source]; exists {
 				return RestoreTargetConfig{}, fmt.Errorf("duplicate database mapping for %q", mapping.Source)
 			}
+			if _, exists := targetDatabases[mapping.Target]; exists {
+				return RestoreTargetConfig{}, fmt.Errorf("two sources cannot share target database %q", mapping.Target)
+			}
 			databases[mapping.Source] = struct{}{}
+			targetDatabases[mapping.Target] = struct{}{}
 		}
 	}
 
@@ -242,16 +251,16 @@ func compareRestoreWith(ctx context.Context, bundlePath, identityFile string, ta
 		return report, err
 	}
 
-	// Object keys and sizes must match exactly.
-	byBucket := make(map[string]map[string]int64)
+	// Object keys, sizes, bodies and content types must match exactly.
+	byBucket := make(map[string]map[string]Entry)
 	for _, entry := range verified.Manifest.Entries {
 		if entry.Kind != kindObject {
 			continue
 		}
 		if byBucket[entry.Bucket] == nil {
-			byBucket[entry.Bucket] = make(map[string]int64)
+			byBucket[entry.Bucket] = make(map[string]Entry)
 		}
-		byBucket[entry.Bucket][entry.Key] = entry.Size
+		byBucket[entry.Bucket][entry.Key] = entry
 	}
 	for sourceBucket, expected := range byBucket {
 		targetSource := targetForBucket(target, sourceBucket)
@@ -265,10 +274,23 @@ func compareRestoreWith(ctx context.Context, bundlePath, identityFile string, ta
 			report.Error = err.Error()
 			return report, err
 		}
-		for key, size := range expected {
-			actualSize, exists := actual[key]
-			if !exists || actualSize != size {
-				err := fmt.Errorf("bucket %q object %q does not match", targetSource.Bucket, key)
+		for key, entry := range expected {
+			size, digest, contentType, err := executor.ObjectDigest(ctx, targetSource, key)
+			if err != nil {
+				report.Error = "target object read failed"
+				return report, err
+			}
+			if size != entry.Size || digest != entry.SHA256 {
+				err := fmt.Errorf("bucket %q object %q body does not match", targetSource.Bucket, key)
+				report.Error = err.Error()
+				return report, err
+			}
+			expectedType := entry.ContentType
+			if expectedType == "" {
+				expectedType = "application/octet-stream"
+			}
+			if contentType != expectedType {
+				err := fmt.Errorf("bucket %q object %q content type does not match", targetSource.Bucket, key)
 				report.Error = err.Error()
 				return report, err
 			}
@@ -294,6 +316,16 @@ func compareRestoreWith(ctx context.Context, bundlePath, identityFile string, ta
 				report.Error = err.Error()
 				return report, err
 			}
+		}
+		extensions, err := executor.Extensions(ctx, postgresTarget, targetDatabase)
+		if err != nil {
+			report.Error = "target extension check failed"
+			return report, err
+		}
+		if !sameStrings(extensions, summary.Extensions) {
+			err := fmt.Errorf("database %q extension set differs from the manifest", targetDatabase)
+			report.Error = err.Error()
+			return report, err
 		}
 	}
 
@@ -370,9 +402,10 @@ func validateRestoreMappings(manifest Manifest, target RestoreTargetConfig, glob
 				}
 			}
 		case kindGlobals:
-			if !globals {
-				return errors.New("bundle contains globals; use the separate restore-globals command")
-			}
+			// Normal restores skip globals; the explicit restore-globals
+			// command handles them. A bundle must not become unusable because
+			// it contains an optional globals entry.
+			_ = globals
 		}
 	}
 	return nil
@@ -463,8 +496,15 @@ func restoreEntries(ctx context.Context, bundlePath, identityFile string, manife
 		switch entry.Kind {
 		case kindPostgres:
 			targetDatabase, postgresTarget := targetForDatabase(target, entry.Database)
-			if err := executor.RestoreDatabase(ctx, postgresTarget, targetDatabase, archive); err != nil {
+			temporary, err := spillVerifiedEntry(archive, entry)
+			if err != nil {
 				return err
+			}
+			restoreErr := executor.RestoreDatabase(ctx, postgresTarget, targetDatabase, temporary)
+			_ = temporary.Close()
+			_ = os.Remove(temporary.Name())
+			if restoreErr != nil {
+				return restoreErr
 			}
 			report.Databases = append(report.Databases, targetDatabase)
 		case kindObject:
@@ -474,49 +514,79 @@ func restoreEntries(ctx context.Context, bundlePath, identityFile string, manife
 			}
 			report.Objects++
 		case kindGlobals:
-			return errors.New("bundle contains globals; use restore-globals")
+			if _, err := io.Copy(io.Discard, archive); err != nil {
+				return err
+			}
 		}
 	}
-	_, _ = io.Copy(io.Discard, decrypted)
+	// The second pass must reach an authenticated end with no trailing
+	// plaintext, matching VerifyBundle's integrity contract.
+	buffer := make([]byte, 1)
+	for {
+		read, err := decrypted.Read(buffer)
+		if read > 0 {
+			return errors.New("archive has trailing plaintext")
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func restoreObject(ctx context.Context, archive *tar.Reader, entry Entry, target RestoreS3Target, executor RestoreExecutor) error {
-	temporary, err := os.CreateTemp("", "flatline-restore-*")
+	temporary, err := spillVerifiedEntry(archive, entry)
 	if err != nil {
 		return err
 	}
 	name := temporary.Name()
 	defer os.Remove(name)
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-
-	hasher := sha256.New()
-	written, err := io.Copy(io.MultiWriter(temporary, hasher), archive)
-	if err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if written != entry.Size || hex.EncodeToString(hasher.Sum(nil)) != entry.SHA256 {
-		_ = temporary.Close()
-		return fmt.Errorf("object %q does not match the manifest", entry.Key)
-	}
-	if _, err := temporary.Seek(0, io.SeekStart); err != nil {
-		_ = temporary.Close()
-		return err
-	}
 	contentType := entry.ContentType
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	err = executor.PutObject(ctx, target, entry.Key, contentType, temporary, written)
+	err = executor.PutObject(ctx, target, entry.Key, contentType, temporary, entry.Size)
 	closeErr := temporary.Close()
 	if err != nil {
 		return err
 	}
 	return closeErr
+}
+
+// spillVerifiedEntry writes one archive entry to a private temporary file and
+// verifies its size and SHA-256 before any target write. Database dumps and
+// objects share this guard.
+func spillVerifiedEntry(archive *tar.Reader, entry Entry) (*os.File, error) {
+	temporary, err := os.CreateTemp("", "flatline-restore-*")
+	if err != nil {
+		return nil, err
+	}
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		_ = os.Remove(temporary.Name())
+		return nil, err
+	}
+	hasher := sha256.New()
+	written, err := io.Copy(io.MultiWriter(temporary, hasher), archive)
+	if err != nil {
+		_ = temporary.Close()
+		_ = os.Remove(temporary.Name())
+		return nil, err
+	}
+	if written != entry.Size || hex.EncodeToString(hasher.Sum(nil)) != entry.SHA256 {
+		_ = temporary.Close()
+		_ = os.Remove(temporary.Name())
+		return nil, fmt.Errorf("entry %q does not match the manifest", entry.Path)
+	}
+	if _, err := temporary.Seek(0, io.SeekStart); err != nil {
+		_ = temporary.Close()
+		_ = os.Remove(temporary.Name())
+		return nil, err
+	}
+	return temporary, nil
 }
 
 func restoreGlobalsEntry(ctx context.Context, bundlePath, identityFile, globalsPath string, target RestoreTargetConfig, executor RestoreExecutor) error {
@@ -546,7 +616,17 @@ func restoreGlobalsEntry(ctx context.Context, bundlePath, identityFile, globalsP
 			return errors.New("bundle has no globals entry")
 		}
 		if header.Name == globalsPath {
-			return executor.RestoreGlobals(ctx, *target.Globals, archive)
+			data, err := io.ReadAll(io.LimitReader(archive, 64<<20+1))
+			if err != nil {
+				return err
+			}
+			if len(data) > 64<<20 {
+				return errors.New("globals entry is too large")
+			}
+			if err := validateGlobalsSQL(data); err != nil {
+				return err
+			}
+			return executor.RestoreGlobals(ctx, *target.Globals, bytes.NewReader(data))
 		}
 	}
 }
@@ -690,6 +770,38 @@ func (d dockerRestoreExecutor) PutObject(ctx context.Context, target RestoreS3Ta
 	return err
 }
 
+func (d dockerRestoreExecutor) ObjectDigest(ctx context.Context, target RestoreS3Target, key string) (int64, string, string, error) {
+	client, err := d.s3Client(ctx, target)
+	if err != nil {
+		return 0, "", "", err
+	}
+	output, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(target.Bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return 0, "", "", err
+	}
+	defer output.Body.Close()
+	hasher := sha256.New()
+	size, err := io.Copy(hasher, output.Body)
+	if err != nil {
+		return 0, "", "", err
+	}
+	if output.ContentLength != nil && *output.ContentLength != size {
+		return 0, "", "", errors.New("target object length changed while reading")
+	}
+	return size, hex.EncodeToString(hasher.Sum(nil)), aws.ToString(output.ContentType), nil
+}
+
+func (d dockerRestoreExecutor) Extensions(ctx context.Context, target RestorePostgresTarget, database string) ([]string, error) {
+	lines, err := d.psql(ctx, target, database, "SELECT extname FROM pg_extension ORDER BY 1")
+	if err != nil {
+		return nil, errors.New("target extension list failed")
+	}
+	return nonEmpty(lines), nil
+}
+
 func (d dockerRestoreExecutor) ListObjects(ctx context.Context, target RestoreS3Target) (map[string]int64, error) {
 	client, err := d.s3Client(ctx, target)
 	if err != nil {
@@ -784,4 +896,33 @@ func (d dockerRestoreExecutor) psql(ctx context.Context, target RestorePostgresT
 	}
 	raw := strings.Split(string(output), "\n")
 	return nonEmpty(raw), nil
+}
+
+// validateGlobalsSQL rejects psql meta-commands in bundle-provided SQL. The
+// globals entry is data, not a script: \! and \copy would escape the target
+// database into the container shell or filesystem.
+func validateGlobalsSQL(data []byte) error {
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, `\`) {
+			return errors.New("globals entry contains a psql meta-command")
+		}
+	}
+	return nil
+}
+
+func sameStrings(left, right []string) bool {
+	leftCopy := append([]string(nil), left...)
+	rightCopy := append([]string(nil), right...)
+	sort.Strings(leftCopy)
+	sort.Strings(rightCopy)
+	if len(leftCopy) != len(rightCopy) {
+		return false
+	}
+	for index := range leftCopy {
+		if leftCopy[index] != rightCopy[index] {
+			return false
+		}
+	}
+	return true
 }

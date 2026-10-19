@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -151,6 +152,9 @@ func validateManifest(manifest *Manifest) error {
 
 		switch entry.Kind {
 		case kindObject:
+			if !strings.HasPrefix(entry.Path, "objects/") {
+				return fmt.Errorf("object entry %q must use objects/ path", entry.Path)
+			}
 			if entry.Bucket == "" || entry.Key == "" {
 				return fmt.Errorf("object entry %q needs bucket and key", entry.Path)
 			}
@@ -160,10 +164,16 @@ func validateManifest(manifest *Manifest) error {
 			}
 			objects[mapping] = struct{}{}
 		case kindPostgres:
+			if !strings.HasPrefix(entry.Path, "databases/") {
+				return fmt.Errorf("postgres entry %q must use databases/ path", entry.Path)
+			}
 			if entry.Database == "" {
 				return fmt.Errorf("database entry %q needs a database", entry.Path)
 			}
 		case kindGlobals:
+			if !strings.HasPrefix(entry.Path, "globals/") {
+				return fmt.Errorf("globals entry %q must use globals/ path", entry.Path)
+			}
 			// Cluster globals are not tied to one database.
 		default:
 			return fmt.Errorf("entry %q has unsupported kind %q", entry.Path, entry.Kind)

@@ -54,7 +54,10 @@ func (e *permanentError) Error() string {
 	return fmt.Sprintf("server rejected the request with status %d", e.status)
 }
 
-var errRunGone = errors.New("run no longer accepts chunks")
+var (
+	errRunGone     = errors.New("run no longer accepts chunks")
+	errRunTerminal = errors.New("server run is terminal and cannot be resumed")
+)
 
 // RetryPolicy is bounded and injectable for tests.
 type RetryPolicy struct {
@@ -192,7 +195,14 @@ func uploadBundleWith(ctx context.Context, client *UploadClient, bundle Bundle) 
 		offset = next
 	}
 
-	return client.complete(ctx, run.ID)
+	completed, err := client.complete(ctx, run.ID)
+	if err != nil {
+		return RunSummary{}, err
+	}
+	if completed.Status != "completed" {
+		return RunSummary{}, errors.New("server did not confirm completion")
+	}
+	return completed, nil
 }
 
 func (c *UploadClient) throttle(ctx context.Context, bytes int64) error {
@@ -222,6 +232,10 @@ func (c *UploadClient) start(ctx context.Context, bundle Bundle) (RunSummary, in
 	}
 	data, err := c.request(ctx, http.MethodPost, "/runs", body, map[string]string{"Content-Type": "application/json"})
 	if err != nil {
+		var permanent *permanentError
+		if errors.As(err, &permanent) && permanent.status == http.StatusConflict {
+			return RunSummary{}, 0, errRunTerminal
+		}
 		return RunSummary{}, 0, err
 	}
 	var envelope runEnvelope

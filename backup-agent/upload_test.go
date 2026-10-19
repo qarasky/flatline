@@ -513,3 +513,95 @@ func runnerConfig(t *testing.T, fixture *configFixture, name string) Config {
 	cfg.SpoolMaxBytes = 64 << 20
 	return cfg
 }
+
+func TestCorruptPendingDoesNotWedgeFutureBackups(t *testing.T) {
+	fixture := newFixture(t)
+	cfg := runnerConfig(t, fixture, "meks")
+	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pendingPath(cfg), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exportCalls := 0
+	runner := DefaultRunner()
+	runner.ReportFailure = func(context.Context, Config, string, string, string) error { return nil }
+	runner.Export = func(ctx context.Context, cfg Config, spool *Spool, clientRunID string) (Export, error) {
+		exportCalls++
+		writer, err := spool.Create("objects/000001")
+		if err != nil {
+			return Export{}, err
+		}
+		_, _ = writer.Write([]byte("body"))
+		_ = writer.Close()
+		return Export{
+			Manifest: Manifest{FormatVersion: 1, ClientRunID: clientRunID, AgentName: cfg.Name,
+				ExportStartedAt: "2026-01-01T00:00:00Z", ExportFinishedAt: "2026-01-01T01:00:00Z"},
+			Files: []ExportFile{{Path: "objects/000001", SourcePath: filepath.Join(spool.Root(), "objects/000001"),
+				Kind: kindObject, Bucket: "b", Key: "k"}},
+		}, nil
+	}
+	runner.Upload = func(context.Context, Config, Bundle) (RunSummary, error) {
+		return RunSummary{ID: "run-1", Status: "completed"}, nil
+	}
+	if err := runner.Run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if exportCalls != 1 {
+		t.Fatalf("a corrupt pending descriptor blocked the export: %d", exportCalls)
+	}
+	entries, err := os.ReadDir(filepath.Join(cfg.StateDir, "quarantine"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("the corrupt descriptor was not quarantined: %v", err)
+	}
+	if _, err := os.Stat(pendingPath(cfg)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the corrupt descriptor was not removed")
+	}
+}
+
+func TestTerminalServerRunReExports(t *testing.T) {
+	fixture := newFixture(t)
+	cfg := runnerConfig(t, fixture, "meks")
+	exportCalls := 0
+	uploads := 0
+	runner := DefaultRunner()
+	runner.ReportFailure = func(context.Context, Config, string, string, string) error { return nil }
+	runner.Export = func(ctx context.Context, cfg Config, spool *Spool, clientRunID string) (Export, error) {
+		exportCalls++
+		writer, err := spool.Create("objects/000001")
+		if err != nil {
+			return Export{}, err
+		}
+		_, _ = writer.Write([]byte("body"))
+		_ = writer.Close()
+		return Export{
+			Manifest: Manifest{FormatVersion: 1, ClientRunID: clientRunID, AgentName: cfg.Name,
+				ExportStartedAt: "2026-01-01T00:00:00Z", ExportFinishedAt: "2026-01-01T01:00:00Z"},
+			Files: []ExportFile{{Path: "objects/000001", SourcePath: filepath.Join(spool.Root(), "objects/000001"),
+				Kind: kindObject, Bucket: "b", Key: "k"}},
+		}, nil
+	}
+	runner.Upload = func(context.Context, Config, Bundle) (RunSummary, error) {
+		uploads++
+		if uploads == 1 {
+			return RunSummary{}, errors.New("office offline")
+		}
+		if uploads == 2 {
+			return RunSummary{}, errRunTerminal
+		}
+		return RunSummary{ID: "run-2", Status: "completed"}, nil
+	}
+
+	if err := runner.Run(context.Background(), cfg); err == nil {
+		t.Fatal("the first upload must fail")
+	}
+	if err := runner.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("terminal pending bundle must not wedge: %v", err)
+	}
+	if exportCalls != 2 || uploads != 3 {
+		t.Fatalf("exportCalls=%d uploads=%d", exportCalls, uploads)
+	}
+	if _, err := os.Stat(pendingPath(cfg)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the terminal bundle was not cleared after a fresh success")
+	}
+}

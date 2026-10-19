@@ -273,7 +273,10 @@ impl Backups {
             events,
             free,
             faults,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             reservation: Mutex::new(()),
             upload_slots: Semaphore::new(4),
             progress_event: std::sync::Mutex::new(None),
@@ -778,6 +781,12 @@ impl Backups {
             ));
         }
 
+        // Verify ownership before creating a per-run lock, so unknown ids
+        // cannot grow the lock map. Then serialize the whole body read for
+        // this run; at most four run bodies are in memory at once.
+        let owned = self.run_for_agent(agent_id, run_id).await?;
+        let run_lock = self.run_lock(&owned.id).await;
+        let _run = run_lock.lock().await;
         let _slot = self
             .upload_slots
             .acquire()
@@ -785,7 +794,6 @@ impl Backups {
             .map_err(|_| Error::Internal("upload limiter closed".to_string()))?;
         let bytes = read_bounded(body, CHUNK_BYTES as usize).await?;
         let digest = hex::encode(Sha256::digest(&bytes));
-        drop(_slot);
 
         if digest != sha256 {
             return Err(Error::HashMismatch(
@@ -793,8 +801,6 @@ impl Backups {
             ));
         }
 
-        let run_lock = self.run_lock(run_id).await;
-        let _run = run_lock.lock().await;
         let run = self.run_for_agent(agent_id, run_id).await?;
 
         let total = run
@@ -1129,8 +1135,10 @@ impl Backups {
                 "backup storage is not configured".to_string(),
             ));
         };
-        Storage::open_with(root, Arc::clone(&self.free), Arc::clone(&self.faults))
-            .map_err(storage_error)
+        let storage = Storage::open_with(root, Arc::clone(&self.free), Arc::clone(&self.faults))
+            .map_err(storage_error)?;
+        pin_storage_marker(&self.config.data_dir, storage.provisioned_id())?;
+        Ok(storage)
     }
 
     fn invalidate_progress(&self) {
@@ -1304,7 +1312,9 @@ impl Backups {
     ) -> Result<AgentSummary, Error> {
         let latest: Option<RunRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {RUN_COLUMNS} FROM backup_runs
-              WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT 1"
+              WHERE agent_id = ?
+              ORDER BY COALESCE(export_finished_at, export_started_at, created_at) DESC, id DESC
+              LIMIT 1"
         )))
         .bind(&row.id)
         .fetch_optional(&self.pool)
@@ -1387,6 +1397,35 @@ async fn read_bounded(mut body: Body, max: usize) -> Result<Vec<u8>, Error> {
         }
     }
     Ok(data)
+}
+
+/// The marker UUID is pinned in the application data directory on first use,
+/// so replacing the mount with a different provisioned tree is refused across
+/// restarts, not just within one process.
+fn pin_storage_marker(data_dir: &Path, marker: &str) -> Result<(), Error> {
+    let path = data_dir.join("backup-storage-id");
+    match std::fs::read_to_string(&path) {
+        Ok(existing) => {
+            if existing.trim() != marker {
+                return Err(Error::Unavailable(
+                    "backup storage marker does not match the provisioned storage".to_string(),
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::write(&path, format!("{marker}\n"))
+                .map_err(|error| Error::Internal(format!("pin backup storage marker: {error}")))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+        Err(error) => {
+            return Err(Error::Internal(format!("read backup storage pin: {error}")));
+        }
+    }
+    Ok(())
 }
 
 fn storage_error(error: StorageError) -> Error {
