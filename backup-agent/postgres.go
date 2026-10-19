@@ -332,7 +332,7 @@ func nonEmpty(lines []string) []string {
 func psqlArgs(source PostgresSource, database string) []string {
 	return []string{
 		"exec", "-i", source.Container,
-		"psql", "-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1",
+		"psql", "-X", "-q", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1",
 		"-U", source.User, "--dbname=" + database,
 	}
 }

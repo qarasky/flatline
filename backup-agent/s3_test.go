@@ -76,6 +76,10 @@ func (f *fakeS3) ListObjectsV2(ctx context.Context, input *s3.ListObjectsV2Input
 	return output, nil
 }
 
+func (f *fakeS3) PutObject(ctx context.Context, input *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	return &s3.PutObjectOutput{}, nil
+}
+
 func (f *fakeS3) GetObject(ctx context.Context, input *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 	key := aws.ToString(input.Key)
 	if err := f.getErr[key]; err != nil {

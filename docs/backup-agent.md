@@ -100,3 +100,62 @@ and seven completed recovery points per agent.
 
 Recovery documentation and the exact restore procedure arrive with the
 restore command; transfer verification is not a restore test.
+
+## Recovery
+
+Recovery is offline: it needs the downloaded bundle and the age identity, not
+Flatline.
+
+```sh
+flatline-backup keygen --output /secure/recovery-identity.txt
+flatline-backup verify --bundle bundle.age --identity-file recovery-identity.txt
+flatline-backup restore --bundle bundle.age --identity-file recovery-identity.txt \
+  --target-config restore-target.json
+flatline-backup compare --bundle bundle.age --identity-file recovery-identity.txt \
+  --target-config restore-target.json
+```
+
+`keygen` writes a new mode-0600 identity and prints only the public recipient.
+Keep the private identity off the source host; `restore` never contacts Flatline.
+`verify` checks every manifest entry, hash, size, exact key, content type and
+object mapping, rejects trailing plaintext and returns only the validated
+manifest. Archive verification is not a restore test.
+
+`restore-target.json` maps every source database and bucket to an explicit
+scratch target. Missing, identical or populated targets are refused before any
+write:
+
+```json
+{
+  "version": 1,
+  "postgres": [
+    {
+      "container": "scratch-postgres",
+      "user": "postgres",
+      "databases": [{ "source": "modernization", "target": "restore_check" }]
+    }
+  ],
+  "s3": [
+    {
+      "endpoint": "http://127.0.0.1:3901",
+      "region": "garage",
+      "sourceBucket": "meks-media",
+      "bucket": "meks-media-restore",
+      "credentialsFile": "/etc/flatline-backup/restore-s3.json"
+    }
+  ]
+}
+```
+
+Objects are PUT to the exact original keys with recorded content types. A
+partial failure leaves scratch data for inspection and reports `restoreStatus:
+failed`; it never claims verification. The `compare` command checks every
+object key/size and each database's table counts against the manifest.
+
+Globals are never restored implicitly. Use the separate command with an
+explicit globals target:
+
+```sh
+flatline-backup restore-globals --bundle bundle.age --identity-file identity.txt \
+  --target-config restore-target.json
+```

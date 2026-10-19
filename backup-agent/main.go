@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -31,6 +32,16 @@ func run(args []string) int {
 		return runOnceCommand(args[1:])
 	case "install":
 		return runInstall(args[1:])
+	case "verify":
+		return runVerify(args[1:])
+	case "restore":
+		return runRestore(args[1:])
+	case "compare":
+		return runCompare(args[1:])
+	case "restore-globals":
+		return runRestoreGlobals(args[1:])
+	case "keygen":
+		return runKeygen(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", args[0])
 		usage()
@@ -39,7 +50,7 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: flatline-backup <check|run-once|install|version> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: flatline-backup <check|run-once|install|verify|restore|compare|restore-globals|keygen|version> [flags]")
 }
 
 func configFlag(name string, args []string) (string, []string, error) {
@@ -112,4 +123,117 @@ func runInstall(args []string) int {
 		fmt.Println("installed; daily timer left disabled")
 	}
 	return 0
+}
+
+func bundleFlags(name string, args []string, needTarget bool) (string, string, string, error) {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
+	bundle := flags.String("bundle", "", "path to the encrypted bundle")
+	identity := flags.String("identity-file", "", "path to the age identity")
+	target := flags.String("target-config", "", "path to the scratch target configuration")
+	if err := flags.Parse(args); err != nil {
+		return "", "", "", err
+	}
+	if *bundle == "" || *identity == "" || (needTarget && *target == "") {
+		return "", "", "", fmt.Errorf("%s needs --bundle FILE --identity-file FILE%s", name, map[bool]string{true: " --target-config FILE"}[needTarget])
+	}
+	return *bundle, *identity, *target, nil
+}
+
+func runVerify(args []string) int {
+	bundle, identity, _, err := bundleFlags("verify", args, false)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	verified, err := VerifyBundle(ctx, bundle, identity)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "archive verification failed: %v\n", err)
+		return 1
+	}
+	printJSON(map[string]any{
+		"archiveVerified":  true,
+		"agentName":        verified.Manifest.AgentName,
+		"clientRunId":      verified.Manifest.ClientRunID,
+		"exportStartedAt":  verified.Manifest.ExportStartedAt,
+		"exportFinishedAt": verified.Manifest.ExportFinishedAt,
+		"entries":          len(verified.Manifest.Entries),
+	})
+	return 0
+}
+
+func runRestore(args []string) int {
+	bundle, identity, target, err := bundleFlags("restore", args, true)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	report, err := RestoreBundle(ctx, bundle, identity, target)
+	printJSON(report)
+	if err != nil || report.RestoreStatus != "passed" {
+		fmt.Fprintln(os.Stderr, "restore did not pass")
+		return 1
+	}
+	return 0
+}
+
+func runCompare(args []string) int {
+	bundle, identity, target, err := bundleFlags("compare", args, true)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	report, err := CompareRestore(ctx, bundle, identity, target)
+	printJSON(report)
+	if err != nil || report.RestoreStatus != "passed" {
+		fmt.Fprintln(os.Stderr, "comparison did not pass")
+		return 1
+	}
+	return 0
+}
+
+func runRestoreGlobals(args []string) int {
+	bundle, identity, target, err := bundleFlags("restore-globals", args, true)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	report, err := RestoreGlobals(ctx, bundle, identity, target)
+	printJSON(report)
+	if err != nil || report.RestoreStatus != "passed" {
+		fmt.Fprintln(os.Stderr, "globals restore did not pass")
+		return 1
+	}
+	return 0
+}
+
+func runKeygen(args []string) int {
+	flags := flag.NewFlagSet("keygen", flag.ContinueOnError)
+	output := flags.String("output", "", "path for the private identity")
+	if err := flags.Parse(args); err != nil || *output == "" {
+		fmt.Fprintln(os.Stderr, "keygen needs --output FILE")
+		return 2
+	}
+	recipient, err := GenerateIdentity(*output)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "keygen failed: %v\n", err)
+		return 1
+	}
+	fmt.Println(recipient)
+	return 0
+}
+
+func printJSON(value any) {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return
+	}
+	fmt.Println(string(encoded))
 }
