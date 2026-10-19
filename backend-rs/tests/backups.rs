@@ -215,7 +215,7 @@ async fn rotation_and_revocation_preserve_history() {
     let run = h
         .state
         .backups
-        .start_run_at(&agent_id, valid_start("kept-run", now), now)
+        .insert_run_metadata_at(&agent_id, valid_start("kept-run", now), now)
         .await
         .unwrap();
 
@@ -265,21 +265,30 @@ async fn run_metadata_validates_time_and_limits() {
     reversed.export_started_at = (now - chrono::Duration::minutes(1)).to_rfc3339();
     reversed.export_finished_at = Some((now - chrono::Duration::minutes(2)).to_rfc3339());
     assert!(matches!(
-        h.state.backups.start_run_at(&agent_id, reversed, now).await,
+        h.state
+            .backups
+            .insert_run_metadata_at(&agent_id, reversed, now)
+            .await,
         Err(BackupError::BadRequest(_))
     ));
 
     let mut future = valid_start("future", now);
     future.export_finished_at = Some((now + chrono::Duration::minutes(10)).to_rfc3339());
     assert!(matches!(
-        h.state.backups.start_run_at(&agent_id, future, now).await,
+        h.state
+            .backups
+            .insert_run_metadata_at(&agent_id, future, now)
+            .await,
         Err(BackupError::BadRequest(_))
     ));
 
     let mut too_big = valid_start("too-big", now);
     too_big.total_bytes = Some(8 * 1024 * 1024 * 1024 + 1);
     assert!(matches!(
-        h.state.backups.start_run_at(&agent_id, too_big, now).await,
+        h.state
+            .backups
+            .insert_run_metadata_at(&agent_id, too_big, now)
+            .await,
         Err(BackupError::BadRequest(_))
     ));
 
@@ -288,7 +297,7 @@ async fn run_metadata_validates_time_and_limits() {
     assert!(matches!(
         h.state
             .backups
-            .start_run_at(&agent_id, bad_digest, now)
+            .insert_run_metadata_at(&agent_id, bad_digest, now)
             .await,
         Err(BackupError::BadRequest(_))
     ));
@@ -296,13 +305,13 @@ async fn run_metadata_validates_time_and_limits() {
     let first = h
         .state
         .backups
-        .start_run_at(&agent_id, valid_start("same-id", now), now)
+        .insert_run_metadata_at(&agent_id, valid_start("same-id", now), now)
         .await
         .unwrap();
     let retried = h
         .state
         .backups
-        .start_run_at(&agent_id, valid_start("same-id", now), now)
+        .insert_run_metadata_at(&agent_id, valid_start("same-id", now), now)
         .await
         .unwrap();
     assert_eq!(first.id, retried.id, "an identical retry is idempotent");
@@ -312,7 +321,7 @@ async fn run_metadata_validates_time_and_limits() {
     assert!(matches!(
         h.state
             .backups
-            .start_run_at(&agent_id, conflicting, now)
+            .insert_run_metadata_at(&agent_id, conflicting, now)
             .await,
         Err(BackupError::Conflict(_))
     ));

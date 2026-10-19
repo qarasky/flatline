@@ -546,6 +546,38 @@
                         "maximum": 30
                     }
                 }
+            },
+            "BackupFailureInput": {
+                "type": "object",
+                "required": ["clientRunId", "exportStartedAt", "code"],
+                "properties": {
+                    "clientRunId": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "exportStartedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "code": {
+                        "type": "string",
+                        "enum": [
+                            "export_failed",
+                            "postgres_dump_failed",
+                            "postgres_query_failed",
+                            "s3_export_failed",
+                            "s3_read_failed",
+                            "spool_limit",
+                            "archive_failed",
+                            "encrypt_failed",
+                            "upload_failed",
+                            "auth_failed",
+                            "config_invalid",
+                            "source_changed",
+                            "unknown"
+                        ]
+                    }
+                }
             }
         },
         "responses": {
@@ -2676,6 +2708,217 @@
                                 }
                             }
                         }
+                    }
+                }
+            }
+        },
+        "/api/backup/v1/runs/{id}/chunks/{index}": {
+            "put": {
+                "summary": "Upload one numbered chunk",
+                "description": "Agent credential only. The body is the next sequential byte range; index is offset / 8388608, non-final chunks are exactly 8 MiB. Authenticate before reading the body. Successful replies include the committed offset. Byte-identical retries are idempotent; conflicting bytes or offsets answer 409.",
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "name": "index",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 0
+                        }
+                    },
+                    {
+                        "name": "X-Backup-Offset",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 0
+                        }
+                    },
+                    {
+                        "name": "X-Backup-Sha256",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/octet-stream": {
+                            "schema": {
+                                "type": "string",
+                                "format": "binary"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Chunk committed",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "run": {
+                                            "$ref": "#/components/schemas/BackupRun"
+                                        },
+                                        "offset": {
+                                            "type": "integer"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid index or non-final chunk size."
+                    },
+                    "401": {
+                        "description": "Invalid backup credential."
+                    },
+                    "404": {
+                        "description": "Run not found for this agent."
+                    },
+                    "409": {
+                        "description": "Offset or committed bytes conflict."
+                    },
+                    "413": {
+                        "description": "Chunk exceeds 8 MiB."
+                    },
+                    "422": {
+                        "description": "Chunk sha256 mismatch."
+                    },
+                    "503": {
+                        "description": "Backup storage unavailable."
+                    },
+                    "507": {
+                        "description": "Office storage reserve would be violated."
+                    }
+                }
+            }
+        },
+        "/api/backup/v1/runs/{id}/complete": {
+            "post": {
+                "summary": "Finalize an uploaded bundle",
+                "description": "Idempotent. Full digest and size are verified before the bundle is fsynced and atomically published; a mismatch answers 422 and never becomes completed.",
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Completed run",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "run": {
+                                            "$ref": "#/components/schemas/BackupRun"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid backup credential."
+                    },
+                    "404": {
+                        "description": "Run not found for this agent."
+                    },
+                    "409": {
+                        "description": "Run is not ready to complete."
+                    },
+                    "422": {
+                        "description": "Full digest mismatch; the run is failed."
+                    }
+                }
+            }
+        },
+        "/api/backup/v1/failures": {
+            "post": {
+                "summary": "Report a failed export",
+                "description": "Agent credential only. Accepts a bounded safe code even when no bytes were produced. Same clientRunId is idempotent; a completed run cannot be overwritten.",
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BackupFailureInput"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Failed run",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "run": {
+                                            "$ref": "#/components/schemas/BackupRun"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Unknown failure code."
+                    },
+                    "401": {
+                        "description": "Invalid backup credential."
+                    },
+                    "409": {
+                        "description": "Completed run or conflicting clientRunId."
                     }
                 }
             }

@@ -19,7 +19,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 use axum::{Json, Router, middleware};
 use serde_json::{Value, json};
 
@@ -152,6 +152,15 @@ pub fn router(state: AppState) -> Router {
     let backup_agent = Router::new()
         .route("/api/backup/v1/runs", post(backups::agent_start_run))
         .route("/api/backup/v1/runs/{id}", get(backups::agent_run))
+        .route(
+            "/api/backup/v1/runs/{id}/chunks/{index}",
+            put(backups::agent_put_chunk),
+        )
+        .route(
+            "/api/backup/v1/runs/{id}/complete",
+            post(backups::agent_complete),
+        )
+        .route("/api/backup/v1/failures", post(backups::agent_failure))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             backups::require_agent,
@@ -219,10 +228,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/backup-agents",
             get(backups::list_agents).post(backups::create_agent),
         )
-        .route(
-            "/api/v1/backup-agents/{id}",
-            patch(backups::patch_agent),
-        )
+        .route("/api/v1/backup-agents/{id}", patch(backups::patch_agent))
         .route(
             "/api/v1/backup-agents/{id}/rotate-token",
             post(backups::rotate_token),

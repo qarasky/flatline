@@ -8,13 +8,15 @@
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{Request, StatusCode, header};
+use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
 use crate::AppState;
 use crate::api::ApiError;
-use crate::backups::{self, AgentPatch, Error as BackupError, NewAgent, RunSummary, StartRun};
+use crate::backups::{
+    self, AgentPatch, Error as BackupError, FailureReport, NewAgent, RunSummary, StartRun,
+};
 
 /// Authenticated agent id, inserted by [`require_agent`].
 #[derive(Debug, Clone)]
@@ -37,6 +39,11 @@ fn api_error(error: BackupError) -> ApiError {
         BackupError::Unavailable(message) => ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
             error: "unavailable",
+            message,
+        },
+        BackupError::Insufficient(message) => ApiError {
+            status: StatusCode::INSUFFICIENT_STORAGE,
+            error: "insufficient_storage",
             message,
         },
         BackupError::TooLarge(message) => ApiError {
@@ -241,6 +248,70 @@ pub async fn agent_start_run(
     let run = state
         .backups
         .start_run(&agent_id, input)
+        .await
+        .map_err(api_error)?;
+    let offset = run.received_bytes;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "run": run, "offset": offset }),
+    ))
+}
+
+fn required_header<'a>(headers: &'a HeaderMap, name: &'static str) -> Result<&'a str, ApiError> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::bad(format!("{name} header is required")))
+}
+
+/// PUT /api/backup/v1/runs/{id}/chunks/{index} (agent-scoped)
+pub async fn agent_put_chunk(
+    State(state): State<AppState>,
+    axum::Extension(AgentId(agent_id)): axum::Extension<AgentId>,
+    Path((run_id, index)): Path<(String, u64)>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let offset: u64 = required_header(&headers, "x-backup-offset")?
+        .parse()
+        .map_err(|_| ApiError::bad("X-Backup-Offset must be an unsigned integer"))?;
+    let sha256 = required_header(&headers, "x-backup-sha256")?;
+
+    let run = state
+        .backups
+        .put_chunk(&agent_id, &run_id, index, offset, sha256, body)
+        .await
+        .map_err(api_error)?;
+    let offset = run.received_bytes;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "run": run, "offset": offset }),
+    ))
+}
+
+/// POST /api/backup/v1/runs/{id}/complete (agent-scoped)
+pub async fn agent_complete(
+    State(state): State<AppState>,
+    axum::Extension(AgentId(agent_id)): axum::Extension<AgentId>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let run = state
+        .backups
+        .complete_run(&agent_id, &id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(serde_json::json!({ "ok": true, "run": run })))
+}
+
+/// POST /api/backup/v1/failures (agent-scoped)
+pub async fn agent_failure(
+    State(state): State<AppState>,
+    axum::Extension(AgentId(agent_id)): axum::Extension<AgentId>,
+    Json(input): Json<FailureReport>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let run = state
+        .backups
+        .report_failure(&agent_id, input)
         .await
         .map_err(api_error)?;
     Ok(Json(serde_json::json!({ "ok": true, "run": run })))

@@ -1,6 +1,9 @@
 //! Shared integration-test harness: a real router over a real SQLite file.
 #![allow(dead_code)]
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -9,6 +12,9 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
 
+use flatline_backend::backups::storage::{
+    FaultInjector, FreeSpace, NoFaults, STORAGE_MARKER, SystemFreeSpace,
+};
 use flatline_backend::config::Config;
 use flatline_backend::{AppState, api, auth, db, events::Events};
 
@@ -17,12 +23,41 @@ pub struct Harness {
     pub pool: SqlitePool,
     pub token: String,
     pub state: AppState,
+    /// Provisioned backup root, when this harness enabled backup storage.
+    pub backup_root: Option<PathBuf>,
     pub _dir: tempfile::TempDir,
 }
 
-/// A fresh instance with a minted token, no monitors.
+/// A fresh instance with a minted token, no monitors, storage disabled.
 pub async fn harness() -> Harness {
+    harness_inner(None).await
+}
+
+/// A harness whose backup storage root is provisioned. Tests pass deterministic
+/// free space and crash points; the router and service share them.
+pub async fn harness_with_backups(
+    free: Arc<dyn FreeSpace>,
+    faults: Arc<dyn FaultInjector>,
+) -> Harness {
+    harness_inner(Some((free, faults))).await
+}
+
+async fn harness_inner(storage: Option<(Arc<dyn FreeSpace>, Arc<dyn FaultInjector>)>) -> Harness {
     let dir = tempfile::tempdir().unwrap();
+    let (backup_dir, backup_root, free, faults) = match storage {
+        Some((free, faults)) => {
+            let root = dir.path().join("backups");
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join(STORAGE_MARKER), uuid::Uuid::new_v4().to_string()).unwrap();
+            (Some(root.clone()), Some(root), free, faults)
+        }
+        None => (
+            None,
+            None,
+            Arc::new(SystemFreeSpace) as Arc<dyn FreeSpace>,
+            Arc::new(NoFaults) as Arc<dyn FaultInjector>,
+        ),
+    };
     let config = Config {
         data_dir: dir.path().to_path_buf(),
         port: 0,
@@ -30,7 +65,7 @@ pub async fn harness() -> Harness {
         web_dist: dir.path().join("no-web-build"),
         public_url: None,
         agent_dir: dir.path().join("agent"),
-        backup_dir: None,
+        backup_dir,
         heartbeat_retention_days: 0,
     };
     let pool = db::connect(&config.data_dir).await.unwrap();
@@ -51,10 +86,12 @@ pub async fn harness() -> Harness {
     let status_page_secret =
         flatline_backend::status_pages::ensure_secret(&config.data_dir).unwrap();
     let config = std::sync::Arc::new(config);
-    let backups = flatline_backend::backups::Backups::new(
+    let backups = flatline_backend::backups::Backups::with_io(
         pool.clone(),
         std::sync::Arc::clone(&config),
         std::sync::Arc::clone(&events),
+        free,
+        faults,
     );
     let state = AppState {
         pool: pool.clone(),
@@ -71,6 +108,7 @@ pub async fn harness() -> Harness {
         pool,
         token,
         state,
+        backup_root,
         _dir: dir,
     }
 }

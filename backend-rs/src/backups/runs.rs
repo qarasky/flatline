@@ -112,7 +112,7 @@ fn validate_time(value: &str, label: &str, now: DateTime<Utc>) -> Result<DateTim
     Ok(parsed)
 }
 
-fn valid_sha256(value: &str) -> bool {
+pub(crate) fn valid_sha256(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
@@ -197,6 +197,28 @@ impl StartRun {
             source_summary: normalize_summary(self.source_summary.clone())?,
         })
     }
+}
+
+/// Safe failure codes reported by the Go agent. Raw stderr or messages never
+/// enter this channel; an unknown code is a 400.
+pub const FAILURE_CODES: &[&str] = &[
+    "export_failed",
+    "postgres_dump_failed",
+    "postgres_query_failed",
+    "s3_export_failed",
+    "s3_read_failed",
+    "spool_limit",
+    "archive_failed",
+    "encrypt_failed",
+    "upload_failed",
+    "auth_failed",
+    "config_invalid",
+    "source_changed",
+    "unknown",
+];
+
+pub fn valid_failure_code(code: &str) -> bool {
+    FAILURE_CODES.contains(&code)
 }
 
 /// Derived agent health. The spec's single enum, in precedence order:

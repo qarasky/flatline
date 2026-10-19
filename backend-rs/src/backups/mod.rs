@@ -8,19 +8,29 @@
 
 pub mod agents;
 pub mod runs;
+pub mod storage;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use axum::body::Body;
 use chrono::{DateTime, SecondsFormat, Utc};
+use http_body_util::BodyExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::auth::hash_token;
 use crate::config::Config;
 use crate::events::Events;
 use runs::{ValidatedStart, Verification};
+use storage::{
+    CHUNK_BYTES, FaultInjector, FaultPoint, FreeSpace, NoFaults, RESERVE_BYTES, Storage,
+    StorageError, SystemFreeSpace,
+};
 
 pub use runs::{RunSummary, StartRun};
 
@@ -32,6 +42,7 @@ pub enum Error {
     Conflict(String),
     Unauthorized,
     Unavailable(String),
+    Insufficient(String),
     TooLarge(String),
     HashMismatch(String),
     Internal(String),
@@ -44,6 +55,7 @@ impl std::fmt::Display for Error {
             | Error::NotFound(message)
             | Error::Conflict(message)
             | Error::Unavailable(message)
+            | Error::Insufficient(message)
             | Error::TooLarge(message)
             | Error::HashMismatch(message)
             | Error::Internal(message) => formatter.write_str(message),
@@ -110,6 +122,15 @@ pub struct AgentPatch {
     pub interval_seconds: Option<i64>,
     #[serde(default)]
     pub retention_count: Option<i64>,
+}
+
+/// A failed export that may never have produced bytes.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailureReport {
+    pub client_run_id: String,
+    pub export_started_at: String,
+    pub code: String,
 }
 
 /// The agent shape shared with the dashboard.
@@ -201,14 +222,45 @@ pub struct Backups {
     pool: SqlitePool,
     config: Arc<Config>,
     events: Arc<Events>,
+    free: Arc<dyn FreeSpace>,
+    faults: Arc<dyn FaultInjector>,
+    /// Serializes capacity reservation with run insertion so two agents
+    /// cannot both spend the same free space.
+    reservation: Mutex<()>,
+    /// At most four concurrent request-body readers.
+    upload_slots: Semaphore,
+    /// Serializes appends and finalization per run.
+    run_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl Backups {
     pub fn new(pool: SqlitePool, config: Arc<Config>, events: Arc<Events>) -> Arc<Self> {
+        Self::with_io(
+            pool,
+            config,
+            events,
+            Arc::new(SystemFreeSpace),
+            Arc::new(NoFaults),
+        )
+    }
+
+    /// Test seam: deterministic free space and injectable crash points.
+    pub fn with_io(
+        pool: SqlitePool,
+        config: Arc<Config>,
+        events: Arc<Events>,
+        free: Arc<dyn FreeSpace>,
+        faults: Arc<dyn FaultInjector>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             pool,
             config,
             events,
+            free,
+            faults,
+            reservation: Mutex::new(()),
+            upload_slots: Semaphore::new(4),
+            run_locks: Mutex::new(HashMap::new()),
         })
     }
 
@@ -506,9 +558,10 @@ impl Backups {
             .ok_or_else(|| Error::NotFound("run not found".to_string()))
     }
 
-    /// Create or replay the metadata row for an upload. Byte delivery is
-    /// handled by the receiver task; this method never touches storage.
-    pub async fn start_run_at(
+    /// Create the metadata row without touching storage. Failure reports
+    /// and tests use this; upload starts reserve capacity through
+    /// [`Self::start_run_at`].
+    pub async fn insert_run_metadata_at(
         &self,
         agent_id: &str,
         input: StartRun,
@@ -550,6 +603,494 @@ impl Backups {
 
     pub async fn start_run(&self, agent_id: &str, input: StartRun) -> Result<RunSummary, Error> {
         self.start_run_at(agent_id, input, Utc::now()).await
+    }
+
+    /// Start an upload, reserving the whole declared bundle against free
+    /// space before any bytes are accepted. An identical retry returns the
+    /// existing run and its committed offset; an expired run with identical
+    /// parameters is reopened at zero after its old bytes are removed.
+    pub async fn start_run_at(
+        &self,
+        agent_id: &str,
+        input: StartRun,
+        now: DateTime<Utc>,
+    ) -> Result<RunSummary, Error> {
+        let validated = input.validate(now)?;
+        self.agent_row(agent_id).await?;
+        let storage = self.storage()?;
+
+        let _reservation = self.reservation.lock().await;
+
+        if let Some(existing) = self
+            .run_by_client_id(agent_id, &validated.client_run_id)
+            .await?
+        {
+            if !same_start(&existing, &validated) {
+                return Err(Error::Conflict(
+                    "clientRunId was already used with different parameters".to_string(),
+                ));
+            }
+            let status = existing.status.clone();
+            match status.as_str() {
+                runs::STATUS_UPLOADING | runs::STATUS_FINALIZING | runs::STATUS_COMPLETED => {
+                    return Ok(existing);
+                }
+                runs::STATUS_EXPIRED => {
+                    storage
+                        .delete_run(agent_id, &existing.id)
+                        .map_err(storage_error)?;
+                    sqlx::query("DELETE FROM backup_run_chunks WHERE run_id = ?")
+                        .bind(&existing.id)
+                        .execute(&self.pool)
+                        .await?;
+                    self.reserve_capacity(&storage, validated.total_bytes)
+                        .await?;
+                    sqlx::query(
+                        "UPDATE backup_runs
+                            SET status = 'uploading', received_bytes = 0, completed_at = NULL,
+                                error_code = NULL, archive_verification = NULL,
+                                restore_verification = NULL
+                          WHERE id = ?",
+                    )
+                    .bind(&existing.id)
+                    .execute(&self.pool)
+                    .await?;
+                    storage
+                        .prepare_run(agent_id, &existing.id)
+                        .map_err(storage_error)?;
+                    self.events.invalidate();
+                    return self.run_by_id(&existing.id).await;
+                }
+                _ => {
+                    return Err(Error::Conflict(
+                        "this run can no longer be reopened".to_string(),
+                    ));
+                }
+            }
+        }
+
+        let active: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM backup_runs
+              WHERE agent_id = ? AND status IN ('uploading', 'finalizing') LIMIT 1",
+        )
+        .bind(agent_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        if active.is_some() {
+            return Err(Error::Conflict(
+                "another run is currently uploading".to_string(),
+            ));
+        }
+
+        self.reserve_capacity(&storage, validated.total_bytes)
+            .await?;
+
+        let id = uuid::Uuid::new_v4().to_string();
+        insert_run(&self.pool, &id, agent_id, &validated, now).await?;
+        if let Err(error) = storage.prepare_run(agent_id, &id) {
+            let _ = sqlx::query("DELETE FROM backup_runs WHERE id = ?")
+                .bind(&id)
+                .execute(&self.pool)
+                .await;
+            return Err(storage_error(error));
+        }
+
+        self.events.invalidate();
+        self.run_by_id(&id).await
+    }
+
+    /// Append one chunk after verifying its digest, then advance the
+    /// committed offset. A failed response is safely retryable.
+    pub async fn put_chunk(
+        &self,
+        agent_id: &str,
+        run_id: &str,
+        index: u64,
+        offset: u64,
+        sha256: &str,
+        body: Body,
+    ) -> Result<RunSummary, Error> {
+        if !runs::valid_sha256(sha256) {
+            return Err(Error::BadRequest(
+                "X-Backup-Sha256 must be 64 lowercase hexadecimal characters".to_string(),
+            ));
+        }
+
+        let _slot = self
+            .upload_slots
+            .acquire()
+            .await
+            .map_err(|_| Error::Internal("upload limiter closed".to_string()))?;
+        let bytes = read_bounded(body, CHUNK_BYTES as usize).await?;
+        let digest = hex::encode(Sha256::digest(&bytes));
+        drop(_slot);
+
+        if digest != sha256 {
+            return Err(Error::HashMismatch(
+                "chunk sha256 does not match the request body".to_string(),
+            ));
+        }
+
+        let run_lock = self.run_lock(run_id).await;
+        let _run = run_lock.lock().await;
+        let run = self.run_for_agent(agent_id, run_id).await?;
+
+        let total = run
+            .total_bytes
+            .ok_or_else(|| Error::Conflict("run has no declared size".to_string()))?
+            as u64;
+        let committed = run.received_bytes as u64;
+
+        if index != offset / CHUNK_BYTES {
+            return Err(Error::BadRequest(
+                "chunk index must be offset / 8388608".to_string(),
+            ));
+        }
+
+        if offset < committed {
+            let stored = self.chunk_row(run_id, index).await?;
+            return match stored {
+                Some((stored_offset, stored_size, stored_sha))
+                    if stored_offset == offset as i64
+                        && stored_size == bytes.len() as i64
+                        && stored_sha == sha256 =>
+                {
+                    Ok(run)
+                }
+                _ => Err(Error::Conflict(
+                    "chunk conflicts with the committed ledger".to_string(),
+                )),
+            };
+        }
+
+        if run.status != runs::STATUS_UPLOADING {
+            return Err(Error::Conflict("run is not accepting chunks".to_string()));
+        }
+        if offset != committed {
+            return Err(Error::Conflict(format!(
+                "expected offset {committed}, received {offset}"
+            )));
+        }
+
+        let length = bytes.len() as u64;
+        if length == 0 {
+            return Err(Error::BadRequest(
+                "empty chunks are not accepted".to_string(),
+            ));
+        }
+        if offset.saturating_add(length) > total {
+            return Err(Error::TooLarge(
+                "chunk exceeds the declared bundle size".to_string(),
+            ));
+        }
+        if offset + length < total && length != CHUNK_BYTES {
+            return Err(Error::BadRequest(
+                "non-final chunks must be exactly 8388608 bytes".to_string(),
+            ));
+        }
+
+        let storage = self.storage()?;
+        let free = storage.available_bytes().map_err(storage_error)?;
+        if free < length.saturating_add(RESERVE_BYTES) {
+            return Err(Error::Insufficient(
+                "office storage reserve would be violated".to_string(),
+            ));
+        }
+
+        storage
+            .append_chunk(agent_id, run_id, offset, &bytes)
+            .map_err(storage_error)?;
+
+        let next = offset + length;
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO backup_run_chunks (run_id, chunk_index, offset, size, sha256)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(run_id)
+        .bind(index as i64)
+        .bind(offset as i64)
+        .bind(length as i64)
+        .bind(sha256)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query("UPDATE backup_runs SET received_bytes = ? WHERE id = ?")
+            .bind(next as i64)
+            .bind(run_id)
+            .execute(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
+
+        self.faults
+            .hit(FaultPoint::AfterDbUpdate)
+            .map_err(|error| Error::Internal(format!("storage: {error}")))?;
+        self.events.invalidate();
+        self.run_by_id(run_id).await
+    }
+
+    /// Finalize idempotently: check the full digest, publish atomically and
+    /// only then mark the run completed.
+    pub async fn complete_run(&self, agent_id: &str, run_id: &str) -> Result<RunSummary, Error> {
+        let run_lock = self.run_lock(run_id).await;
+        let _run = run_lock.lock().await;
+        let run = self.run_for_agent(agent_id, run_id).await?;
+
+        if run.status == runs::STATUS_COMPLETED {
+            return Ok(run);
+        }
+        if run.status != runs::STATUS_UPLOADING && run.status != runs::STATUS_FINALIZING {
+            return Err(Error::Conflict("run cannot be completed".to_string()));
+        }
+
+        let total = run
+            .total_bytes
+            .ok_or_else(|| Error::Conflict("run has no declared size".to_string()))?;
+        if run.received_bytes != total {
+            return Err(Error::Conflict(format!(
+                "received {} of {total} bytes",
+                run.received_bytes
+            )));
+        }
+        let sha256 = run
+            .sha256
+            .clone()
+            .ok_or_else(|| Error::Conflict("run has no declared digest".to_string()))?;
+
+        let storage = self.storage()?;
+        if run.status == runs::STATUS_UPLOADING {
+            sqlx::query("UPDATE backup_runs SET status = 'finalizing' WHERE id = ?")
+                .bind(run_id)
+                .execute(&self.pool)
+                .await?;
+        }
+
+        match storage.finalize(agent_id, run_id, total as u64, &sha256) {
+            Ok(()) => {}
+            Err(StorageError::Mismatch(message)) => {
+                self.fail_run(run_id, "bundle_hash_mismatch").await?;
+                return Err(Error::HashMismatch(message));
+            }
+            Err(error) => return Err(storage_error(error)),
+        }
+
+        sqlx::query(
+            "UPDATE backup_runs SET status = 'completed', completed_at = ?,
+                    error_code = NULL WHERE id = ?",
+        )
+        .bind(canonical(Utc::now()))
+        .bind(run_id)
+        .execute(&self.pool)
+        .await?;
+
+        self.events.invalidate();
+        self.run_by_id(run_id).await
+    }
+
+    /// Finish interrupted uploads and finalizations. Runs before maintenance
+    /// in production; safe to call repeatedly.
+    pub async fn reconcile_storage(&self) -> Result<(), Error> {
+        let rows: Vec<RunRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {RUN_COLUMNS} FROM backup_runs
+              WHERE status IN ('uploading', 'finalizing')"
+        )))
+        .fetch_all(&self.pool)
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let storage = self.storage()?;
+
+        for row in rows {
+            match row.status.as_str() {
+                runs::STATUS_UPLOADING => {
+                    match storage.truncate_to_committed(
+                        &row.agent_id,
+                        &row.id,
+                        row.received_bytes as u64,
+                    ) {
+                        Ok(()) => {}
+                        Err(StorageError::Io(error))
+                            if error.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            self.fail_run(&row.id, "bundle_missing").await?;
+                        }
+                        Err(error) => {
+                            tracing::error!("backup reconcile: run {}: {error}", row.id);
+                            self.fail_run(&row.id, "storage_reconcile_failed").await?;
+                        }
+                    }
+                }
+                runs::STATUS_FINALIZING => {
+                    if let Err(error) = self.reconcile_finalizing(&storage, &row).await {
+                        tracing::error!("backup reconcile: run {}: {error}", row.id);
+                        self.fail_run(&row.id, "storage_reconcile_failed").await?;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn reconcile_finalizing(&self, storage: &Storage, row: &RunRow) -> Result<(), Error> {
+        let total = row.total_bytes.unwrap_or_default() as u64;
+        let sha256 = row.sha256.clone().unwrap_or_default();
+        let final_path = storage
+            .final_path(&row.agent_id, &row.id)
+            .map_err(storage_error)?;
+
+        if final_path.exists() {
+            storage
+                .verify_final(&row.agent_id, &row.id, total, &sha256)
+                .map_err(storage_error)?;
+        } else {
+            storage
+                .finalize(&row.agent_id, &row.id, total, &sha256)
+                .map_err(storage_error)?;
+        }
+
+        sqlx::query(
+            "UPDATE backup_runs SET status = 'completed', completed_at = ?,
+                    error_code = NULL WHERE id = ?",
+        )
+        .bind(canonical(Utc::now()))
+        .bind(&row.id)
+        .execute(&self.pool)
+        .await?;
+        self.events.invalidate();
+        Ok(())
+    }
+
+    /// Report a failed export that may never have produced bytes. Safe error
+    /// codes only; stderr never reaches the API.
+    pub async fn report_failure(
+        &self,
+        agent_id: &str,
+        input: FailureReport,
+    ) -> Result<RunSummary, Error> {
+        self.agent_row(agent_id).await?;
+        if !runs::valid_failure_code(&input.code) {
+            return Err(Error::BadRequest("unknown failure code".to_string()));
+        }
+        let started = DateTime::parse_from_rfc3339(&input.export_started_at)
+            .map_err(|_| Error::BadRequest("exportStartedAt must be RFC3339".to_string()))?
+            .with_timezone(&Utc);
+        if started.timestamp_millis() > Utc::now().timestamp_millis() + runs::FUTURE_TOLERANCE_MS {
+            return Err(Error::BadRequest(
+                "exportStartedAt must not be in the future".to_string(),
+            ));
+        }
+
+        if let Some(existing) = self
+            .run_by_client_id(agent_id, &input.client_run_id)
+            .await?
+        {
+            if existing.status == runs::STATUS_COMPLETED {
+                return Err(Error::Conflict(
+                    "a completed run cannot be failed".to_string(),
+                ));
+            }
+            if existing.status == runs::STATUS_FAILED {
+                if existing.error_code.as_deref() == Some(input.code.as_str()) {
+                    return Ok(existing);
+                }
+                return Err(Error::Conflict(
+                    "clientRunId was already reported with a different code".to_string(),
+                ));
+            }
+
+            sqlx::query("UPDATE backup_runs SET status = 'failed', error_code = ? WHERE id = ?")
+                .bind(&input.code)
+                .bind(&existing.id)
+                .execute(&self.pool)
+                .await?;
+            self.events.invalidate();
+            return self.run_by_id(&existing.id).await;
+        }
+
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO backup_runs
+                (id, agent_id, client_run_id, status, export_started_at, created_at,
+                 received_bytes, error_code)
+             VALUES (?, ?, ?, 'failed', ?, ?, 0, ?)",
+        )
+        .bind(&id)
+        .bind(agent_id)
+        .bind(&input.client_run_id)
+        .bind(canonical(started))
+        .bind(canonical(Utc::now()))
+        .bind(&input.code)
+        .execute(&self.pool)
+        .await?;
+
+        self.events.invalidate();
+        self.run_by_id(&id).await
+    }
+
+    async fn reserve_capacity(&self, storage: &Storage, new_total: i64) -> Result<(), Error> {
+        let free = storage.available_bytes().map_err(storage_error)?;
+        let reserved: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(total_bytes - received_bytes), 0)
+               FROM backup_runs
+              WHERE status IN ('uploading', 'finalizing')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let headroom = i128::from(free) - i128::from(reserved.max(0)) - i128::from(new_total);
+        if headroom < i128::from(RESERVE_BYTES) {
+            return Err(Error::Insufficient(format!(
+                "office storage reserve of {RESERVE_BYTES} bytes would be violated"
+            )));
+        }
+        Ok(())
+    }
+
+    fn storage(&self) -> Result<Storage, Error> {
+        let Some(root) = self.config.backup_dir.as_deref() else {
+            return Err(Error::Unavailable(
+                "backup storage is not configured".to_string(),
+            ));
+        };
+        Storage::open_with(root, Arc::clone(&self.free), Arc::clone(&self.faults))
+            .map_err(storage_error)
+    }
+
+    async fn run_lock(&self, run_id: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.run_locks.lock().await;
+        Arc::clone(
+            locks
+                .entry(run_id.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(()))),
+        )
+    }
+
+    async fn chunk_row(
+        &self,
+        run_id: &str,
+        index: u64,
+    ) -> Result<Option<(i64, i64, String)>, Error> {
+        Ok(sqlx::query_as(
+            "SELECT offset, size, sha256 FROM backup_run_chunks
+              WHERE run_id = ? AND chunk_index = ?",
+        )
+        .bind(run_id)
+        .bind(index as i64)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
+    async fn fail_run(&self, run_id: &str, code: &str) -> Result<(), Error> {
+        sqlx::query("UPDATE backup_runs SET status = 'failed', error_code = ? WHERE id = ?")
+            .bind(code)
+            .bind(run_id)
+            .execute(&self.pool)
+            .await?;
+        self.events.invalidate();
+        Ok(())
     }
 
     /// Record an operator verification. Archive and restore are distinct
@@ -743,6 +1284,30 @@ impl Backups {
                 restore.as_ref().map(|(value,)| value.as_str()),
             ),
         })
+    }
+}
+
+async fn read_bounded(mut body: Body, max: usize) -> Result<Vec<u8>, Error> {
+    let mut data = Vec::new();
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|_| Error::BadRequest("invalid request body".to_string()))?;
+        if let Ok(chunk) = frame.into_data() {
+            if data.len() + chunk.len() > max {
+                return Err(Error::TooLarge(format!(
+                    "chunk exceeds the {max}-byte limit"
+                )));
+            }
+            data.extend_from_slice(&chunk);
+        }
+    }
+    Ok(data)
+}
+
+fn storage_error(error: StorageError) -> Error {
+    match error {
+        StorageError::Unavailable(message) => Error::Unavailable(message),
+        StorageError::Mismatch(message) => Error::HashMismatch(message),
+        StorageError::Io(error) => Error::Internal(format!("storage: {error}")),
     }
 }
 
