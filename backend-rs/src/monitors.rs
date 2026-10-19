@@ -409,13 +409,23 @@ mod tests {
         let mut monitor = Monitor::new("edge-01".into(), "push".into());
         assert_eq!(monitor.provider, None);
 
-        let ignored = apply_payload(&mut monitor, &payload(json!({ "provider": "hetzner.com" })), false)
-            .expect("provider is a writable field");
-        assert!(ignored.is_empty(), "provider must not be reported as ignored");
+        let ignored = apply_payload(
+            &mut monitor,
+            &payload(json!({ "provider": "hetzner.com" })),
+            false,
+        )
+        .expect("provider is a writable field");
+        assert!(
+            ignored.is_empty(),
+            "provider must not be reported as ignored"
+        );
         assert_eq!(monitor.provider.as_deref(), Some("hetzner.com"));
 
         let described = monitor_json(&monitor, None, &crate::heartbeats::UptimeWindows::default());
-        assert_eq!(described.get("provider").and_then(Value::as_str), Some("hetzner.com"));
+        assert_eq!(
+            described.get("provider").and_then(Value::as_str),
+            Some("hetzner.com")
+        );
 
         // Clearing works like every other optional string: null (or empty)
         // means "no provider", and nothing is ignored.

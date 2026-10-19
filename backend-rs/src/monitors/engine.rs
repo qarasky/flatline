@@ -161,10 +161,7 @@ impl Engine {
     /// is and refreshed in the background — one refresh per monitor at a
     /// time — while a monitor with no cached value computes inline (its
     /// first read; a fresh monitor has nothing to scan).
-    pub async fn uptime_windows(
-        self: &Arc<Self>,
-        monitor_id: i64,
-    ) -> heartbeats::UptimeWindows {
+    pub async fn uptime_windows(self: &Arc<Self>, monitor_id: i64) -> heartbeats::UptimeWindows {
         enum Cached {
             Fresh(heartbeats::UptimeWindows),
             Stale(heartbeats::UptimeWindows),
@@ -795,7 +792,10 @@ mod tests {
             "the background refresh replaced the stale value"
         );
         let cached = engine.uptime.lock().unwrap().get(&monitor_id).cloned();
-        assert!(cached.is_some_and(|(at, _)| at.elapsed() < UPTIME_TTL), "cache is fresh again");
+        assert!(
+            cached.is_some_and(|(at, _)| at.elapsed() < UPTIME_TTL),
+            "cache is fresh again"
+        );
     }
 
     #[test]

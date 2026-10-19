@@ -304,6 +304,20 @@ impl Storage {
         Ok(())
     }
 
+    /// Metadata of the published bundle, without hashing it. Used for
+    /// streamed downloads.
+    pub fn final_metadata(
+        &self,
+        agent_id: &str,
+        run_id: &str,
+    ) -> Result<(PathBuf, u64), StorageError> {
+        self.verify_root()?;
+        let path = self.final_path(agent_id, run_id)?;
+        ensure_regular(&path, false)?;
+        let metadata = fs::symlink_metadata(&path)?;
+        Ok((path, metadata.len()))
+    }
+
     /// Verify the published bundle.
     pub fn verify_final(
         &self,

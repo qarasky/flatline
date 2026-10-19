@@ -8,9 +8,11 @@
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
+use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use tokio_util::io::ReaderStream;
 
 use crate::AppState;
 use crate::api::ApiError;
@@ -301,6 +303,30 @@ pub async fn agent_complete(
         .await
         .map_err(api_error)?;
     Ok(Json(serde_json::json!({ "ok": true, "run": run })))
+}
+
+/// GET /api/v1/backup-runs/{id}/download
+///
+/// Streams only completed retained bundles. The response is never cached and
+/// the download URL carries no credential of its own.
+pub async fn download_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    let bundle = state.backups.open_bundle(&id).await.map_err(api_error)?;
+
+    let stream = ReaderStream::new(bundle.file);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/octet-stream")
+        .header(CONTENT_LENGTH, bundle.length)
+        .header(
+            CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", bundle.filename),
+        )
+        .header(CACHE_CONTROL, "no-store")
+        .body(Body::from_stream(stream))
+        .map_err(|_| ApiError::server())
 }
 
 /// POST /api/backup/v1/failures (agent-scoped)

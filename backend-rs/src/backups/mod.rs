@@ -7,6 +7,8 @@
 //! `/api/backup/v1` routes.
 
 pub mod agents;
+pub mod alerts;
+pub mod maintenance;
 pub mod runs;
 pub mod storage;
 
@@ -124,6 +126,13 @@ pub struct AgentPatch {
     pub retention_count: Option<i64>,
 }
 
+/// A completed bundle ready for streamed download.
+pub struct BundleDownload {
+    pub file: tokio::fs::File,
+    pub length: u64,
+    pub filename: String,
+}
+
 /// A failed export that may never have produced bytes.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -163,10 +172,11 @@ struct AgentRow {
     retention_count: i64,
     credential_active: i64,
     created_at: String,
+    alert_state: String,
 }
 
 const AGENT_COLUMNS: &str = "id, name, monitor_id, enabled, interval_seconds, retention_count, \
-                             credential_active, created_at";
+                             credential_active, created_at, alert_state";
 
 const RUN_COLUMNS: &str = "id, agent_id, client_run_id, status, export_started_at, \
                            export_finished_at, created_at, completed_at, total_bytes, \
@@ -224,11 +234,16 @@ pub struct Backups {
     events: Arc<Events>,
     free: Arc<dyn FreeSpace>,
     faults: Arc<dyn FaultInjector>,
+    /// Shared HTTP client for Telegram delivery through the existing
+    /// notification links.
+    client: reqwest::Client,
     /// Serializes capacity reservation with run insertion so two agents
     /// cannot both spend the same free space.
     reservation: Mutex<()>,
     /// At most four concurrent request-body readers.
     upload_slots: Semaphore,
+    /// Last chunk-progress invalidation, coalesced to one per second.
+    progress_event: std::sync::Mutex<Option<std::time::Instant>>,
     /// Serializes appends and finalization per run.
     run_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
@@ -258,8 +273,10 @@ impl Backups {
             events,
             free,
             faults,
+            client: reqwest::Client::new(),
             reservation: Mutex::new(()),
             upload_slots: Semaphore::new(4),
+            progress_event: std::sync::Mutex::new(None),
             run_locks: Mutex::new(HashMap::new()),
         })
     }
@@ -267,6 +284,50 @@ impl Backups {
     /// Configured storage root, when the operator enabled backups.
     pub fn backup_dir(&self) -> Option<&Path> {
         self.config.backup_dir.as_deref()
+    }
+
+    /// Start the production maintenance/health loop. Tests construct the
+    /// service directly and never call this.
+    pub fn start_jobs(self: &Arc<Self>) {
+        let backups = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                ticker.tick().await;
+                let now = Utc::now().timestamp_millis();
+                if let Err(error) = backups.maintain(now).await {
+                    tracing::error!("backup maintenance failed: {error}");
+                }
+                if let Err(error) = backups.evaluate_health(now).await {
+                    tracing::error!("backup health evaluation failed: {error}");
+                }
+            }
+        });
+    }
+
+    /// Open a completed bundle for streamed operator download. The file is
+    /// not read into memory; the caller owns the stream.
+    pub async fn open_bundle(&self, run_id: &str) -> Result<BundleDownload, Error> {
+        let run = self.run_by_id(run_id).await?;
+        if run.status != runs::STATUS_COMPLETED {
+            return Err(Error::NotFound(
+                "bundle is not a retained completed run".to_string(),
+            ));
+        }
+
+        let storage = self.storage()?;
+        let (path, length) = storage
+            .final_metadata(&run.agent_id, &run.id)
+            .map_err(storage_error)?;
+        let file = tokio::fs::File::open(&path)
+            .await
+            .map_err(|error| Error::Internal(format!("storage: {error}")))?;
+
+        Ok(BundleDownload {
+            file,
+            length,
+            filename: format!("flatline-backup-{}.age", run.id),
+        })
     }
 
     pub async fn register_agent(&self, input: NewAgent) -> Result<(AgentSummary, String), Error> {
@@ -649,9 +710,10 @@ impl Backups {
                         "UPDATE backup_runs
                             SET status = 'uploading', received_bytes = 0, completed_at = NULL,
                                 error_code = NULL, archive_verification = NULL,
-                                restore_verification = NULL
+                                restore_verification = NULL, last_activity_at = ?
                           WHERE id = ?",
                     )
+                    .bind(canonical(now))
                     .bind(&existing.id)
                     .execute(&self.pool)
                     .await?;
@@ -814,8 +876,9 @@ impl Backups {
         .bind(sha256)
         .execute(&mut *transaction)
         .await?;
-        sqlx::query("UPDATE backup_runs SET received_bytes = ? WHERE id = ?")
+        sqlx::query("UPDATE backup_runs SET received_bytes = ?, last_activity_at = ? WHERE id = ?")
             .bind(next as i64)
+            .bind(canonical(Utc::now()))
             .bind(run_id)
             .execute(&mut *transaction)
             .await?;
@@ -824,7 +887,7 @@ impl Backups {
         self.faults
             .hit(FaultPoint::AfterDbUpdate)
             .map_err(|error| Error::Internal(format!("storage: {error}")))?;
-        self.events.invalidate();
+        self.invalidate_progress();
         self.run_by_id(run_id).await
     }
 
@@ -875,8 +938,9 @@ impl Backups {
 
         sqlx::query(
             "UPDATE backup_runs SET status = 'completed', completed_at = ?,
-                    error_code = NULL WHERE id = ?",
+                    error_code = NULL, last_activity_at = ? WHERE id = ?",
         )
+        .bind(canonical(Utc::now()))
         .bind(canonical(Utc::now()))
         .bind(run_id)
         .execute(&self.pool)
@@ -1014,8 +1078,8 @@ impl Backups {
         sqlx::query(
             "INSERT INTO backup_runs
                 (id, agent_id, client_run_id, status, export_started_at, created_at,
-                 received_bytes, error_code)
-             VALUES (?, ?, ?, 'failed', ?, ?, 0, ?)",
+                 received_bytes, error_code, last_activity_at)
+             VALUES (?, ?, ?, 'failed', ?, ?, 0, ?, ?)",
         )
         .bind(&id)
         .bind(agent_id)
@@ -1023,6 +1087,7 @@ impl Backups {
         .bind(canonical(started))
         .bind(canonical(Utc::now()))
         .bind(&input.code)
+        .bind(canonical(Utc::now()))
         .execute(&self.pool)
         .await?;
 
@@ -1057,6 +1122,18 @@ impl Backups {
         };
         Storage::open_with(root, Arc::clone(&self.free), Arc::clone(&self.faults))
             .map_err(storage_error)
+    }
+
+    fn invalidate_progress(&self) {
+        let now = std::time::Instant::now();
+        let mut last = self.progress_event.lock().unwrap();
+        let due =
+            last.is_none_or(|last| now.duration_since(last) >= std::time::Duration::from_secs(1));
+        if due {
+            *last = Some(now);
+            drop(last);
+            self.events.invalidate();
+        }
     }
 
     async fn run_lock(&self, run_id: &str) -> Arc<Mutex<()>> {
@@ -1363,8 +1440,8 @@ async fn insert_run(
     sqlx::query(
         "INSERT INTO backup_runs
             (id, agent_id, client_run_id, status, export_started_at, export_finished_at,
-             created_at, total_bytes, received_bytes, sha256, source_summary)
-         VALUES (?, ?, ?, 'uploading', ?, ?, ?, ?, 0, ?, ?)",
+             created_at, total_bytes, received_bytes, sha256, source_summary, last_activity_at)
+         VALUES (?, ?, ?, 'uploading', ?, ?, ?, ?, 0, ?, ?, ?)",
     )
     .bind(id)
     .bind(agent_id)
@@ -1375,6 +1452,7 @@ async fn insert_run(
     .bind(validated.total_bytes)
     .bind(&validated.sha256)
     .bind(&validated.source_summary)
+    .bind(canonical(now))
     .execute(pool)
     .await
     .map_err(|error| match error {

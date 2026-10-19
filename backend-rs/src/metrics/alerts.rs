@@ -426,9 +426,16 @@ mod tests {
         // reappears after the tolerance starts a new episode.
         let mut state = MetricState::default();
         assert_eq!(step(&mut state, Some(95.0), t0), None);
-        assert_eq!(step(&mut state, Some(95.0), t0 + GAP_TOLERANCE_MS + 1), None);
         assert_eq!(
-            step(&mut state, Some(95.0), t0 + GAP_TOLERANCE_MS + 1 + DEBOUNCE_MS),
+            step(&mut state, Some(95.0), t0 + GAP_TOLERANCE_MS + 1),
+            None
+        );
+        assert_eq!(
+            step(
+                &mut state,
+                Some(95.0),
+                t0 + GAP_TOLERANCE_MS + 1 + DEBOUNCE_MS
+            ),
             Some(Action::Alert)
         );
 
@@ -437,7 +444,10 @@ mod tests {
         let mut state = MetricState::default();
         assert_eq!(step(&mut state, Some(95.0), t0), None);
         assert_eq!(step(&mut state, None, t0 + 1_000), None);
-        assert_eq!(step(&mut state, Some(95.0), t0 + DEBOUNCE_MS), Some(Action::Alert));
+        assert_eq!(
+            step(&mut state, Some(95.0), t0 + DEBOUNCE_MS),
+            Some(Action::Alert)
+        );
     }
 
     #[test]

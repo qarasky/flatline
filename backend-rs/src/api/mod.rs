@@ -242,6 +242,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/backup-runs/{id}/verification",
             post(backups::verify_run),
         )
+        .route(
+            "/api/v1/backup-runs/{id}/download",
+            get(backups::download_run),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_token,

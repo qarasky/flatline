@@ -86,6 +86,14 @@ pub async fn run() -> anyhow::Result<()> {
         .metrics
         .start_jobs(state.config.heartbeat_retention_days);
 
+    // Finish interrupted uploads/finalizations/deletions before the listener
+    // accepts new work, then run maintenance and health every minute.
+    state
+        .backups
+        .reconcile(chrono::Utc::now().timestamp_millis())
+        .await?;
+    state.backups.start_jobs();
+
     let listener = tokio::net::TcpListener::bind(&address).await?;
     tracing::info!("flatline-rs listening on {address}");
 

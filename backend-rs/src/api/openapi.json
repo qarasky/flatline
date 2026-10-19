@@ -2922,6 +2922,42 @@
                     }
                 }
             }
+        },
+        "/api/v1/backup-runs/{id}/download": {
+            "get": {
+                "summary": "Download a completed bundle",
+                "description": "Operator only. Streams the retained encrypted bundle as an attachment with `Cache-Control: no-store`. The URL carries no credential; use the operator Authorization header. Incomplete, failed, expired and pruned runs are not downloadable.",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Encrypted bundle",
+                        "content": {
+                            "application/octet-stream": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Missing or invalid operator token."
+                    },
+                    "404": {
+                        "description": "No retained completed bundle."
+                    }
+                }
+            }
         }
     }
 }

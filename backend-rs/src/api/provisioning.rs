@@ -237,7 +237,9 @@ pub async fn installer(
     let Some(token) = authorize(&state, &params, &headers).await else {
         return crate::auth::unauthorized();
     };
-    let version = agent_version(&state).await.unwrap_or_else(|| "unknown".to_string());
+    let version = agent_version(&state)
+        .await
+        .unwrap_or_else(|| "unknown".to_string());
     let body = render(INSTALLER, &state, &headers, &token, &version);
     text_response("text/x-shellscript; charset=utf-8", body)
 }
@@ -257,7 +259,13 @@ pub async fn checksums(
     }
     let body = assets
         .iter()
-        .map(|asset| format!("{}  {}\n", hex::encode(Sha256::digest(&asset.bytes)), asset.file))
+        .map(|asset| {
+            format!(
+                "{}  {}\n",
+                hex::encode(Sha256::digest(&asset.bytes)),
+                asset.file
+            )
+        })
         .collect::<String>();
     text_response("text/plain; charset=utf-8", body)
 }
