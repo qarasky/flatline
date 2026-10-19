@@ -2,6 +2,7 @@
 
 pub mod api_keys;
 pub mod auth;
+pub mod backups;
 pub mod badges;
 pub mod links;
 pub mod metrics;
@@ -145,6 +146,17 @@ pub fn router(state: AppState) -> Router {
         .route("/api/push/{pushToken}", get(push::push).post(push::push))
         .layer(DefaultBodyLimit::max(256 * 1024));
 
+    // Backup agents authenticate with their own credential, never an operator
+    // token or a monitor push token. The middleware resolves the token to an
+    // agent UUID; every handler is scoped to that UUID.
+    let backup_agent = Router::new()
+        .route("/api/backup/v1/runs", post(backups::agent_start_run))
+        .route("/api/backup/v1/runs/{id}", get(backups::agent_run))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            backups::require_agent,
+        ));
+
     let authed = Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/auth/me", get(auth::me))
@@ -203,6 +215,27 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/monitor-types", get(monitor_types))
         .route("/api/v1/events", get(stream::events))
+        .route(
+            "/api/v1/backup-agents",
+            get(backups::list_agents).post(backups::create_agent),
+        )
+        .route(
+            "/api/v1/backup-agents/{id}",
+            patch(backups::patch_agent),
+        )
+        .route(
+            "/api/v1/backup-agents/{id}/rotate-token",
+            post(backups::rotate_token),
+        )
+        .route(
+            "/api/v1/backup-agents/{id}/revoke-token",
+            post(backups::revoke_token),
+        )
+        .route("/api/v1/backup-agents/{id}/runs", get(backups::list_runs))
+        .route(
+            "/api/v1/backup-runs/{id}/verification",
+            post(backups::verify_run),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_token,
@@ -210,6 +243,7 @@ pub fn router(state: AppState) -> Router {
 
     public
         .merge(agent)
+        .merge(backup_agent)
         .merge(authed)
         .fallback(web::fallback)
         .with_state(state)

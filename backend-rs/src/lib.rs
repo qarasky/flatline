@@ -7,6 +7,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod backups;
 pub mod badges;
 pub mod config;
 pub mod db;
@@ -32,6 +33,9 @@ pub struct AppState {
     pub events: Arc<events::Events>,
     pub engine: Arc<monitors::engine::Engine>,
     pub metrics: Arc<metrics::Metrics>,
+    /// Named backup agents, credentials and run metadata. Bundle storage is
+    /// enabled only when `FLATLINE_BACKUP_DIR` points at a provisioned root.
+    pub backups: Arc<backups::Backups>,
     /// Signing secret for status-page unlock cookies (owner-only file).
     pub status_page_secret: Arc<String>,
 }
@@ -51,14 +55,17 @@ pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
     let events = events::Events::new();
     let engine = monitors::engine::Engine::new(pool.clone(), Arc::clone(&events));
     let metrics = metrics::Metrics::new(pool.clone(), Arc::clone(&events));
+    let config = Arc::new(config);
+    let backups = backups::Backups::new(pool.clone(), Arc::clone(&config), Arc::clone(&events));
     let status_page_secret = status_pages::ensure_secret(&config.data_dir)?;
 
     Ok(AppState {
         pool,
-        config: Arc::new(config),
+        config,
         events,
         engine,
         metrics,
+        backups,
         status_page_secret: Arc::new(status_page_secret),
     })
 }

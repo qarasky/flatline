@@ -239,6 +239,313 @@
                         "type": ["integer", "null"]
                     }
                 }
+            },
+            "BackupVerification": {
+                "type": "object",
+                "required": ["runId", "status", "checkedAt", "summary"],
+                "properties": {
+                    "runId": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["passed", "failed"]
+                    },
+                    "checkedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "summary": {
+                        "type": "string",
+                        "maxLength": 2048
+                    }
+                }
+            },
+            "BackupRun": {
+                "type": "object",
+                "required": ["id", "agentId", "clientRunId", "status", "exportStartedAt", "createdAt", "receivedBytes"],
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "agentId": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "clientRunId": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["uploading", "finalizing", "completed", "failed", "expired", "deleting", "pruned"]
+                    },
+                    "exportStartedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "exportFinishedAt": {
+                        "type": ["string", "null"],
+                        "format": "date-time"
+                    },
+                    "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "completedAt": {
+                        "type": ["string", "null"],
+                        "format": "date-time"
+                    },
+                    "totalBytes": {
+                        "type": ["integer", "null"],
+                        "minimum": 1,
+                        "maximum": 8589934592
+                    },
+                    "receivedBytes": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "sha256": {
+                        "type": ["string", "null"]
+                    },
+                    "sourceSummary": {
+                        "type": ["object", "null"],
+                        "additionalProperties": true
+                    },
+                    "errorCode": {
+                        "type": ["string", "null"]
+                    },
+                    "archiveVerification": {
+                        "oneOf": [
+                            {
+                                "$ref": "#/components/schemas/BackupVerification"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "restoreVerification": {
+                        "oneOf": [
+                            {
+                                "$ref": "#/components/schemas/BackupVerification"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    }
+                }
+            },
+            "BackupAgent": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "name",
+                    "enabled",
+                    "credentialActive",
+                    "intervalSeconds",
+                    "retentionCount",
+                    "createdAt",
+                    "health"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "monitorId": {
+                        "type": ["integer", "null"]
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "credentialActive": {
+                        "type": "boolean"
+                    },
+                    "intervalSeconds": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "retentionCount": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 30
+                    },
+                    "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "health": {
+                        "type": "string",
+                        "enum": ["disabled", "pending", "healthy", "failed", "overdue"]
+                    },
+                    "lastErrorCode": {
+                        "type": ["string", "null"]
+                    },
+                    "latestRun": {
+                        "oneOf": [
+                            {
+                                "$ref": "#/components/schemas/BackupRun"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "lastCompletedRun": {
+                        "oneOf": [
+                            {
+                                "$ref": "#/components/schemas/BackupRun"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "latestArchiveVerification": {
+                        "oneOf": [
+                            {
+                                "$ref": "#/components/schemas/BackupVerification"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "latestRestoreVerification": {
+                        "oneOf": [
+                            {
+                                "$ref": "#/components/schemas/BackupVerification"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    }
+                }
+            },
+            "BackupAgentInput": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Lowercase ASCII letters, digits, hyphens and underscores; 1-64 characters, starting with a letter or digit."
+                    },
+                    "monitorId": {
+                        "type": ["integer", "null"],
+                        "description": "Optional server-monitor link. Removing the monitor unlinks without deleting the agent."
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "intervalSeconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 86400
+                    },
+                    "retentionCount": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 30,
+                        "default": 7
+                    }
+                }
+            },
+            "BackupRunStart": {
+                "type": "object",
+                "required": ["clientRunId", "exportStartedAt", "exportFinishedAt", "totalBytes", "sha256"],
+                "properties": {
+                    "clientRunId": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "exportStartedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "exportFinishedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "totalBytes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 8589934592
+                    },
+                    "sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "sourceSummary": {
+                        "type": "object",
+                        "properties": {
+                            "databaseCount": {
+                                "type": "integer",
+                                "minimum": 0
+                            },
+                            "objectCount": {
+                                "type": "integer",
+                                "minimum": 0
+                            },
+                            "sourceBytes": {
+                                "type": "integer",
+                                "minimum": 0
+                            }
+                        }
+                    }
+                }
+            },
+            "BackupVerificationInput": {
+                "type": "object",
+                "required": ["kind", "status", "checkedAt", "summary"],
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["archive", "restore"]
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["passed", "failed"]
+                    },
+                    "checkedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "summary": {
+                        "type": "string",
+                        "maxLength": 2048
+                    }
+                }
+            },
+            "BackupAgentPatch": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "monitorId": {
+                        "type": ["integer", "null"]
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "intervalSeconds": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "retentionCount": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 30
+                    }
+                }
             }
         },
         "responses": {
@@ -787,7 +1094,7 @@
         "/api/v1/monitors/{id}/agent-warnings/clear": {
             "post": {
                 "summary": "Clear agent warnings",
-                "description": "Requires the `write` scope. Acknowledges every agent warning counter at once: `agent.failedPushes`, `agent.samplesDropped` and the per-collector `agent.collectorErrors`. The board shows each reported counter minus its ack, so this clears the whole \"Agent: …\" line on a card. Docker collector errors are acknowledged too, though the card renders them in the container section. The counters reset when the agent restarts and the acks are dropped automatically, so new warnings are never masked.",
+                "description": "Requires the `write` scope. Acknowledges every agent warning counter at once: `agent.failedPushes`, `agent.samplesDropped` and the per-collector `agent.collectorErrors`. The board shows each reported counter minus its ack, so this clears the whole \"Agent: \u2026\" line on a card. Docker collector errors are acknowledged too, though the card renders them in the container section. The counters reset when the agent restarts and the acks are dropped automatically, so new warnings are never masked.",
                 "parameters": [
                     {
                         "$ref": "#/components/parameters/monitorId"
@@ -1788,6 +2095,584 @@
                                             "const": true
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/backup-agents": {
+            "get": {
+                "summary": "List backup agents",
+                "description": "Lists linked and unlinked agents newest-first. Omit `monitorId` for every agent; limit 1-200, cursor is an agent UUID.",
+                "parameters": [
+                    {
+                        "name": "monitorId",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200,
+                            "default": 50
+                        }
+                    },
+                    {
+                        "name": "cursor",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Agents",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "agents": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/components/schemas/BackupAgent"
+                                            }
+                                        },
+                                        "nextCursor": {
+                                            "type": ["string", "null"]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Register a backup agent",
+                "description": "Returns the dedicated credential in plaintext exactly once. Only its hash is stored.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BackupAgentInput"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "agent": {
+                                            "$ref": "#/components/schemas/BackupAgent"
+                                        },
+                                        "token": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid settings.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Monitor not found.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Duplicate linked name.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/backup-agents/{id}": {
+            "patch": {
+                "summary": "Update a backup agent",
+                "description": "Accepts name, monitorId (null unlinks), enabled, intervalSeconds and retentionCount.",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BackupAgentPatch"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Updated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "agent": {
+                                            "$ref": "#/components/schemas/BackupAgent"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid settings.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Agent or monitor not found.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Duplicate linked name.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/backup-agents/{id}/rotate-token": {
+            "post": {
+                "summary": "Rotate the agent credential",
+                "description": "Returns a replacement credential once and invalidates the previous one.",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated agent",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "agent": {
+                                            "$ref": "#/components/schemas/BackupAgent"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Agent not found.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/backup-agents/{id}/revoke-token": {
+            "post": {
+                "summary": "Revoke the agent credential",
+                "description": "The agent and its run history remain; the credential stops authenticating immediately.",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated agent",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "agent": {
+                                            "$ref": "#/components/schemas/BackupAgent"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Agent not found.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/backup-agents/{id}/runs": {
+            "get": {
+                "summary": "List runs for an agent",
+                "description": "Newest-first paginated run history. Cursor is a run UUID.",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200,
+                            "default": 20
+                        }
+                    },
+                    {
+                        "name": "cursor",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Runs",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "runs": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/components/schemas/BackupRun"
+                                            }
+                                        },
+                                        "nextCursor": {
+                                            "type": ["string", "null"]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Agent not found.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/backup-runs/{id}/verification": {
+            "post": {
+                "summary": "Record archive or restore verification",
+                "description": "Operator only. Archive verification and actual restore verification are separate states; agents cannot self-assert a restore.",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BackupVerificationInput"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Updated run",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "run": {
+                                            "$ref": "#/components/schemas/BackupRun"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid verification.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Run not found.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Run is not completed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/backup/v1/runs": {
+            "post": {
+                "summary": "Start or replay an upload run",
+                "description": "Agent credential only. `(agentId, clientRunId)` is unique; identical retries return the existing run, conflicting parameters answer 409. One uploading or finalizing run per agent.",
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BackupRunStart"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Run metadata with committed offset",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "run": {
+                                            "$ref": "#/components/schemas/BackupRun"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid metadata.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid backup credential.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Client run conflict.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/backup/v1/runs/{id}": {
+            "get": {
+                "summary": "Read an own run",
+                "description": "Agent credential only. Access to another agent run answers 404.",
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Run",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "run": {
+                                            "$ref": "#/components/schemas/BackupRun"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid backup credential.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Run not found for this agent.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
                                 }
                             }
                         }

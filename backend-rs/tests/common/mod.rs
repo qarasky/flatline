@@ -30,6 +30,7 @@ pub async fn harness() -> Harness {
         web_dist: dir.path().join("no-web-build"),
         public_url: None,
         agent_dir: dir.path().join("agent"),
+        backup_dir: None,
         heartbeat_retention_days: 0,
     };
     let pool = db::connect(&config.data_dir).await.unwrap();
@@ -49,12 +50,19 @@ pub async fn harness() -> Harness {
         flatline_backend::metrics::Metrics::new(pool.clone(), std::sync::Arc::clone(&events));
     let status_page_secret =
         flatline_backend::status_pages::ensure_secret(&config.data_dir).unwrap();
+    let config = std::sync::Arc::new(config);
+    let backups = flatline_backend::backups::Backups::new(
+        pool.clone(),
+        std::sync::Arc::clone(&config),
+        std::sync::Arc::clone(&events),
+    );
     let state = AppState {
         pool: pool.clone(),
-        config: std::sync::Arc::new(config),
+        config,
         events,
         engine,
         metrics,
+        backups,
         status_page_secret: std::sync::Arc::new(status_page_secret),
     };
 
