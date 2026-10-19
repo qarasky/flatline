@@ -2,7 +2,8 @@
 
 Day-two work: keeping the instance healthy, moving credentials, and getting out
 of trouble. Deployment mechanics live in [deployment](deployment.md); the board's
-own semantics live in [superboard](superboard.md).
+own semantics live in [superboard](superboard.md). Named backup agents and
+their offline restore procedure live in [backup-agent](backup-agent.md).
 
 ## Health checks
 
@@ -60,6 +61,8 @@ person holding it.
 | Integration tokens | `tokens` table, hashes only                    | Mint a named token in the Agents panel; disable or delete it to revoke. Plaintext is shown once.                                  |
 | Provisioning token | `/home/office/flatline/provisioning-token.txt` | Disable the key in the Agents panel, mint a replacement, update that file and any shared URL.                                     |
 | Push tokens        | `monitors.push_token`, one per agent host      | Rotate in the monitor form (or `PATCH` the monitor), then update `/etc/superboard/config.json` on the host and restart the agent. |
+| Backup credentials | `backup_agents.token_hash`, one per agent name | Rotate through `POST /api/v1/backup-agents/{id}/rotate-token`, then update the agent's token file.                                |
+| Backup storage     | `/mnt/mirror/flatline-backups`                 | Enable only with `docker/compose.backups.yaml` after checking the mirror marker and free space.                                   |
 
 Rules that keep this manageable:
 

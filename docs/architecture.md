@@ -7,6 +7,7 @@ Flatline is three programs and one database.
 | Backend              | Rust         | The Flatline server               | Check engine, REST API, storage, alerts, and serving the built web app.                                                |
 | Dashboard            | React + Vite | Build output in the backend image | Operator dashboard, Superboard, public status pages. Runs in the browser; in development it is a separate Vite server. |
 | Agent (`superboard`) | Go           | Each monitored host               | Collects telemetry and pushes it outbound. Never listens on a port.                                                    |
+| Backup agent         | Go           | Selected hosts                    | Exports PostgreSQL/Garage, encrypts locally, uploads resumable chunks. One process per named instance.                 |
 
 There is no message broker, no Redis and no second service: one backend process
 owns the SQLite database, the in-memory live cache and the HTTP surface.
@@ -45,7 +46,9 @@ agent ──POST /api/push──┘   (outbound only, per-monitor push token)
 ## Data
 
 SQLite, opened and migrated at startup (`sqlx::migrate!`, migrations in
-`backend-rs/migrations/`). Migrations are additive and ordered; the database
+`backend-rs/migrations/`). Backup metadata is stored in the same SQLite
+database; encrypted bundles live under `FLATLINE_BACKUP_DIR`, never in the
+application data directory. Migrations are additive and ordered; the database
 records which have been applied, and the backend refuses to start if the
 database contains a migration it does not know — so a code rollback also needs
 the matching database (see [operations](operations.md)).

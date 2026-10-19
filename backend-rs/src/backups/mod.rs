@@ -963,7 +963,16 @@ impl Backups {
         if rows.is_empty() {
             return Ok(());
         }
-        let storage = self.storage()?;
+        // Storage being disabled must never take monitoring down; leave the
+        // rows for maintenance once an operator provisions the root.
+        let storage = match self.storage() {
+            Ok(storage) => storage,
+            Err(Error::Unavailable(message)) => {
+                tracing::warn!("backup reconciliation deferred: {message}");
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
 
         for row in rows {
             match row.status.as_str() {

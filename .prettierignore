@@ -17,3 +17,6 @@ package-lock.json
 # Go backup agent build artifacts.
 backup-agent/flatline-backup
 backup-agent/flatline-backup-*
+
+# Agent execution ledgers are scratch, not repository documentation.
+.superpowers

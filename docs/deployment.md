@@ -174,3 +174,27 @@ Each release is also recorded in [history](history.md) with the defects it fixed
   a couple of minutes.
 - The old `uptime-kuma` container is stopped but not removed, and its data
   directory is untouched. It is no longer a rollback path.
+
+## Backup storage (opt-in)
+
+Named backup agents need a dedicated mount, separate from `data-rust/`:
+
+```bash
+sudo install -d -m 0700 /mnt/mirror/flatline-backups
+uuidgen | tr 'A-Z' 'a-z' | sudo tee /mnt/mirror/flatline-backups/.flatline-backup-storage >/dev/null
+sudo chmod 0600 /mnt/mirror/flatline-backups/.flatline-backup-storage
+```
+
+Then start the stack with the opt-in override:
+
+```bash
+cd /home/office/flatline
+sudo docker compose -f compose.rust.yaml -f docker/compose.backups.yaml up -d
+```
+
+The override sets `FLATLINE_BACKUP_DIR=/app/backups` and refuses to create the
+host path. Confirm `/mnt/mirror` is the RAID1 mount (`findmnt /mnt/mirror`)
+before enabling it. Without the override, uploads answer 503; the service never
+falls back to the container filesystem. Migrations 0012 and 0013 are additive
+and apply at startup. Back up `data-rust/flatline.db` with SQLite's online
+backup API before the first migration.

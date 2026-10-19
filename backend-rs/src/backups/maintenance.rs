@@ -49,6 +49,33 @@ impl Backups {
             changed = true;
         }
 
+        // Failed uploads may still hold partial bytes (for example a full
+        // digest mismatch after every chunk arrived). Keep the run metadata,
+        // drop its bytes and chunk ledger so the spool cannot leak.
+        let failed: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, agent_id FROM backup_runs
+              WHERE status = 'failed' AND received_bytes > 0",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        if let Some(storage) = self.storage().ok() {
+            for (id, agent_id) in &failed {
+                if let Err(error) = storage.delete_run(agent_id, id) {
+                    tracing::warn!("failed-run cleanup of {id} failed: {error}");
+                    continue;
+                }
+                sqlx::query("DELETE FROM backup_run_chunks WHERE run_id = ?")
+                    .bind(id)
+                    .execute(&self.pool)
+                    .await?;
+                sqlx::query("UPDATE backup_runs SET received_bytes = 0 WHERE id = ?")
+                    .bind(id)
+                    .execute(&self.pool)
+                    .await?;
+                changed = true;
+            }
+        }
+
         let agents: Vec<(String, i64)> =
             sqlx::query_as("SELECT id, retention_count FROM backup_agents")
                 .fetch_all(&self.pool)

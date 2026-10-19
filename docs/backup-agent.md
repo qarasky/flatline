@@ -52,8 +52,7 @@ systemctl daemon-reload
 }
 ```
 
-The config, token file, S3 credentials file and age identity must be mode
-0600. The state directory must end with the instance name and be mode 0700.
+The config, token file, S3 credentials file and age identity must be mode 0600. The state directory must end with the instance name and be mode 0700.
 Remote endpoints require HTTPS; cleartext is accepted only for a literal
 loopback address. Database names and bucket names must be unique within one
 instance so restore targets are unambiguous.
@@ -159,3 +158,24 @@ explicit globals target:
 flatline-backup restore-globals --bundle bundle.age --identity-file identity.txt \
   --target-config restore-target.json
 ```
+
+## Packaging
+
+The backend image builds both Linux backup binaries under `/app/backup-agent`:
+
+- `flatline-backup-linux-amd64`
+- `flatline-backup-linux-arm64`
+- `VERSION-BACKUP`
+- `sha256sums-backup`
+
+These are separate from the telemetry agent's `/app/agent` files. The opt-in
+`docker/compose.backups.yaml` override sets `FLATLINE_BACKUP_DIR=/app/backups`
+and bind-mounts `${FLATLINE_BACKUP_HOST_DIR:-/mnt/mirror/flatline-backups}`
+with `create_host_path: false`. Without the override, backup storage stays
+disabled and upload starts answer 503. Local `dev.sh` creates a disposable
+`.dev-data/backend-backups` root with its own marker; it never uses the office
+mirror.
+
+The host must already have the directory and its
+`.flatline-backup-storage` marker containing a provisioned UUID. The backend
+never creates the root or falls back to the container filesystem.

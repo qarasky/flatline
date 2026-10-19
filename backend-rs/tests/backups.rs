@@ -337,3 +337,156 @@ async fn run_metadata_validates_time_and_limits() {
     let (status, _) = register_agent(&h, agent_body("-leading", Some(monitor))).await;
     assert_eq!(status, 400);
 }
+
+#[tokio::test]
+async fn backup_mutations_publish_invalidate() {
+    use flatline_backend::backups::{storage::NoFaults, NewAgent};
+    use sha2::{Digest, Sha256};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct FakeFreeSpace;
+    impl flatline_backend::backups::storage::FreeSpace for FakeFreeSpace {
+        fn available(&self, _root: &std::path::Path) -> std::io::Result<u64> {
+            Ok(flatline_backend::backups::storage::RESERVE_BYTES + 64 * 1024 * 1024)
+        }
+    }
+
+    let h = common::harness_with_backups(
+        Arc::new(FakeFreeSpace),
+        Arc::new(NoFaults),
+    )
+    .await;
+    let mut events = h.state.events.subscribe();
+
+    async fn expect_invalidate(
+        events: &mut tokio::sync::broadcast::Receiver<serde_json::Value>,
+    ) {
+        let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .expect("a backup mutation must publish an event")
+            .expect("the event stream must stay open");
+        assert_eq!(event["type"], "invalidate", "unexpected event: {event}");
+    }
+
+    let (agent, _) = h
+        .state
+        .backups
+        .register_agent_at(
+            NewAgent {
+                name: "meks".to_string(),
+                monitor_id: None,
+                enabled: true,
+                interval_seconds: 86400,
+                retention_count: 7,
+            },
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+    expect_invalidate(&mut events).await;
+
+    h.state
+        .backups
+        .patch_agent(
+            &agent.id,
+            flatline_backend::backups::AgentPatch {
+                name: Some("meks-renamed".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    expect_invalidate(&mut events).await;
+
+    h.state.backups.rotate_token(&agent.id).await.unwrap();
+    expect_invalidate(&mut events).await;
+    h.state.backups.revoke_token(&agent.id).await.unwrap();
+    expect_invalidate(&mut events).await;
+
+    let now = chrono::Utc::now();
+    let data = b"chunk body".to_vec();
+    let digest = hex::encode(Sha256::digest(&data));
+    let run = h
+        .state
+        .backups
+        .start_run_at(
+            &agent.id,
+            StartRun {
+                client_run_id: "event-run".to_string(),
+                export_started_at: (now - chrono::Duration::minutes(10)).to_rfc3339(),
+                export_finished_at: Some(now.to_rfc3339()),
+                total_bytes: Some(data.len() as i64),
+                sha256: Some(digest.clone()),
+                source_summary: None,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    expect_invalidate(&mut events).await;
+
+    h.state
+        .backups
+        .put_chunk(
+            &agent.id,
+            &run.id,
+            0,
+            0,
+            &digest,
+            axum::body::Body::from(data),
+        )
+        .await
+        .unwrap();
+    expect_invalidate(&mut events).await;
+
+    h.state
+        .backups
+        .complete_run(&agent.id, &run.id)
+        .await
+        .unwrap();
+    expect_invalidate(&mut events).await;
+
+    h.state
+        .backups
+        .verify_run(
+            &run.id,
+            "archive",
+            "passed",
+            &chrono::Utc::now().to_rfc3339(),
+            "offline verify",
+        )
+        .await
+        .unwrap();
+    expect_invalidate(&mut events).await;
+
+    // Health transitions persist and publish an invalidation.
+    let (old, _) = h
+        .state
+        .backups
+        .register_agent_at(
+            NewAgent {
+                name: "old".to_string(),
+                monitor_id: None,
+                enabled: true,
+                interval_seconds: 86400,
+                retention_count: 7,
+            },
+            now - chrono::Duration::hours(40),
+        )
+        .await
+        .unwrap();
+    expect_invalidate(&mut events).await;
+    h.state
+        .backups
+        .evaluate_health(now.timestamp_millis())
+        .await
+        .unwrap();
+    expect_invalidate(&mut events).await;
+    let state: String = sqlx::query_scalar("SELECT alert_state FROM backup_agents WHERE id = ?")
+        .bind(&old.id)
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "overdue");
+}

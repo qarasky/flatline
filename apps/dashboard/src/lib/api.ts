@@ -141,6 +141,51 @@ export interface MonitorSummary {
     tags?: { id: number; name: string; color: string }[];
 }
 
+/** One operator-recorded archive or restore verification. */
+export interface BackupVerification {
+    runId: string;
+    status: "passed" | "failed";
+    checkedAt: string;
+    summary: string;
+}
+
+/** Backup run metadata shared with the Rust receiver and Go agent. */
+export interface BackupRunSummary {
+    id: string;
+    agentId: string;
+    clientRunId: string;
+    status: "uploading" | "finalizing" | "completed" | "failed" | "expired" | "deleting" | "pruned";
+    exportStartedAt: string;
+    exportFinishedAt: string | null;
+    createdAt: string;
+    completedAt: string | null;
+    totalBytes: number | null;
+    receivedBytes: number;
+    sha256: string | null;
+    sourceSummary: { databaseCount: number; objectCount: number; sourceBytes: number } | null;
+    errorCode: string | null;
+    archiveVerification: BackupVerification | null;
+    restoreVerification: BackupVerification | null;
+}
+
+/** A named backup agent linked (or not) to a monitor. */
+export interface BackupAgentSummary {
+    id: string;
+    name: string;
+    monitorId: number | null;
+    enabled: boolean;
+    credentialActive: boolean;
+    intervalSeconds: number;
+    retentionCount: number;
+    createdAt: string;
+    health: "disabled" | "pending" | "healthy" | "failed" | "overdue";
+    lastErrorCode: string | null;
+    latestRun: BackupRunSummary | null;
+    lastCompletedRun: BackupRunSummary | null;
+    latestArchiveVerification: BackupVerification | null;
+    latestRestoreVerification: BackupVerification | null;
+}
+
 export interface HealthSummary {
     total: number;
     up: number;
@@ -848,4 +893,50 @@ export function login(payload: { password: string }): Promise<LoginResult> {
  */
 export function fetchMe(): Promise<{ ok: true; user: AuthUser; scopes: string[] }> {
     return request("/api/v1/auth/me");
+}
+
+/**
+ * Linked backup agents for a monitor, or every agent when no id is given.
+ * @param monitorId Optional monitor link
+ * @param signal Cancels the request
+ */
+export function fetchBackupAgents(
+    monitorId?: number,
+    signal?: AbortSignal
+): Promise<{ ok: true; agents: BackupAgentSummary[]; nextCursor: string | null }> {
+    const suffix = monitorId === undefined ? "" : `?monitorId=${encodeURIComponent(String(monitorId))}`;
+    return request(`/api/v1/backup-agents${suffix}`, { signal });
+}
+
+/**
+ * Newest-first run history for one agent.
+ * @param agentId Agent UUID
+ * @param signal Cancels the request
+ */
+export function fetchBackupRuns(
+    agentId: string,
+    signal?: AbortSignal
+): Promise<{ ok: true; runs: BackupRunSummary[]; nextCursor: string | null }> {
+    return request(`/api/v1/backup-agents/${encodeURIComponent(agentId)}/runs`, { signal });
+}
+
+/**
+ * Download a completed encrypted bundle. Binary bodies are never decoded as
+ * JSON, and the operator bearer token is the only credential.
+ * @param runId Run UUID
+ * @param signal Cancels the request
+ */
+export async function downloadBackup(runId: string, signal?: AbortSignal): Promise<Blob> {
+    const token = getToken();
+    const response = await fetch(`${BASE}/api/v1/backup-runs/${encodeURIComponent(runId)}/download`, {
+        headers: {
+            Accept: "application/octet-stream",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        signal,
+    });
+    if (!response.ok) {
+        throw new ApiError(response.status, "download", response.statusText);
+    }
+    return response.blob();
 }

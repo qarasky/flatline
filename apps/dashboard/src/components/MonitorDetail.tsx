@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
-import { fetchMonitor, watchLive, type MonitorSummary } from "@/lib/api";
+import {
+    downloadBackup,
+    fetchBackupAgents,
+    fetchBackupRuns,
+    fetchMonitor,
+    watchLive,
+    type BackupAgentSummary,
+    type BackupRunSummary,
+    type MonitorSummary,
+} from "@/lib/api";
+import { BackupAgents } from "@/components/BackupAgents";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -181,9 +191,17 @@ export function MonitorDetail({
     const [beats, setBeats] = useState<HeartbeatEntry[]>([]);
     const [total, setTotal] = useState(0);
     const [error, setError] = useState<string | null>(null);
+    const [backups, setBackups] = useState<BackupAgentSummary[]>([]);
+    const [backupRuns, setBackupRuns] = useState<Record<string, BackupRunSummary[]>>({});
+    const [backupError, setBackupError] = useState<string | null>(null);
 
     useEffect(() => {
         let cancelled = false;
+        // A monitor switch must not show the previous monitor's backup rows
+        // while the new snapshot is still loading.
+        setBackups([]);
+        setBackupRuns({});
+        setBackupError(null);
 
         async function load(signal?: AbortSignal) {
             try {
@@ -198,6 +216,33 @@ export function MonitorDetail({
             } catch (e) {
                 if (!cancelled) {
                     setError(e instanceof Error ? e.message : "Could not load monitor.");
+                }
+                return;
+            }
+
+            // Backup health is a separate read: a failure here must keep the
+            // monitor details visible and report only the backup problem.
+            try {
+                const result = await fetchBackupAgents(id, signal);
+                // Bounded history: the receiver returns newest-first and the
+                // UI keeps at most five rows per agent.
+                const histories = await Promise.all(
+                    result.agents.map((agent) =>
+                        fetchBackupRuns(agent.id, signal)
+                            .then((runs) => runs.runs.slice(0, 5))
+                            .catch(() => [])
+                    )
+                );
+                if (!cancelled) {
+                    setBackups(result.agents);
+                    setBackupRuns(
+                        Object.fromEntries(result.agents.map((agent, index) => [agent.id, histories[index]]))
+                    );
+                    setBackupError(null);
+                }
+            } catch (e) {
+                if (!cancelled) {
+                    setBackupError(e instanceof Error ? `Backups unavailable: ${e.message}` : "Backups unavailable.");
                 }
             }
         }
@@ -236,6 +281,20 @@ export function MonitorDetail({
 
     if (!monitor) {
         return <p className="px-4 py-10 text-sm text-quiet">Loading…</p>;
+    }
+
+    async function handleDownload(runId: string) {
+        try {
+            const blob = await downloadBackup(runId);
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = `flatline-backup-${runId}.age`;
+            anchor.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            setBackupError(e instanceof Error ? `Download failed: ${e.message}` : "Download failed.");
+        }
     }
 
     const status = statusOf(monitor.status);
@@ -321,6 +380,8 @@ export function MonitorDetail({
                     ) : null}
                 </div>
             ) : null}
+
+            <BackupAgents agents={backups} runs={backupRuns} error={backupError} onDownload={handleDownload} />
 
             <h2 className="mb-2 text-[11px] uppercase tracking-wide text-quiet">
                 Events {downs.length > 0 ? <span className="tnum">({downs.length} outages in view)</span> : null}

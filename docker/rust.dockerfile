@@ -45,6 +45,23 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" \
     && /out/superboard-linux-amd64 version | cut -d' ' -f2 > /out/VERSION \
     && cd /out && sha256sum superboard-linux-amd64 superboard-linux-arm64 > sha256sums
 
+# Backup agent build: a separate Go module and binary family. These live
+# under /app/backup-agent and never replace the telemetry agent's VERSION or
+# sha256sums.
+FROM golang:1.27-trixie AS backup-agent
+WORKDIR /src
+
+COPY backup-agent/go.mod backup-agent/go.sum ./
+RUN go mod download
+
+COPY backup-agent ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" \
+        -o /out/flatline-backup-linux-amd64 . \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" \
+        -o /out/flatline-backup-linux-arm64 . \
+    && /out/flatline-backup-linux-amd64 version | cut -d' ' -f2 > /out/VERSION-BACKUP \
+    && cd /out && sha256sum flatline-backup-linux-amd64 flatline-backup-linux-arm64 > sha256sums-backup
+
 # Rust build. Dependencies are cached against a dummy crate so source edits
 # do not rebuild the world.
 FROM rust:1.99-trixie AS build
@@ -83,6 +100,7 @@ ENV UPTIME_KUMA_IS_CONTAINER=1 \
 COPY --from=build /app/target/release/flatline-backend /usr/local/bin/flatline-backend
 COPY --from=web /app/apps/dashboard/dist /app/dashboard
 COPY --from=agent /out /app/agent
+COPY --from=backup-agent /out /app/backup-agent
 
 RUN mkdir -p /app/data
 

@@ -11,10 +11,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::{harness, harness_with_backups, request, send};
-use flatline_backend::backups::Backups;
 use flatline_backend::backups::storage::{
     CHUNK_BYTES, FaultInjector, FaultPoint, FreeSpace, RESERVE_BYTES, STORAGE_MARKER,
 };
+use flatline_backend::backups::{Backups, StartRun};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -596,4 +596,54 @@ async fn missing_storage_never_falls_back() {
     std::fs::write(root.join(STORAGE_MARKER), marker).unwrap();
     let (status, body) = start_run(&h, &token, "restored", data.len() as u64, &digest(data)).await;
     assert_eq!(status, 200, "restored storage: {body}");
+}
+
+#[tokio::test]
+async fn reconciliation_without_storage_does_not_block_boot() {
+    // A database can contain active rows while an operator temporarily
+    // disables backup storage. Monitoring must still start.
+    let h = harness().await;
+    let (agent, _) = h
+        .state
+        .backups
+        .register_agent_at(
+            flatline_backend::backups::NewAgent {
+                name: "meks".to_string(),
+                monitor_id: None,
+                enabled: true,
+                interval_seconds: 86400,
+                retention_count: 7,
+            },
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+    let now = chrono::Utc::now();
+    h.state
+        .backups
+        .insert_run_metadata_at(
+            &agent.id,
+            StartRun {
+                client_run_id: "active-without-storage".to_string(),
+                export_started_at: (now - chrono::Duration::minutes(5)).to_rfc3339(),
+                export_finished_at: Some(now.to_rfc3339()),
+                total_bytes: Some(1024),
+                sha256: Some("a".repeat(64)),
+                source_summary: None,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+
+    h.state
+        .backups
+        .reconcile(now.timestamp_millis())
+        .await
+        .expect("disabled storage must not fail boot reconciliation");
+    let status: String = sqlx::query_scalar("SELECT status FROM backup_runs")
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "uploading");
 }

@@ -11,6 +11,7 @@ for the shape of the system, then go to whichever document matches your task.
 | [architecture.md](architecture.md)             | Understanding how the pieces fit, how data is stored and retained, and how live updates work. |
 | [api.md](api.md)                               | Calling Flatline from a script, an integration or an LLM agent.                               |
 | [agent.md](agent.md)                           | Installing, configuring, updating or debugging the `superboard` host agent.                   |
+| [backup-agent.md](backup-agent.md)             | Named encrypted backup agents: configuration, scheduling, offline verify and restore.         |
 | [superboard.md](superboard.md)                 | Changing or explaining the wall board: card anatomy, scopes, history, links.                  |
 | [dashboard.md](dashboard.md)                   | Working on the operator UI: routes, panels, groups, monitor types.                            |
 | [status-pages.md](status-pages.md)             | Publishing, theming or password-gating a public status page.                                  |
@@ -24,14 +25,15 @@ for the shape of the system, then go to whichever document matches your task.
 
 ## Where things live in the repository
 
-| Path                     | What                                                             |
-| ------------------------ | ---------------------------------------------------------------- |
-| `backend-rs/`            | The Rust backend, its migrations and its integration tests.      |
-| `backend-rs/migrations/` | Ordered SQL migrations, applied automatically at startup.        |
-| `superboard/`            | The Go agent, plus `superboard/mockagent` for local development. |
-| `apps/dashboard/`        | The React/Vite web app (dashboard, Superboard, status pages).    |
-| `packages/shared/`       | Types shared between the dashboard and its tests.                |
-| `agent-install.sh`       | The installer/updater served at `/agent/install.sh`.             |
-| `docs/provisioning.md`   | The runbook served at `/add-push-server.md`.                     |
-| `docker/`                | Dockerfiles and the office compose file.                         |
-| `dev.sh`                 | The local development stack.                                     |
+| Path                     | What                                                                        |
+| ------------------------ | --------------------------------------------------------------------------- |
+| `backend-rs/`            | The Rust backend, its migrations and its integration tests.                 |
+| `backend-rs/migrations/` | Ordered SQL migrations, applied automatically at startup.                   |
+| `superboard/`            | The Go agent, plus `superboard/mockagent` for local development.            |
+| `backup-agent/`          | The separate Go backup agent (`flatline-backup`) and its integration tests. |
+| `apps/dashboard/`        | The React/Vite web app (dashboard, Superboard, status pages).               |
+| `packages/shared/`       | Types shared between the dashboard and its tests.                           |
+| `agent-install.sh`       | The installer/updater served at `/agent/install.sh`.                        |
+| `docs/provisioning.md`   | The runbook served at `/add-push-server.md`.                                |
+| `docker/`                | Dockerfiles and the office compose file.                                    |
+| `dev.sh`                 | The local development stack.                                                |
