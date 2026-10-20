@@ -371,12 +371,16 @@ pub async fn verify_token(pool: &SqlitePool, token: &str) -> Result<TokenVerdict
     if token.starts_with(OP_TOKEN_PREFIX) {
         return Ok(TokenVerdict::Invalid);
     }
+    // Pre-split credentials are not all `flatline_`-prefixed: agents
+    // installed by the Node-era fleet carry a bare 32-hex token. Resolve any
+    // non-operator token against the agent stores before the bcrypt path, so
+    // using one for sign-in still names it as an agent token.
+    if let Some(kind) = legacy_agent_kind(pool, token).await? {
+        return Ok(TokenVerdict::Agent(kind));
+    }
+    // `flatline_` tokens are sha256-only: a miss is final, never bcrypt.
     if kind == TokenKind::Legacy {
-        let agent = legacy_agent_kind(pool, token).await?;
-        return Ok(match agent {
-            Some(kind) => TokenVerdict::Agent(kind),
-            None => TokenVerdict::Invalid,
-        });
+        return Ok(TokenVerdict::Invalid);
     }
 
     // A recently verified imported key: re-read its row by the hash it
@@ -469,6 +473,12 @@ pub async fn legacy_agent_kind(
         return Ok(Some(TokenKind::PushAgent));
     }
 
+    // Every backup credential ever minted was prefixed (`flatline_backup_`
+    // then `flatline_agent_backup_`), so a bare token cannot be one. This
+    // also keeps the unindexed token_hash scan off the junk-token path.
+    if !token.starts_with(LEGACY_TOKEN_PREFIX) {
+        return Ok(None);
+    }
     let backup: Option<(String,)> =
         sqlx::query_as("SELECT id FROM backup_agents WHERE token_hash = ? LIMIT 1")
             .bind(hash_token(token))

@@ -231,7 +231,23 @@ pub async fn require_agent(
                 }
             }
         }
-        crate::auth::TokenKind::BackupAgent | crate::auth::TokenKind::Other => {}
+        crate::auth::TokenKind::Other => {
+            // A bare 32-hex credential can be a Node-era push token.
+            match crate::auth::legacy_agent_kind(&state.pool, token).await {
+                Ok(Some(crate::auth::TokenKind::PushAgent)) => {
+                    return crate::auth::push_token_on_backup_agent_api();
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::error!("backup agent auth: token kind check: {error}");
+                    return api_error(BackupError::Unavailable(
+                        "credential check is temporarily unavailable".to_string(),
+                    ))
+                    .into_response();
+                }
+            }
+        }
+        crate::auth::TokenKind::BackupAgent => {}
     }
 
     match backups::agents::authenticate(&state.pool, token).await {

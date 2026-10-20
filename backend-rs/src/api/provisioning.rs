@@ -209,7 +209,12 @@ struct MonitorIdentity {
 
 impl Caller {
     fn token_kind_prefix(&self) -> &'static str {
-        self.prefix_kind.prefix()
+        match self.prefix_kind {
+            // Empty prefix: the credential predates prefixes, so say that
+            // instead of rendering nothing.
+            crate::auth::TokenKind::Other => "none (pre-2026 bare token)",
+            kind => kind.prefix(),
+        }
     }
 
     fn monitor_id(&self) -> String {

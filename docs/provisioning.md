@@ -11,7 +11,7 @@
 
 - **Flatline origin**: {{ORIGIN}}
 - **Supplied credential**: `{{TOKEN}}`
-- **Credential kind**: `{{TOKEN_KIND}}` (`{{TOKEN_PREFIX}}...`)
+- **Credential kind**: `{{TOKEN_KIND}}` (prefix `{{TOKEN_PREFIX}}`)
 - **Host push monitor**: {{MONITOR_ID}} (`{{MONITOR_NAME}}`)
 - **Available host-agent version**: {{AGENT_VERSION}}
 - **Source repository**: https://github.com/qarasky/flatline

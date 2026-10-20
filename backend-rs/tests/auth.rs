@@ -306,3 +306,50 @@ async fn agent_families_do_not_cross_endpoints() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body["error"], "backup_agent_token_on_metric_agent_api");
 }
+
+#[tokio::test]
+async fn bare_pre_2026_push_tokens_are_recognised_as_agent_tokens() {
+    let h = harness().await;
+    let (status, body) = send(
+        &h.app,
+        request(
+            "POST",
+            "/api/v1/monitors",
+            Some(&h.token),
+            Some(json!({ "name": "bare-edge", "type": "push" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let id = body["monitor"]["id"].as_i64().unwrap();
+
+    // Node-era agents carry a bare 32-hex token with no prefix at all.
+    let bare = "94df87289c677ce82b1d4850d8e1a1b2";
+    sqlx::query("UPDATE monitors SET push_token = ? WHERE id = ?")
+        .bind(bare)
+        .bind(id)
+        .execute(&h.pool)
+        .await
+        .unwrap();
+
+    let (status, _) = send(
+        &h.app,
+        request("GET", &format!("/api/push/{bare}"), None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = send(
+        &h.app,
+        request(
+            "POST",
+            "/api/v1/auth/login",
+            None,
+            Some(json!({ "password": bare })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"], "agent_token_on_operator_api");
+    assert_eq!(body["tokenKind"], "push_agent");
+}
