@@ -74,8 +74,31 @@ does. A separate development-host test may use a generated identity.
 
 A pending encrypted bundle is retained until the server reports completion;
 the next run retries it without re-exporting. Failed exports are reported with
-a bounded safe error code (never stderr). Temporary network failures retry
-with bounded backoff; authentication failures stop immediately.
+a bounded safe error code (never stderr). Temporary network failures, 408,
+429 and 5xx (including 503 when the office cannot check the credential)
+retry with bounded backoff and honour `Retry-After`; 401/403 stop
+immediately.
+
+Undelivered bundles are reported too, under a derived clientRunId per bundle
+and code, so the bundle's own server run stays resumable: `upload_failed`, or
+`office_storage_full` for a 507. A later delivery of the same bundle clears
+the failure.
+
+`POST /api/backup/v1/runs` answers 409 with a machine-readable `error`:
+
+- `active_run`: another run of this agent is still uploading. The pending
+  bundle is kept. If that run has a different clientRunId, this instance no
+  longer holds its bundle, so the agent abandons it once
+  (`POST /api/backup/v1/runs/{id}/abandon`) and retries; if the run is busy
+  the next scheduled attempt tries again.
+- `params_conflict` / `run_terminal`: the bundle can never be delivered under
+  its clientRunId. Only these move it to `quarantine/` and start a fresh
+  export.
+
+`quarantine/` keeps at most two bundles and at most one `spoolMaxBytes` of
+data (oldest pruned first, on every run), and every quarantine is reported as
+`bundle_quarantined`, which the office alerts on. Worst-case local disk use is
+therefore two spool caps.
 
 ## One-shot service
 
@@ -95,9 +118,9 @@ upload of a maximum-size bundle; a oneshot otherwise has no start timeout, and
 a hung run would keep the timer from ever firing again.
 
 The timer uses `OnCalendar=*-*-* 02:00:00 Asia/Almaty`, a 600-second
-randomized delay, `Persistent=true` and `WantedBy=timers.target`. A successful oneshot is not restarted;
-a failed source export or upload retries after 30 minutes and reuses any
-pending encrypted bundle first.
+randomized delay, `Persistent=true` and `WantedBy=timers.target`. A
+successful oneshot is not restarted; a failed source export or upload retries
+after 30 minutes and reuses any pending encrypted bundle first.
 
 ## Consistency of one bundle
 
@@ -125,10 +148,41 @@ next UTC day. Retrying a pending bundle does not count.
 At most one pending encrypted bundle exists per instance. Local spool and
 bundle caps default to 8 GiB, including concurrently retained intermediate
 files. Upload chunks are at most 8 MiB. The office receiver keeps 100 GiB free
-and seven completed recovery points per agent.
+and `retentionCount` (default seven) completed recovery points per agent, plus
+the latest run with a passed restore test and the latest with a passed archive
+verification, whatever their age.
 
-Recovery documentation and the exact restore procedure arrive with the
-restore command; transfer verification is not a restore test.
+Transfer verification (the receiver's full SHA-256 check at completion) is not
+a restore test; see [Recovery](#recovery) for the restore procedure.
+
+## Receiver behaviour
+
+- Chunk bodies are read with a 30-second idle and a five-minute total
+  deadline (408), at most four at a time; waiting more than 30 seconds for a
+  slot or for the per-run lock answers 503 `busy` with `Retry-After`. Accepted
+  connections use TCP keepalive.
+- Hashing, fsync, rename and unlink run on the blocking thread pool. The
+  bundle is hashed once at completion; boot reconciliation of an interrupted
+  finalization hashes it once too.
+- The chunk, completion and download routes form their own router group
+  (`api::backups::transfer_routes`). A global request timeout must exempt that
+  group or give it a budget of several minutes: completion hashes up to
+  8 GiB.
+- Alerts go to the Telegram notifications linked to the agent's monitor. An
+  agent without a monitor (never linked, or its monitor was deleted) or whose
+  monitor has no Telegram link alerts the default notifications instead.
+- Backup changes publish a `{"type":"backups"}` live event, not the generic
+  `invalidate`; the dashboard reloads backup rows only on that event, on
+  mount and after a reconnect.
+
+## Downloads
+
+The dashboard asks for `POST /api/v1/backup-runs/{id}/download-ticket` and
+navigates to the returned `/api/v1/backup-downloads/{ticket}` URL, so the
+browser streams the bundle to disk. A ticket names one completed run,
+expires after two minutes, works once and exists only in memory (a restart
+voids it). Scripts can still use `GET /api/v1/backup-runs/{id}/download` with
+the operator `Authorization` header.
 
 ## Recovery
 
