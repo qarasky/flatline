@@ -14,8 +14,8 @@ in the dashboard app and are served by the backend on the same origin, under
 
 `GET /api/status-page/resolve-host?host=…` maps a hostname (with or without
 port) to a page slug; the SPA uses it on a branded domain so one deployment can
-serve several client domains. Unknown hosts match nothing rather than falling
-back to a default page.
+serve several client domains. Unknown hosts — and hosts mapped to an unpublished
+page — match nothing rather than falling back to a default page.
 
 ## Reading a page (public, no token)
 
@@ -30,6 +30,20 @@ back to a default page.
 These endpoints are public by design: a status page exists to be read by people
 who are not operators. They expose status, latency and uptime — **not** the
 operator's message text, which is stripped from public heartbeat rows.
+
+Only **published** pages are public. An unpublished page answers `404` on every
+endpoint above and on the unlock route, exactly like a slug that does not exist,
+so its existence is not confirmed. A request with a valid operator bearer token
+(`Authorization: Bearer …`) still gets the data, for previews and tooling; the
+dashboard's `/status/:slug` view sends no token, so it shows published pages
+only.
+
+Responses are cached for 10 seconds (pages refresh every 30), so a new heartbeat
+or an edited title can take that long to appear. The published flag and the
+password are checked on every request: unpublishing or locking a page applies
+immediately. The status-page and badge routes share an instance-wide limit of 16
+requests in flight; a flood is answered `429` with `Retry-After` rather than
+starving the database.
 
 ## Password gate
 
@@ -65,9 +79,11 @@ a client's brand colour can never be mistaken for a status.
 
 Per-monitor SVG badges are served from `/api/badge/{id}/{metric}`, where metric
 is `status`, `uptime`, `ping`, `response` or `avg-response`; each accepts an
-optional `/{duration}`. A monitor that is not on a public group renders `N/A`
-rather than leaking private status. A non-numeric id answers a JSON `403`, like
-the rest of the legacy badge surface.
+optional `/{duration}`. A monitor that is not on a public group of a published
+page renders `N/A` rather than leaking private status. A non-numeric id answers
+a JSON `403`, like the rest of the legacy badge surface; an invalid or absurdly
+large duration answers `400`, and long windows are clamped to the heartbeat
+retention.
 
 ## Data model
 
