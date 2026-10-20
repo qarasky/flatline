@@ -795,3 +795,49 @@ func TestQuarantineIsCappedAndReported(t *testing.T) {
 		t.Fatalf("byte cap must keep only the newest entry, kept %d", len(entries))
 	}
 }
+
+// Review M1: the backend answers 503 + Retry-After when it cannot check a
+// credential. The agent retries it (honouring Retry-After) instead of
+// stopping as it does for 401.
+func TestUnavailableCredentialCheckIsRetried(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			w.Header().Set("Retry-After", "7")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"ok":false,"error":"unavailable","message":"credential check is temporarily unavailable"}`))
+			return
+		}
+		writeRun(w, "run-1", "completed", 16, 16)
+	}))
+	t.Cleanup(server.Close)
+	client := testUploadClient(t, server.URL)
+	var slept []time.Duration
+	client.retry.Sleep = func(ctx context.Context, duration time.Duration) error {
+		slept = append(slept, duration)
+		return nil
+	}
+	run, err := uploadBundleWith(context.Background(), client, makeBundle(t, 16))
+	if err != nil {
+		t.Fatalf("503 must be retried: %v", err)
+	}
+	if run.Status != "completed" || calls != 3 {
+		t.Fatalf("status=%s calls=%d", run.Status, calls)
+	}
+	if len(slept) != 2 || slept[0] != 7*time.Second {
+		t.Fatalf("Retry-After was not honoured: %v", slept)
+	}
+
+	// Exhausted 503s stay a retryable failure, never a credential error.
+	always := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"ok":false,"error":"unavailable"}`, http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(always.Close)
+	_, err = uploadBundleWith(context.Background(), testUploadClient(t, always.URL), makeBundle(t, 16))
+	var permanent *permanentError
+	if !errors.As(err, &permanent) || permanent.status != http.StatusServiceUnavailable || !reportRetryable(err) {
+		t.Fatalf("exhausted 503 = %v", err)
+	}
+}

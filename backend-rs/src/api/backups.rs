@@ -186,9 +186,14 @@ pub async fn require_agent(
             next.run(request).await
         }
         Ok(None) => crate::auth::unauthorized(),
+        // A database problem says nothing about the credential. Answering
+        // 401 would make the agent stop as if its token were revoked.
         Err(error) => {
             tracing::error!("backup agent auth failed: {error}");
-            crate::auth::unauthorized()
+            api_error(BackupError::Unavailable(
+                "credential check is temporarily unavailable".to_string(),
+            ))
+            .into_response()
         }
     }
 }

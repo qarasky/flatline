@@ -490,3 +490,27 @@ async fn backup_mutations_publish_invalidate() {
         .unwrap();
     assert_eq!(state, "overdue");
 }
+
+/// Review M1: a database error while checking an agent credential answered
+/// 401, which the Go agent treats as a revoked token. It must be a
+/// retryable 503 with Retry-After.
+#[tokio::test]
+async fn agent_auth_database_errors_are_retryable() {
+    let h = common::harness().await;
+    let (status, body) = register_agent(&h, agent_body("meks", None)).await;
+    assert_eq!(status, 201, "{body}");
+    let token = body["token"].as_str().unwrap().to_string();
+
+    h.pool.close().await;
+    let response = tower::ServiceExt::oneshot(
+        h.app.clone(),
+        common::request("GET", "/api/backup/v1/runs/unknown", Some(&token), None),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), 503);
+    assert!(
+        response.headers().contains_key("retry-after"),
+        "503 must tell the agent when to retry"
+    );
+}
