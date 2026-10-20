@@ -146,10 +146,13 @@ impl Metrics {
     /// minutes after startup and daily at 04:32.
     ///
     /// `heartbeat_retention_days` comes from the configuration; 0 keeps
-    /// heartbeats forever.
-    pub fn start_jobs(self: &Arc<Self>, heartbeat_retention_days: i64) {
+    /// heartbeats forever. The handles let shutdown stop the jobs.
+    pub fn start_jobs(
+        self: &Arc<Self>,
+        heartbeat_retention_days: i64,
+    ) -> Vec<tokio::task::JoinHandle<()>> {
         let metrics = Arc::clone(self);
-        tokio::spawn(async move {
+        let rollups = tokio::spawn(async move {
             loop {
                 sleep_until(next_hourly_at(Utc::now(), 12)).await;
                 match rollup::rollup_metrics(&metrics.pool, Utc::now().timestamp_millis()).await {
@@ -182,7 +185,7 @@ impl Metrics {
         // loop's first beat for the write lock — then daily just after the
         // raw metrics prune.
         let metrics = Arc::clone(self);
-        tokio::spawn(async move {
+        let retention = tokio::spawn(async move {
             tokio::time::sleep(HEARTBEAT_PRUNE_BOOT_DELAY).await;
             loop {
                 match crate::heartbeats::prune(&metrics.pool, heartbeat_retention_days).await {
@@ -197,6 +200,7 @@ impl Metrics {
                 sleep_until(next_daily_at(Utc::now(), 4, 32)).await;
             }
         });
+        vec![rollups, retention]
     }
 }
 

@@ -85,6 +85,7 @@ impl IntoResponse for ApiError {
 /// fallback answers the remaining GET/HEAD paths when a build exists.
 pub fn router(state: AppState) -> Router {
     let public = Router::new()
+        .route("/healthz", get(healthz))
         .route("/api/v1/auth/setup", get(auth::setup_status))
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/openapi.json", get(openapi::document))
@@ -229,8 +230,8 @@ struct HealthRow {
 ///
 /// Shape matches the Node backend: `{ok, health: {total, up, down, pending,
 /// maintenance, paused, downMonitors, status}}`.
-async fn health(State(state): State<AppState>) -> impl IntoResponse {
-    let rows: Vec<HealthRow> = sqlx::query_as(
+async fn health(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let rows: Vec<HealthRow> = match sqlx::query_as(
         "SELECT m.id, m.active, m.name, m.url,
                 (SELECT h.status FROM heartbeats h
                   WHERE h.monitor_id = m.id
@@ -239,7 +240,18 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     )
     .fetch_all(&state.pool)
     .await
-    .unwrap_or_default();
+    {
+        Ok(rows) => rows,
+        // A9: a database failure used to read as an empty, healthy fleet.
+        Err(error) => {
+            tracing::error!("health: {error}");
+            return Err(ApiError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                error: "unavailable",
+                message: "Database unavailable.".to_string(),
+            });
+        }
+    };
 
     let mut total = 0;
     let mut up = 0;
@@ -267,7 +279,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         }
     }
 
-    Json(json!({
+    Ok(Json(json!({
         "ok": true,
         "health": {
             "total": total,
@@ -279,7 +291,58 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
             "downMonitors": down_monitors,
             "status": if down > 0 { "down" } else { "up" },
         }
-    }))
+    })))
+}
+
+/// Bound on the `/healthz` database probe.
+const HEALTHZ_DB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// `GET /healthz`: unauthenticated liveness for the container healthcheck.
+///
+/// 200 `{"status":"ok",...}` only when `SELECT 1` answers within 2 s and
+/// the engine is running with a fresh watchdog tick (the watchdog also
+/// supervises the check loops); otherwise 503 with the reason. Cheap: one
+/// trivial query, no table reads, nothing about individual monitors.
+async fn healthz(State(state): State<AppState>) -> Response {
+    let started = std::time::Instant::now();
+    let probe = tokio::time::timeout(
+        HEALTHZ_DB_TIMEOUT,
+        sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&state.pool),
+    )
+    .await;
+    let db = match probe {
+        Ok(Ok(1)) => Ok(()),
+        Ok(Ok(_)) => Err("database probe returned an unexpected value"),
+        Ok(Err(_)) => Err("database error"),
+        Err(_) => Err("database probe timed out"),
+    };
+    let db_ms = started.elapsed().as_millis() as u64;
+
+    let liveness = state.engine.liveness();
+    let engine = liveness.check();
+    let body = |status: &str, reason: Option<&str>| {
+        json!({
+            "status": status,
+            "reason": reason,
+            "db": { "ok": db.is_ok(), "latencyMs": db_ms },
+            "engine": {
+                "ok": engine.is_ok(),
+                "running": liveness.running,
+                "tickAgeMs": liveness.tick_age.map(|age| age.as_millis() as u64),
+                "loops": liveness.loops,
+                "stalled": liveness.stalled,
+            },
+        })
+    };
+
+    match db.and(engine) {
+        Ok(()) => (StatusCode::OK, Json(body("ok", None))).into_response(),
+        Err(reason) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(body("unavailable", Some(reason))),
+        )
+            .into_response(),
+    }
 }
 
 /// Types and writable fields, as the monitor form expects.

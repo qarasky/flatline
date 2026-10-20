@@ -174,9 +174,21 @@ Outside `/api/v1`, authenticated by an operator token or a push token.
 
 | Method    | Path                    | Purpose                                           |
 | --------- | ----------------------- | ------------------------------------------------- |
+| GET       | `/healthz`              | Liveness, no token (see below)                    |
 | GET       | `/api/v1/health`        | Totals: up/down/pending/paused and `downMonitors` |
 | GET       | `/api/v1/events`        | SSE stream; `?metrics=0` drops metrics events     |
 | GET, POST | `/api/push/{pushToken}` | Agent heartbeat plus optional metrics             |
+
+`GET /healthz` needs no token and is cheap (one `SELECT 1`, no table reads). It
+answers `200` with `{"status":"ok","reason":null,"db":{...},"engine":{...}}`
+only when the database answers within 2 s and the check engine is running with
+a watchdog tick younger than 30 s; otherwise `503` with `"status":"unavailable"`
+and a `reason` (`database error`, `database probe timed out`, `engine not
+running`, `engine watchdog stalled`). `engine` reports `running`, `tickAgeMs`,
+`loops` and `stalled`. `/api/v1/health` answers `503`
+(`{"ok":false,"error":"unavailable"}`) when its query fails, instead of an
+empty fleet reported as up. SSE streams end when the server shuts down; clients
+reconnect as they do after the 15-minute lifetime.
 
 ## The push contract
 

@@ -6,15 +6,15 @@ own semantics live in [superboard](superboard.md).
 
 ## Health checks
 
-| Check         | Command / endpoint                                                  | Healthy means                                               |
-| ------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Container     | `sudo docker compose -f /home/office/flatline/compose.rust.yaml ps` | `healthy`, low restart count.                               |
-| Backend alive | `GET /healthz` (no token)                                           | 200: database and check engine healthy; 503 otherwise.      |
-| Backend up    | `GET /api/v1/auth/setup` (no token)                                 | 200 (static: proves the process answers, nothing more).     |
-| Fleet summary | `GET /api/v1/health` (token)                                        | `total` matches the expected count, `down` matches reality. |
-| Public origin | `curl -o /dev/null -w '%{http_code}' https://<origin>/`             | 200 through the tunnel.                                     |
-| Agents        | newest telemetry per push monitor                                   | seconds old, not minutes.                                   |
-| Local dev     | `./dev.sh status`                                                   | backend 200, dashboard 200.                                 |
+| Check         | Command / endpoint                                                  | Healthy means                                                                                                                         |
+| ------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Container     | `sudo docker compose -f /home/office/flatline/compose.rust.yaml ps` | `healthy`, low restart count.                                                                                                         |
+| Backend alive | `GET /healthz` (no token)                                           | 200 `{"status":"ok"}`: database answers within 2 s and the check engine's watchdog ticked within 30 s. 503 with a `reason` otherwise. |
+| Backend up    | `GET /api/v1/auth/setup` (no token)                                 | 200 (static: proves the process answers, nothing more).                                                                               |
+| Fleet summary | `GET /api/v1/health` (token)                                        | `total` matches the expected count, `down` matches reality; 503 when the database fails.                                              |
+| Public origin | `curl -o /dev/null -w '%{http_code}' https://<origin>/`             | 200 through the tunnel.                                                                                                               |
+| Agents        | newest telemetry per push monitor                                   | seconds old, not minutes.                                                                                                             |
+| Local dev     | `./dev.sh status`                                                   | backend 200, dashboard 200.                                                                                                           |
 
 The dashboard itself is the best health signal: a fleet-wide problem shows as a
 wall of stale cards, and `Agent: …` lines surface the host-side cause.
@@ -179,6 +179,9 @@ curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
 | Database growing                         | Expected: 30 days of 30-second samples plus two years of hourly rollups. Monitor `du -sh data-rust/`; a sudden jump usually means a monitor was added, not a leak. The `-wal` file is capped at ~64 MB after checkpoints. |
 | Agents log `503` from the push endpoint  | The database refused a write (lock timeout, disk full). Agents keep the samples and retry after `Retry-After`; check `df`, then the backend log for the `push:` error. Nothing is lost while the agent buffer has room.   |
 | Container `unhealthy`                    | `curl -sS localhost:3001/healthz` says which part failed (database or engine); then the backend log. Docker will not restart it on its own — see [watching the watcher](#watching-the-watcher).                           |
+| `/healthz` answers 503                   | The `reason` field: `database error` / `database probe timed out` (lock contention or a full disk), `engine watchdog stalled` (the runtime is wedged; the logs say which loop).                                           |
+| Alerts arrive as one summary             | Expected under pressure: when four or more alerts wait for one chat, they are coalesced into a single message listing each in order. `notify:` log lines show rate limiting (`429`) and drops.                            |
+| `engine: … panicked` in the logs         | A check loop crashed and was respawned with backoff; the monitor keeps being checked. Report the message — it is a bug.                                                                                                   |
 | Backend will not start after a downgrade | The database has newer migrations than the binary. Restore the matching backup.                                                                                                                                           |
 
 ## Logs

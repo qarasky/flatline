@@ -6,6 +6,9 @@
 //! — instead of the old aggregate tables: the deliberate simplification the
 //! new schema allows.
 
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, LazyLock, Mutex};
+
 use chrono::{Duration as ChronoDuration, NaiveDateTime, Utc};
 use sqlx::SqlitePool;
 
@@ -63,9 +66,17 @@ pub fn parse_time(raw: &str) -> Option<NaiveDateTime> {
 }
 
 /// Milliseconds since a stored time; `None` when it cannot be parsed.
+///
+/// Negative when the stored time is in the future (a backwards clock step);
+/// callers that schedule from it must clamp (E6).
 pub fn millis_since(raw: &str) -> Option<i64> {
     let then = parse_time(raw)?;
     Some((Utc::now().naive_utc() - then).num_milliseconds())
+}
+
+/// A stored time as epoch milliseconds (UTC).
+pub fn time_ms(raw: &str) -> Option<i64> {
+    parse_time(raw).map(|time| time.and_utc().timestamp_millis())
 }
 
 /// Latest heartbeat for a monitor.
@@ -252,6 +263,8 @@ pub struct Recorded {
     pub beat: Beat,
     pub is_first: bool,
     pub previous_status: Option<i64>,
+    /// Id of the beat that was latest before this one (uptime cache check).
+    pub previous_id: Option<i64>,
     pub notify: bool,
 }
 
@@ -261,6 +274,13 @@ pub struct Recorded {
 /// the retry walk (the agent pushed `status=down` on purpose).
 /// `duration_override` lets the push-timeout path record the observed
 /// silence length, exactly like the Node check loop does.
+///
+/// Serialized per monitor (E2): the push route and the push watcher (or two
+/// concurrent pushes) used to read the same `latest()` and both insert a
+/// transition — duplicate pages and a corrupted retry walk. Callers that
+/// need more work under the same lock (the engine publishes and enqueues
+/// the alert before releasing it, so alerts keep transition order) take
+/// [`lock_monitor`] themselves and call [`record_locked`].
 pub async fn record(
     pool: &SqlitePool,
     monitor: &Monitor,
@@ -270,9 +290,68 @@ pub async fn record(
     explicit_down: bool,
     duration_override: Option<i64>,
 ) -> sqlx::Result<Recorded> {
+    let guard = lock_monitor(monitor.id).await;
+    record_locked(
+        &guard,
+        pool,
+        monitor,
+        requested,
+        ping,
+        msg,
+        explicit_down,
+        duration_override,
+    )
+    .await
+}
+
+/// Held while a monitor's heartbeat state is read and written.
+pub struct MonitorGuard {
+    monitor_id: i64,
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl MonitorGuard {
+    pub fn monitor_id(&self) -> i64 {
+        self.monitor_id
+    }
+}
+
+/// One async lock per monitor id, process-wide.
+///
+/// The map holds one small entry per monitor id ever recorded; ids are not
+/// reused (`AUTOINCREMENT`), so it is bounded by the number of monitors.
+static RECORD_LOCKS: LazyLock<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Take the per-monitor heartbeat lock (see [`record`]).
+pub async fn lock_monitor(monitor_id: i64) -> MonitorGuard {
+    let lock = {
+        let mut locks = RECORD_LOCKS.lock().unwrap();
+        Arc::clone(locks.entry(monitor_id).or_default())
+    };
+    MonitorGuard {
+        monitor_id,
+        _guard: lock.lock_owned().await,
+    }
+}
+
+/// [`record`] for a caller that already holds the monitor's lock.
+#[allow(clippy::too_many_arguments)]
+pub async fn record_locked(
+    guard: &MonitorGuard,
+    pool: &SqlitePool,
+    monitor: &Monitor,
+    requested: i64,
+    ping: Option<f64>,
+    msg: &str,
+    explicit_down: bool,
+    duration_override: Option<i64>,
+) -> sqlx::Result<Recorded> {
+    debug_assert_eq!(guard.monitor_id, monitor.id, "lock for the wrong monitor");
     let previous = latest(pool, monitor.id).await?;
     let is_first = previous.is_none();
     let previous_status = previous.as_ref().map(|beat| beat.status);
+    let previous_id = previous.as_ref().map(|beat| beat.id);
 
     let (status, retries) = determine_status(
         requested,
@@ -339,6 +418,7 @@ pub async fn record(
         beat,
         is_first,
         previous_status,
+        previous_id,
         notify,
     })
 }
@@ -472,6 +552,166 @@ pub async fn uptime_windows(pool: &SqlitePool, monitor_id: i64) -> sqlx::Result<
         week: ratio(up_week, down_week),
         month: ratio(up_month, down_month),
     })
+}
+
+/// The longest SPA window, in milliseconds.
+const MONTH_MS: i64 = 30 * 24 * 3600 * 1000;
+const WEEK_MS: i64 = 7 * 24 * 3600 * 1000;
+const DAY_MS: i64 = 24 * 3600 * 1000;
+
+/// One status run: the status that holds from `start_ms` until the next
+/// run starts (or until now for the newest run).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Run {
+    pub start_ms: i64,
+    pub status: i64,
+}
+
+/// Incrementally maintained uptime state for one monitor (E4).
+///
+/// Time-weighted uptime depends only on *when the status changed*: a beat
+/// that repeats the previous status extends the current run. So the 30-day
+/// history collapses to one entry per transition — a handful for a healthy
+/// monitor — and the three windows are computed from memory with the same
+/// rules as [`uptime_windows`] (the status of a run holds until the next
+/// one, the newest holds until now, only UP and DOWN count). Recording a
+/// beat appends in O(1); nothing on the check path rescans 30 days.
+#[derive(Debug, Clone, Default)]
+pub struct UptimeRuns {
+    runs: VecDeque<Run>,
+    /// Id of the newest beat folded in, so a writer that bypassed the cache
+    /// (or a reused id) is detected and the entry is reloaded.
+    pub last_id: Option<i64>,
+}
+
+impl UptimeRuns {
+    pub fn from_runs(runs: Vec<Run>, last_id: Option<i64>) -> Self {
+        Self {
+            runs: runs.into(),
+            last_id,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.runs.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.runs.is_empty()
+    }
+
+    /// Fold one new beat in.
+    pub fn push(&mut self, beat_id: i64, time_ms: i64, status: i64) {
+        self.last_id = Some(beat_id);
+        match self.runs.back() {
+            Some(last) if last.status == status => {}
+            // A beat stamped before the current run (a backwards clock step)
+            // starts its run where the current one started instead of
+            // reordering history.
+            Some(last) => {
+                let start_ms = time_ms.max(last.start_ms);
+                self.runs.push_back(Run { start_ms, status });
+            }
+            None => self.runs.push_back(Run {
+                start_ms: time_ms,
+                status,
+            }),
+        }
+    }
+
+    /// Drop runs that ended before the 30-day window; the run spanning the
+    /// window start stays (it is the carried-forward starting state).
+    pub fn trim(&mut self, now_ms: i64) {
+        let start = now_ms - MONTH_MS;
+        while self.runs.len() >= 2 && self.runs[1].start_ms <= start {
+            self.runs.pop_front();
+        }
+    }
+
+    /// The three SPA windows at `now_ms`.
+    pub fn windows(&self, now_ms: i64) -> UptimeWindows {
+        let starts = [now_ms - DAY_MS, now_ms - WEEK_MS, now_ms - MONTH_MS];
+        let mut up = [0i64; 3];
+        let mut down = [0i64; 3];
+
+        let mut end = now_ms;
+        for run in self.runs.iter().rev() {
+            if end <= starts[2] {
+                break;
+            }
+            for (index, start) in starts.iter().enumerate() {
+                let overlap = (end - run.start_ms.max(*start)).max(0);
+                match run.status {
+                    UP => up[index] += overlap,
+                    DOWN => down[index] += overlap,
+                    _ => {}
+                }
+            }
+            // A run stamped in the future (clock step) cannot extend the
+            // previous one past its own start.
+            end = run.start_ms.min(end);
+        }
+
+        let ratio = |up: i64, down: i64| {
+            let total = up + down;
+            if total <= 0 {
+                None
+            } else {
+                Some((up as f64 / total as f64).clamp(0.0, 1.0))
+            }
+        };
+        UptimeWindows {
+            day: ratio(up[0], down[0]),
+            week: ratio(up[1], down[1]),
+            month: ratio(up[2], down[2]),
+        }
+    }
+}
+
+/// Load a monitor's status runs for the last 30 days (plus the run that
+/// was current at the window start) — the one 30-day scan, done once per
+/// cache fill instead of every 30 s per monitor.
+pub async fn load_runs(pool: &SqlitePool, monitor_id: i64) -> sqlx::Result<UptimeRuns> {
+    let month = (Utc::now() - ChronoDuration::milliseconds(MONTH_MS))
+        .format("%Y-%m-%d %H:%M:%S%.3f")
+        .to_string();
+
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "WITH relevant AS (
+             SELECT id, time, status FROM heartbeats WHERE monitor_id = ? AND time >= ?
+             UNION ALL
+             SELECT id, time, status FROM (
+                 SELECT id, time, status FROM heartbeats
+                 WHERE monitor_id = ? AND time < ?
+                 ORDER BY time DESC, id DESC LIMIT 1
+             )
+         ),
+         ordered AS (
+             SELECT time, status, LAG(status) OVER (ORDER BY time, id) AS previous
+             FROM relevant
+         )
+         SELECT time, status FROM ordered
+         WHERE previous IS NULL OR previous <> status
+         ORDER BY time",
+    )
+    .bind(monitor_id)
+    .bind(&month)
+    .bind(monitor_id)
+    .bind(&month)
+    .fetch_all(pool)
+    .await?;
+
+    let last_id = latest(pool, monitor_id).await?.map(|beat| beat.id);
+    let runs = rows
+        .into_iter()
+        .filter_map(|(time, status)| {
+            Some(Run {
+                start_ms: time_ms(&time)?,
+                status,
+            })
+        })
+        .collect();
+    Ok(UptimeRuns::from_runs(runs, last_id))
 }
 
 #[cfg(test)]
@@ -708,5 +948,109 @@ mod tests {
         assert!(windows.day.is_none());
         assert!(windows.week.is_none());
         assert!(windows.month.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_records_produce_one_transition() {
+        // E2: the push route and the push watcher (or two pushes) racing on
+        // the same monitor used to both read UP as the previous beat and
+        // both insert an important DOWN that pages.
+        let pool = test_pool().await;
+        let monitor = insert_monitor(&pool).await;
+        record(&pool, &monitor, UP, None, "ok", false, None)
+            .await
+            .unwrap();
+
+        let mut tasks = Vec::new();
+        for _ in 0..16 {
+            let pool = pool.clone();
+            let monitor = monitor.clone();
+            tasks.push(tokio::spawn(async move {
+                record(&pool, &monitor, DOWN, None, "boom", false, None)
+                    .await
+                    .unwrap()
+            }));
+        }
+        let mut notified = 0;
+        for task in tasks {
+            if task.await.unwrap().notify {
+                notified += 1;
+            }
+        }
+        assert_eq!(notified, 1, "exactly one recorder sees the transition");
+
+        let important: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM heartbeats WHERE monitor_id = ? AND important = 1 AND status = ?",
+        )
+        .bind(monitor.id)
+        .bind(DOWN)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(important, 1, "one important DOWN row, not one per racer");
+    }
+
+    #[tokio::test]
+    async fn incremental_runs_match_the_sql_windows() {
+        // E4: the in-memory run list must agree with the 30-day SQL scan,
+        // both when loaded and when maintained beat by beat.
+        let pool = test_pool().await;
+        let monitor = insert_monitor(&pool).await;
+        let now = Utc::now();
+        let stamp = |ms_ago: i64| {
+            (now - ChronoDuration::milliseconds(ms_ago))
+                .format("%Y-%m-%d %H:%M:%S%.3f")
+                .to_string()
+        };
+
+        // 40 days of history: a beat every 6h with a deterministic mix of
+        // statuses, including a boundary run before the 30-day start and
+        // repeated statuses that collapse into one run.
+        let statuses = [UP, UP, DOWN, DOWN, UP, PENDING, UP, DOWN, UP, UP, UP];
+        let step = 6 * 3600 * 1000;
+        let total = 40 * 4;
+        for index in 0..total {
+            let ms_ago = (total - index) * step + 1234;
+            insert_beat(&pool, monitor.id, &stamp(ms_ago), statuses[index as usize % statuses.len()]).await;
+        }
+
+        let close = |a: Option<f64>, b: Option<f64>| match (a, b) {
+            (Some(a), Some(b)) => (a - b).abs() < 1e-6,
+            (None, None) => true,
+            _ => false,
+        };
+        let check = |runs: &UptimeRuns, sql: &UptimeWindows| {
+            let mem = runs.windows(Utc::now().timestamp_millis());
+            assert!(close(mem.day, sql.day), "day {mem:?} vs {sql:?}");
+            assert!(close(mem.week, sql.week), "week {mem:?} vs {sql:?}");
+            assert!(close(mem.month, sql.month), "month {mem:?} vs {sql:?}");
+        };
+
+        let mut runs = load_runs(&pool, monitor.id).await.unwrap();
+        assert!(runs.len() < 120, "repeats collapse into runs ({})", runs.len());
+        check(&runs, &uptime_windows(&pool, monitor.id).await.unwrap());
+
+        // Maintained incrementally through `record`, it stays exact.
+        for status in [DOWN, DOWN, UP, DOWN, UP] {
+            let recorded = record(&pool, &monitor, status, None, "x", true, None)
+                .await
+                .unwrap();
+            assert_eq!(runs.last_id, recorded.previous_id, "chain is unbroken");
+            runs.push(
+                recorded.beat.id,
+                time_ms(&recorded.beat.time).unwrap(),
+                recorded.beat.status,
+            );
+            runs.trim(Utc::now().timestamp_millis());
+            tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+        }
+        check(&runs, &uptime_windows(&pool, monitor.id).await.unwrap());
+
+        // An empty monitor has no ratio either way.
+        let fresh = insert_monitor(&pool).await;
+        let empty = load_runs(&pool, fresh.id).await.unwrap();
+        assert!(empty.is_empty() && empty.last_id.is_none());
+        let windows = empty.windows(Utc::now().timestamp_millis());
+        assert!(windows.day.is_none() && windows.month.is_none());
     }
 }
