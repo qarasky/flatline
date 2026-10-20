@@ -412,18 +412,15 @@ fn percent_decode(value: &str) -> String {
                 out.push(b' ');
                 index += 1;
             }
-            b'%' if index + 2 < bytes.len() => {
+            // An escape may end the value. Both digits must be hex, since
+            // `from_str_radix` would also accept a sign (`%+1`).
+            b'%' if index + 3 <= bytes.len()
+                && bytes[index + 1].is_ascii_hexdigit()
+                && bytes[index + 2].is_ascii_hexdigit() =>
+            {
                 let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or("");
-                match u8::from_str_radix(hex, 16) {
-                    Ok(byte) => {
-                        out.push(byte);
-                        index += 3;
-                    }
-                    Err(_) => {
-                        out.push(bytes[index]);
-                        index += 1;
-                    }
-                }
+                out.push(u8::from_str_radix(hex, 16).unwrap_or(b'%'));
+                index += 3;
             }
             byte => {
                 out.push(byte);
@@ -441,4 +438,20 @@ pub async fn robots() -> Response {
         "User-agent: *\nDisallow: /\n",
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::percent_decode;
+
+    #[test]
+    fn percent_decode_handles_escapes_at_the_end_and_rejects_signs() {
+        assert_eq!(percent_decode("ab%41"), "abA");
+        assert_eq!(percent_decode("%41%42"), "AB");
+        assert_eq!(percent_decode("a+b"), "a b");
+        assert_eq!(percent_decode("50%"), "50%");
+        assert_eq!(percent_decode("x%4"), "x%4");
+        assert_eq!(percent_decode("%+1z"), "% 1z");
+        assert_eq!(percent_decode("%zz"), "%zz");
+    }
 }
