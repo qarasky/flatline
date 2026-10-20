@@ -11,8 +11,11 @@ pub mod counters;
 pub mod history;
 pub mod ingest;
 pub mod io_rates;
+pub(crate) mod lru;
 pub mod peak;
 pub mod rollup;
+
+pub use ingest::StoreError;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

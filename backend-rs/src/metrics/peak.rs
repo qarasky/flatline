@@ -9,6 +9,7 @@ use std::collections::{HashMap, VecDeque};
 
 use serde::Serialize;
 
+use crate::metrics::lru::{CACHE_MONITORS, Recency};
 use crate::metrics::{Metrics, history, iso_millis, metric_time, sql_time_millis};
 
 /// Peak window length.
@@ -16,7 +17,6 @@ pub const WINDOW_MS: i64 = 10 * 60_000;
 /// Normal 1Hz windows contain at most 600 entries; bound abusive faster
 /// senders too, retaining the highest candidates rather than losing them.
 const MAX_QUEUE: usize = 2048;
-const MAX_MONITORS: usize = 512;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Peak {
@@ -39,7 +39,9 @@ struct Queue {
 #[derive(Default)]
 pub struct PeakState {
     windows: HashMap<i64, Queue>,
-    order: VecDeque<i64>,
+    /// Least-recently-recorded windows are evicted first: an active monitor
+    /// must never lose its window to an idle one.
+    order: Recency,
 }
 
 impl PeakState {
@@ -71,12 +73,13 @@ impl PeakState {
             .and_then(|row| metric_time(&row.time))
             .unwrap_or(i64::MIN);
 
-        if self.windows.len() >= MAX_MONITORS
-            && let Some(oldest) = self.order.pop_front()
-        {
+        while self.windows.len() >= CACHE_MONITORS {
+            let Some(oldest) = self.order.pop_oldest() else {
+                break;
+            };
             self.windows.remove(&oldest);
         }
-        self.order.push_back(monitor_id);
+        self.order.touch(monitor_id);
         self.windows.insert(monitor_id, queue);
     }
 
@@ -90,6 +93,7 @@ impl PeakState {
     /// later of the sample time and the last recorded time.
     pub fn record(&mut self, monitor_id: i64, time: i64, percent: Option<f64>) -> Option<Peak> {
         let queue = self.windows.get_mut(&monitor_id)?;
+        self.order.touch(monitor_id);
         let end = time.max(queue.last_time);
         let _ = current_at(queue, end);
         if time >= queue.last_time {
@@ -101,7 +105,7 @@ impl PeakState {
 
     pub fn forget(&mut self, monitor_id: i64) {
         self.windows.remove(&monitor_id);
-        self.order.retain(|id| *id != monitor_id);
+        self.order.remove(monitor_id);
     }
 }
 
@@ -217,6 +221,20 @@ mod tests {
             state.record(2, now + 1_000, Some(10.0)).unwrap().percent,
             50.0
         );
+    }
+
+    #[test]
+    fn eviction_is_least_recently_recorded() {
+        let mut state = PeakState::default();
+        for id in 0..CACHE_MONITORS as i64 {
+            state.warm(id, &[]);
+        }
+        // Monitor 0 was warmed first but keeps recording: it must survive.
+        state.record(0, 1_000, Some(10.0));
+        state.warm(CACHE_MONITORS as i64, &[]);
+        assert!(state.is_warm(0), "an active window is never the one evicted");
+        assert!(!state.is_warm(1), "the least recently used window goes");
+        assert!(state.is_warm(CACHE_MONITORS as i64));
     }
 
     #[test]

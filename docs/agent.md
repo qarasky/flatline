@@ -276,12 +276,17 @@ Failures are classified, because retrying the wrong kind wedges a queue:
 | ------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
 | 400, 413           | Server understood and refused the payload; retry fails identically | **Quarantine** under `buffer/quarantine/` (newest 20 kept) and count it lost; the queue keeps draining.                    |
 | 401, 403, 404      | Auth/config problem (unknown or inactive token)                    | Keep the backlog and keep sampling; fix the token and the accumulated history delivers. Logged at most once per 5 minutes. |
+| 503                | Server storage failure (database locked, disk full); transient     | Keep the sample and retry; the answer carries `Retry-After: <seconds>` (5–30, jittered).                                   |
 | 5xx, network error | Transient                                                          | Retry the same sample with jittered exponential backoff capped at 30s.                                                     |
 
 **Silence is the signal.** A failed push is never reported locally as
 host-down; the server turns sustained silence into a down state via the
 monitor's push timeout. A 400 means "fix the collector", not "the host is down":
-the heartbeat is still recorded.
+the heartbeat is still recorded. The server answers 400 **only** for validation
+failures (invalid metrics, a non-empty body that is not JSON); a storage or
+database failure on its side is always a 503 with `Retry-After`, never a 400, so
+a struggling server never makes the agent discard its backlog. See
+[the push contract](api.md#the-push-contract).
 
 **Interval relationship.** A push monitor's check interval (timeout) must be
 **≥ 3× `interval_seconds`** — with the 1s default, 3s or more, and 30–180s is
