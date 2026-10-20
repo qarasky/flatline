@@ -91,7 +91,7 @@ const CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 /// 3. unarchived live telemetry is flushed ([`FLUSH_TIMEOUT`]);
 /// 4. the pool is closed ([`CLOSE_TIMEOUT`]).
 pub async fn run() -> anyhow::Result<()> {
-    let config = config::Config::from_env();
+    let config = config::Config::from_env()?;
     let address = format!("{}:{}", config.host, config.port);
 
     let state = build_state(config).await?;

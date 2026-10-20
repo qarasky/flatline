@@ -69,7 +69,9 @@ pub async fn events(
                 _ = &mut lifetime => break,
                 _ = &mut shutting_down => break,
                 _ = keepalive.tick() => {
-                    if !auth::verify_token(&pool, &token).await {
+                    // A store error skips this round; only a definite
+                    // "invalid" signs the client out.
+                    if auth::is_revoked(&auth::verify_token(&pool, &token).await) {
                         yield Ok(Event::default().data(json!({"type": "unauthorized"}).to_string()));
                         break;
                     }

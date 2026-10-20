@@ -2,6 +2,7 @@
 //! history, the PWA manifest, the page badge and the password gate.
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use axum::Json;
 use axum::body::Bytes;
@@ -13,6 +14,7 @@ use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::api::ApiError;
+use crate::api::public_cache::{self, PUBLIC_TTL, ResponseCache};
 use crate::badges::{self, Badge};
 use crate::status_pages::{self, Page, UNLOCK_TTL_SECONDS};
 
@@ -21,7 +23,7 @@ pub async fn resolve_host(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
-) -> Json<Value> {
+) -> Response {
     let mut host = params
         .get("host")
         .map(|host| host.trim().to_lowercase())
@@ -37,7 +39,24 @@ pub async fn resolve_host(
     // Drop any port so "example.com:3001" matches "example.com".
     let host = host.split(':').next().unwrap_or("").to_string();
 
-    let slug = status_pages::resolve_host(&state.pool, &host).await;
+    // A failed lookup is a 503, not "unmapped": the dashboard treats only a
+    // successful `slug: null` as unmapped and retries errors (A15).
+    let slug = match status_pages::resolve_host(&state.pool, &host).await {
+        Ok(slug) => slug,
+        Err(error) => {
+            tracing::error!("status pages api: resolve-host: {error}");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, "5")],
+                Json(json!({
+                    "ok": false,
+                    "error": "unavailable",
+                    "message": "Host lookup failed; retry shortly.",
+                })),
+            )
+                .into_response();
+        }
+    };
 
     Json(json!({
         "ok": true,
@@ -45,9 +64,31 @@ pub async fn resolve_host(
         "slug": slug,
         "matched": slug.is_some(),
     }))
+    .into_response()
+}
+
+/// Cached page payloads (`page`, `heartbeat`, `incident-history`).
+static PAGE_CACHE: LazyLock<ResponseCache<Value>> =
+    LazyLock::new(|| ResponseCache::new(PUBLIC_TTL, 1024));
+/// Cached aggregate badge flags: (has_up, has_down, has_maintenance).
+static BADGE_CACHE: LazyLock<ResponseCache<(bool, bool, bool)>> =
+    LazyLock::new(|| ResponseCache::new(PUBLIC_TTL, 1024));
+
+fn not_found() -> Response {
+    (StatusCode::NOT_FOUND, "Status Page Not Found").into_response()
 }
 
 /// Gate a status-page data endpoint, mirroring `requireUnlocked`.
+///
+/// An unpublished page is a 404 to the public — exactly like a missing
+/// slug, so its existence is not confirmed (A14). A request carrying a
+/// valid operator bearer token still sees it, which keeps previews and API
+/// tooling working; the dashboard's own status-page view sends no token
+/// and so sees only published pages.
+///
+/// The page row itself is never cached, so publishing, unpublishing or
+/// locking a page applies to the very next request.
+///
 /// The Err variant carries a ready-to-send response, which is fine here —
 /// this runs once per gated request, never in a hot loop.
 #[allow(clippy::result_large_err)]
@@ -56,11 +97,22 @@ async fn require_unlocked(
     headers: &HeaderMap,
     slug: &str,
 ) -> Result<Page, Response> {
-    let page = status_pages::load(&state.pool, slug).await.ok().flatten();
-
-    let Some(page) = page else {
-        return Err((StatusCode::NOT_FOUND, "Status Page Not Found").into_response());
+    let page = match status_pages::load(&state.pool, slug).await {
+        Ok(Some(page)) => page,
+        Ok(None) => return Err(not_found()),
+        Err(error) => return Err(server_error(error)),
     };
+
+    if page.published == 0 {
+        match crate::auth::bearer(headers) {
+            None => return Err(not_found()),
+            Some(token) => match crate::auth::verify_token(&state.pool, token).await {
+                Ok(true) => {}
+                Ok(false) => return Err(not_found()),
+                Err(error) => return Err(crate::auth::verify_error_response(&error)),
+            },
+        }
+    }
 
     if status_pages::is_unlocked(&state.status_page_secret, headers, &page) {
         Ok(page)
@@ -89,12 +141,17 @@ pub async fn page(
     Path(slug): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    match require_unlocked(&state, &headers, &slug).await {
-        Ok(page) => match status_pages::page_data(&state.pool, &page).await {
-            Ok(data) => Json(data).into_response(),
-            Err(error) => server_error(error),
-        },
-        Err(response) => response,
+    let page = match require_unlocked(&state, &headers, &slug).await {
+        Ok(page) => page,
+        Err(response) => return response,
+    };
+    let key = public_cache::key(&state, &format!("page|{}", page.id));
+    match PAGE_CACHE
+        .get_or_try(key, || status_pages::page_data(&state.pool, &page))
+        .await
+    {
+        Ok(data) => Json(data).into_response(),
+        Err(error) => server_error(error),
     }
 }
 
@@ -104,12 +161,19 @@ pub async fn heartbeat(
     Path(slug): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    match require_unlocked(&state, &headers, &slug).await {
-        Ok(page) => match status_pages::heartbeat_data(&state.pool, &page).await {
-            Ok(data) => Json(data).into_response(),
-            Err(error) => server_error(error),
-        },
-        Err(response) => response,
+    let page = match require_unlocked(&state, &headers, &slug).await {
+        Ok(page) => page,
+        Err(response) => return response,
+    };
+    let key = public_cache::key(&state, &format!("heartbeat|{}", page.id));
+    match PAGE_CACHE
+        .get_or_try(key, || {
+            status_pages::heartbeat_data(&state.pool, &state.engine, &page)
+        })
+        .await
+    {
+        Ok(data) => Json(data).into_response(),
+        Err(error) => server_error(error),
     }
 }
 
@@ -120,15 +184,23 @@ pub async fn incident_history(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    match require_unlocked(&state, &headers, &slug).await {
-        Ok(page) => {
-            let cursor = params.get("cursor").map(String::as_str);
-            match status_pages::incident_history(&state.pool, page.id, cursor).await {
-                Ok(data) => Json(data).into_response(),
-                Err(error) => server_error(error),
-            }
-        }
-        Err(response) => response,
+    let page = match require_unlocked(&state, &headers, &slug).await {
+        Ok(page) => page,
+        Err(response) => return response,
+    };
+    let cursor = params.get("cursor").map(String::as_str);
+    let key = public_cache::key(
+        &state,
+        &format!("incidents|{}|{}", page.id, cursor.unwrap_or("")),
+    );
+    match PAGE_CACHE
+        .get_or_try(key, || {
+            status_pages::incident_history(&state.pool, page.id, cursor)
+        })
+        .await
+    {
+        Ok(data) => Json(data).into_response(),
+        Err(error) => server_error(error),
     }
 }
 
@@ -154,6 +226,30 @@ pub async fn manifest(
     }
 }
 
+/// Aggregate (has_up, has_down, has_maintenance) over the page's public
+/// monitors, from one batched latest-beat statement.
+async fn badge_flags(state: &AppState, page_id: i64) -> sqlx::Result<(bool, bool, bool)> {
+    let ids = status_pages::public_monitor_ids(&state.pool, page_id).await?;
+    let latest = status_pages::recent_beats(&state.pool, &ids, 1).await?;
+
+    let mut has_up = false;
+    let mut has_down = false;
+    let mut has_maintenance = false;
+    for monitor_id in ids {
+        let status = latest
+            .get(&monitor_id)
+            .and_then(|beats| beats.first())
+            .map(|beat| beat.status);
+        match status {
+            Some(3) => has_maintenance = true,
+            Some(2) | None => {}
+            Some(1) => has_up = true,
+            _ => has_down = true,
+        }
+    }
+    Ok((has_up, has_down, has_maintenance))
+}
+
 /// GET /api/status-page/{slug}/badge — aggregate status across the page's
 /// public monitors.
 pub async fn badge(
@@ -167,38 +263,14 @@ pub async fn badge(
         Err(response) => return response,
     };
 
-    let monitor_ids: Vec<i64> = match sqlx::query_scalar(
-        "SELECT spm.monitor_id FROM status_page_monitors spm
-         JOIN status_page_groups g ON g.id = spm.group_id
-         WHERE g.status_page_id = ? AND g.public = 1",
-    )
-    .bind(page.id)
-    .fetch_all(&state.pool)
-    .await
+    let key = public_cache::key(&state, &format!("badge|{}", page.id));
+    let (has_up, has_down, has_maintenance) = match BADGE_CACHE
+        .get_or_try(key, || badge_flags(&state, page.id))
+        .await
     {
-        Ok(ids) => ids,
+        Ok(flags) => flags,
         Err(error) => return server_error(error),
     };
-
-    let mut has_up = false;
-    let mut has_down = false;
-    let mut has_maintenance = false;
-    for monitor_id in monitor_ids {
-        let status: Option<i64> = sqlx::query_scalar(
-            "SELECT status FROM heartbeats WHERE monitor_id = ? ORDER BY time DESC, id DESC LIMIT 1",
-        )
-        .bind(monitor_id)
-        .fetch_optional(&state.pool)
-        .await
-        .ok()
-        .flatten();
-        match status {
-            Some(3) => has_maintenance = true,
-            Some(2) | None => {}
-            Some(1) => has_up = true,
-            _ => has_down = true,
-        }
-    }
 
     let label = badges::query_string(&params, "label");
     let style = badges::query_or(&params, "style", "flat");
@@ -246,8 +318,8 @@ pub async fn unlock(
     let slug = slug.to_lowercase();
     let page = status_pages::load(&state.pool, &slug).await.ok().flatten();
 
-    // Do not confirm whether a slug exists.
-    let Some(page) = page else {
+    // Do not confirm whether a slug exists — or an unpublished page.
+    let Some(page) = page.filter(|page| page.published != 0) else {
         return (StatusCode::NOT_FOUND, "Not found").into_response();
     };
     let Some(hash) = page
@@ -259,7 +331,13 @@ pub async fn unlock(
     };
 
     let password = extract_password(&body, &headers);
-    if !bcrypt::verify(&password, hash).unwrap_or(false) {
+    // bcrypt is tens of milliseconds of CPU: keep it off the async workers.
+    let hash = hash.to_string();
+    let matches =
+        tokio::task::spawn_blocking(move || bcrypt::verify(&password, &hash).unwrap_or(false))
+            .await
+            .unwrap_or(false);
+    if !matches {
         return (
             StatusCode::UNAUTHORIZED,
             [(header::CONTENT_TYPE, "text/html; charset=utf-8")],

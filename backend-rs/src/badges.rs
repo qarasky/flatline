@@ -152,6 +152,10 @@ fn hsl_to_hex(hue: f64, saturation: f64, lightness: f64) -> String {
 
 /// Parse a badge duration (`24`, `24h`, `30d`, `1w`, `1M`, `1y`) into
 /// seconds. Digits alone mean hours, like the Node routes.
+///
+/// `None` for anything unparseable, non-positive or too large to represent
+/// (`1000000000000y` used to overflow and panic in chrono, A4). Callers
+/// clamp the result to the data that exists with [`clamp_window`].
 pub fn duration_seconds(duration: &str) -> Option<i64> {
     let raw = duration.trim();
     if raw.is_empty() {
@@ -160,19 +164,38 @@ pub fn duration_seconds(duration: &str) -> Option<i64> {
     let (number, unit) = if raw.chars().all(|c| c.is_ascii_digit()) {
         (raw, "h")
     } else {
-        raw.split_at(raw.len() - 1)
+        // Split on a char boundary: the unit may be any (multi-byte) char.
+        let (index, _) = raw.char_indices().last()?;
+        raw.split_at(index)
     };
-    let number: i64 = number.parse().ok()?;
-    let seconds = match unit {
-        "m" => number * 60,
-        "h" => number * 3600,
-        "d" => number * 86_400,
-        "w" => number * 7 * 86_400,
-        "M" => number * 30 * 86_400,
-        "y" => number * 365 * 86_400,
+    let number: i64 = number.parse().ok().filter(|number| *number > 0)?;
+    let unit_seconds: i64 = match unit {
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        "w" => 7 * 86_400,
+        "M" => 30 * 86_400,
+        "y" => 365 * 86_400,
         _ => return None,
     };
-    Some(seconds)
+    number.checked_mul(unit_seconds)
+}
+
+/// The widest window a badge reads when retention keeps heartbeats forever.
+pub const MAX_WINDOW_SECONDS: i64 = 365 * 86_400;
+
+/// Clamp a badge window to the heartbeats that can exist: the retention
+/// period, or [`MAX_WINDOW_SECONDS`] when retention is off (0). Asking for
+/// ten years of a 90-day history reads the same rows as asking for 90 days.
+pub fn clamp_window(seconds: i64, retention_days: i64) -> i64 {
+    let ceiling = if retention_days > 0 {
+        retention_days
+            .saturating_mul(86_400)
+            .min(MAX_WINDOW_SECONDS)
+    } else {
+        MAX_WINDOW_SECONDS
+    };
+    seconds.clamp(1, ceiling)
 }
 
 /// `(value * 100).toPrecision(4)` — four significant digits, like the Node
@@ -196,13 +219,15 @@ pub fn join_parts(parts: &[String]) -> String {
         .join("")
 }
 
-/// Whether the monitor appears in any public status-page group. Badges for
-/// non-public monitors answer "N/A", like the Node routes.
+/// Whether the monitor appears in any public group of a *published* status
+/// page. Badges for other monitors answer "N/A", like the Node routes; a
+/// monitor that is only on an unpublished page stays private (A14).
 pub async fn is_monitor_public(pool: &SqlitePool, monitor_id: i64) -> bool {
     let found: Option<i64> = sqlx::query_scalar(
         "SELECT spm.monitor_id FROM status_page_monitors spm
          JOIN status_page_groups g ON g.id = spm.group_id
-         WHERE spm.monitor_id = ? AND g.public = 1 LIMIT 1",
+         JOIN status_pages p ON p.id = g.status_page_id
+         WHERE spm.monitor_id = ? AND g.public = 1 AND p.published = 1 LIMIT 1",
     )
     .bind(monitor_id)
     .fetch_optional(pool)
@@ -332,6 +357,23 @@ mod tests {
         assert_eq!(duration_seconds("2M"), Some(60 * 86_400));
         assert_eq!(duration_seconds(""), None);
         assert_eq!(duration_seconds("24x"), None);
+        assert_eq!(duration_seconds("0d"), None);
+        assert_eq!(duration_seconds("-1d"), None);
+    }
+
+    #[test]
+    fn huge_or_odd_durations_do_not_panic() {
+        // Overflow is rejected, not wrapped or panicked on.
+        assert_eq!(duration_seconds("1000000000000000y"), None);
+        assert_eq!(duration_seconds(&format!("{}h", i64::MAX)), None);
+        // A multi-byte unit used to split inside a char and panic.
+        assert_eq!(duration_seconds("1é"), None);
+        assert_eq!(duration_seconds("é"), None);
+        // A representable but absurd window is clamped to retention.
+        let thousand_years = duration_seconds("1000y").unwrap();
+        assert_eq!(clamp_window(thousand_years, 90), 90 * 86_400);
+        assert_eq!(clamp_window(thousand_years, 0), MAX_WINDOW_SECONDS);
+        assert_eq!(clamp_window(3600, 90), 3600);
     }
 
     #[test]

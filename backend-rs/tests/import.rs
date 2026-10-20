@@ -187,7 +187,10 @@ async fn imports_the_production_shape() {
     let data_dir = dir.path().join("data");
     let report = import::run(&old_path, &data_dir, false).await.unwrap();
 
-    assert_eq!(report.monitors, 5, "http + push + group + ping + legacy zero-timeout");
+    assert_eq!(
+        report.monitors, 5,
+        "http + push + group + ping + legacy zero-timeout"
+    );
     assert!(
         report.skipped_monitors.is_empty(),
         "{:?}",
@@ -247,8 +250,8 @@ async fn imports_the_production_shape() {
     assert_eq!(legacy_timeout, 48);
 
     // Imported API keys still verify through the real auth path.
-    assert!(auth::verify_token(&new, "uk7_secret").await);
-    assert!(!auth::verify_token(&new, "wrong").await);
+    assert_eq!(auth::verify_token(&new, "uk7_secret").await, Ok(true));
+    assert_eq!(auth::verify_token(&new, "wrong").await, Ok(false));
     let scheme: String = sqlx::query_scalar("SELECT scheme FROM tokens WHERE id = 7")
         .fetch_one(&new)
         .await
@@ -269,6 +272,7 @@ async fn imports_the_production_shape() {
     assert_eq!(
         flatline_backend::status_pages::resolve_host(&new, "status.bes.media")
             .await
+            .unwrap()
             .as_deref(),
         Some("clients")
     );
