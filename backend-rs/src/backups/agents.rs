@@ -10,8 +10,9 @@ use sqlx::SqlitePool;
 
 use crate::auth::hash_token;
 
-/// Visibly distinct from operator tokens (`flatline_`) and push tokens.
-pub const TOKEN_PREFIX: &str = "flatline_backup_";
+/// Agent-family credential, visibly distinct from operator tokens
+/// (`flatline_op_`) and push-agent tokens (`flatline_agent_push_`).
+pub const TOKEN_PREFIX: &str = crate::auth::BACKUP_TOKEN_PREFIX;
 
 /// Mint a fresh backup credential. 20 random bytes, hex encoded.
 pub fn mint_token() -> String {

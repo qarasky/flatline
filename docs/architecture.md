@@ -200,10 +200,14 @@ Two credentials, deliberately:
 - **Bearer tokens** for every operator-facing call. One token type with full
   permission; extra tokens exist to be individually revocable, not to be
   restricted. The first token is written to `initial-token.txt` on first start.
-- **Push tokens** on individual monitors, used by the agent for
-  `POST /api/push/{token}` and for the `/agent/*` downloads. A push token can
-  only affect its own monitor's data and can only fetch releases, which makes
-  the fleet self-describing without handing out operator credentials.
+- **Push tokens** (`flatline_agent_push_...`) on individual monitors, used by
+  the agent for `POST /api/push/{token}` and for the `/agent/*` downloads. A
+  push token can only affect its own monitor's data and can only fetch releases,
+  which makes the fleet self-describing without handing out operator
+  credentials. Backup agents use their own `flatline_agent_backup_...` family
+  under `/api/backup/v1`; the two are never interchangeable, and both are
+  rejected by the operator API with an explicit `agent_token_on_operator_api`
+  error.
 
 Public status pages are read through a separate, page-scoped path: published
 pages are readable without a token, password-gated pages hand out a signed

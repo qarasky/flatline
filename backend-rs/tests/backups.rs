@@ -84,7 +84,7 @@ async fn multiple_agents_share_monitor_but_not_credentials() {
     assert_ne!(meks_id, zhkh_id, "UUID is the identity, not the name");
     assert_ne!(meks_token, zhkh_token, "credentials are per agent");
     assert_eq!(meks_id.len(), 36, "server-generated UUID");
-    assert!(meks_token.starts_with("flatline_backup_"));
+    assert!(meks_token.starts_with("flatline_agent_backup_"));
 
     // The list exposes credential state, never the credential or its hash.
     let (status, list) = common::get_json(&h.app, "/api/v1/backup-agents", &h.token).await;
@@ -356,7 +356,9 @@ async fn backup_mutations_publish_backup_events() {
     let mut events = h.state.events.subscribe();
 
     async fn expect_invalidate(
-        events: &mut tokio::sync::broadcast::Receiver<std::sync::Arc<flatline_backend::events::LiveEvent>>,
+        events: &mut tokio::sync::broadcast::Receiver<
+            std::sync::Arc<flatline_backend::events::LiveEvent>,
+        >,
     ) {
         let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
             .await

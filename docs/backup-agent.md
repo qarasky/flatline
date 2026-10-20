@@ -30,7 +30,7 @@ fails. Do not enable it before a restore has been proven.
   "version": 1,
   "name": "meks",
   "serverUrl": "https://uptime.example",
-  "tokenFile": "/etc/flatline-backup/meks.token",
+  "tokenFile": "/etc/flatline-backup/meks.token",   # flatline_agent_backup_...
   "recipient": "age1...",
   "stateDir": "/var/lib/flatline-backup/meks",
   "spoolMaxBytes": 8589934592,

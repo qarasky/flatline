@@ -3,9 +3,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use sqlx::SqlitePool;
-use sqlx::sqlite::{
-    SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
-};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 
 /// Upper bound the WAL file is truncated back to after a checkpoint, in
 /// bytes. Without it the `-wal` file stays at its peak size forever (a large

@@ -189,7 +189,6 @@ struct HourlyBucketRow {
     samples: i64,
 }
 
-
 /// The stored repair cursor, or `None` when the sweep has never run.
 async fn read_repair_cursor(pool: &SqlitePool) -> sqlx::Result<Option<i64>> {
     let value: Option<String> =
@@ -197,10 +196,7 @@ async fn read_repair_cursor(pool: &SqlitePool) -> sqlx::Result<Option<i64>> {
             .bind(REPAIR_CURSOR)
             .fetch_optional(pool)
             .await?;
-    Ok(value
-        .as_deref()
-        .and_then(metric_time)
-        .map(hour_start))
+    Ok(value.as_deref().and_then(metric_time).map(hour_start))
 }
 
 /// Persist the repair cursor.
@@ -528,7 +524,12 @@ async fn rollup_run<F: AsyncFnOnce()>(
     // Process the due pairs in time order. Chunks are bounded in elapsed
     // time (a gap splits them) and each chunk is folded page by page, so no
     // single query materializes a long stretch of raw payloads.
-    let mut hours: Vec<i64> = needs.iter().map(|(_, hour)| *hour).collect::<HashSet<_>>().into_iter().collect();
+    let mut hours: Vec<i64> = needs
+        .iter()
+        .map(|(_, hour)| *hour)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
     hours.sort_unstable();
 
     let mut result = RollupResult::default();
@@ -701,11 +702,7 @@ pub struct RawPruneOutcome {
 /// pending repair can never put deletion ahead of repair. Whole hours only:
 /// a cutoff inside an hour would leave partial evidence behind, and a later
 /// late sample would re-fold that hour from the survivors.
-pub async fn prune_raw(
-    pool: &SqlitePool,
-    now_ms: i64,
-    days: i64,
-) -> sqlx::Result<RawPruneOutcome> {
+pub async fn prune_raw(pool: &SqlitePool, now_ms: i64, days: i64) -> sqlx::Result<RawPruneOutcome> {
     let cutoff_hour = hour_start(now_ms - days * 24 * 3_600_000);
 
     // Pairs that have aged out, with their remaining row counts.
@@ -919,13 +916,12 @@ mod tests {
 
         let mut monitor_ids = Vec::new();
         for name in ["a", "b", "c"] {
-            let (id,): (i64,) = sqlx::query_as(
-                "INSERT INTO monitors (name, type) VALUES (?, 'push') RETURNING id",
-            )
-            .bind(name)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+            let (id,): (i64,) =
+                sqlx::query_as("INSERT INTO monitors (name, type) VALUES (?, 'push') RETURNING id")
+                    .bind(name)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
             monitor_ids.push(id);
         }
 
@@ -933,7 +929,8 @@ mod tests {
         let hour = |offset: i64| hour_start(now) - 4 * 3_600_000 + offset * 3_600_000;
         let insert = |monitor_id: i64, ms: i64, cpu: f64| {
             let time = sql_time_millis(ms);
-            let payload = json!({ "cpu": { "percent": cpu }, "mem": { "percent": 50.0 } }).to_string();
+            let payload =
+                json!({ "cpu": { "percent": cpu }, "mem": { "percent": 50.0 } }).to_string();
             let pool = pool.clone();
             async move {
                 sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
@@ -1077,7 +1074,13 @@ mod tests {
 
         // One hour 20 days back and one recent hour: the old coverage check
         // would have produced a single chunk spanning the whole gap.
-        insert(&pool, monitor_id, last_complete - 20 * 24 * 3_600_000 + 600_000, 10.0).await;
+        insert(
+            &pool,
+            monitor_id,
+            last_complete - 20 * 24 * 3_600_000 + 600_000,
+            10.0,
+        )
+        .await;
         insert(&pool, monitor_id, last_complete + 600_000, 20.0).await;
 
         let result = rollup_metrics(&pool, now).await.unwrap();
@@ -1138,7 +1141,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.rolled_up, 2, "both hours fold");
-        assert_eq!(result.pruned_raw, 1, "the aged-out hour is pruned once folded");
+        assert_eq!(
+            result.pruned_raw, 1,
+            "the aged-out hour is pruned once folded"
+        );
         assert_eq!(result.skipped_raw, 0);
 
         let left: Vec<String> = sqlx::query_scalar("SELECT time FROM metrics_raw ORDER BY time")
@@ -1436,7 +1442,12 @@ mod tests {
         // is primed to end right at it: only the marker can bring it back.
         let hour = hour_start(now) - 6 * 3_600_000;
         metrics
-            .store(monitor_id, &sql_time_millis(hour + 60_000), &json!({ "cpu": { "percent": 10.0 } }), false)
+            .store(
+                monitor_id,
+                &sql_time_millis(hour + 60_000),
+                &json!({ "cpu": { "percent": 10.0 } }),
+                false,
+            )
             .await
             .unwrap();
         write_repair_cursor(&pool, hour).await.unwrap();
@@ -1446,7 +1457,12 @@ mod tests {
         let late = sql_time_millis(hour + 120_000);
         let result = rollup_run(&pool, now, async || {
             metrics
-                .store(monitor_id, &late, &json!({ "cpu": { "percent": 30.0 } }), false)
+                .store(
+                    monitor_id,
+                    &late,
+                    &json!({ "cpu": { "percent": 30.0 } }),
+                    false,
+                )
                 .await
                 .unwrap();
         })
@@ -1474,7 +1490,11 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!((samples, avg), (2, 20.0), "the next run folds the late sample");
+        assert_eq!(
+            (samples, avg),
+            (2, 20.0),
+            "the next run folds the late sample"
+        );
     }
 
     #[tokio::test]
@@ -1508,7 +1528,10 @@ mod tests {
         assert!(rollup_metrics(&pool, now).await.is_err());
         assert_eq!(read_repair_cursor(&pool).await.unwrap(), Some(cursor));
 
-        sqlx::query("DROP TRIGGER fail_fold").execute(&pool).await.unwrap();
+        sqlx::query("DROP TRIGGER fail_fold")
+            .execute(&pool)
+            .await
+            .unwrap();
         let result = rollup_metrics(&pool, now).await.unwrap();
         assert_eq!(result.rolled_up, 1, "the retried window is folded");
         assert_eq!(
@@ -1554,7 +1577,11 @@ mod tests {
             !left.iter().any(String::is_empty),
             "the unreadable row below the cutoff is dropped: {left:?}"
         );
-        assert_eq!(left.len(), 2, "the valid row and the one sorting above the cutoff stay");
+        assert_eq!(
+            left.len(),
+            2,
+            "the valid row and the one sorting above the cutoff stay"
+        );
     }
 
     #[tokio::test]

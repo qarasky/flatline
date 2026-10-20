@@ -175,7 +175,10 @@ mod tests {
         events.publish(serde_json::json!({ "type": "metrics", "monitorId": 7 }));
         let a = first.try_recv().unwrap();
         let b = second.try_recv().unwrap();
-        assert!(Arc::ptr_eq(&a, &b), "subscribers share one serialized event");
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "subscribers share one serialized event"
+        );
         assert_eq!(a.kind(), "metrics");
         assert_eq!(a.json()["monitorId"], 7);
         assert_eq!(a.data(), r#"{"monitorId":7,"type":"metrics"}"#);

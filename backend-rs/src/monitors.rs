@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 use sqlx::SqlitePool;
 
 use crate::api::ApiError;
-use crate::auth::mint_token;
+use crate::auth::mint_push_token;
 use crate::heartbeats::{Beat, UptimeWindows};
 
 /// Monitor types this backend understands.
@@ -191,6 +191,10 @@ pub fn monitor_json(m: &Monitor, beat: Option<&Beat>, uptime: &UptimeWindows) ->
         "ignoreTls": m.ignore_tls != 0,
         "maxredirects": m.maxredirects,
         "pushToken": m.push_token,
+        // Declarative: a token reader must not have to guess which credential
+        // family this is. Push tokens are agent credentials, never operator.
+        "pushTokenKind": if m.push_token.is_some() { json!("push_agent") } else { Value::Null },
+        "pushTokenPrefix": if m.push_token.is_some() { json!(crate::auth::PUSH_TOKEN_PREFIX) } else { Value::Null },
         "hostname": m.hostname,
         "packetSize": m.packet_size,
         "pingCount": m.ping_count,
@@ -392,7 +396,7 @@ fn threshold(value: &Value) -> Option<i64> {
 
 /// Generate the push token a push monitor reports with.
 pub fn generate_push_token() -> String {
-    mint_token()
+    mint_push_token()
 }
 
 #[cfg(test)]
@@ -409,13 +413,23 @@ mod tests {
         let mut monitor = Monitor::new("edge-01".into(), "push".into());
         assert_eq!(monitor.provider, None);
 
-        let ignored = apply_payload(&mut monitor, &payload(json!({ "provider": "hetzner.com" })), false)
-            .expect("provider is a writable field");
-        assert!(ignored.is_empty(), "provider must not be reported as ignored");
+        let ignored = apply_payload(
+            &mut monitor,
+            &payload(json!({ "provider": "hetzner.com" })),
+            false,
+        )
+        .expect("provider is a writable field");
+        assert!(
+            ignored.is_empty(),
+            "provider must not be reported as ignored"
+        );
         assert_eq!(monitor.provider.as_deref(), Some("hetzner.com"));
 
         let described = monitor_json(&monitor, None, &crate::heartbeats::UptimeWindows::default());
-        assert_eq!(described.get("provider").and_then(Value::as_str), Some("hetzner.com"));
+        assert_eq!(
+            described.get("provider").and_then(Value::as_str),
+            Some("hetzner.com")
+        );
 
         // Clearing works like every other optional string: null (or empty)
         // means "no provider", and nothing is ignored.

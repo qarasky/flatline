@@ -63,19 +63,25 @@ export function setToken(token: string | null): void {
 export interface ApiErrorBody {
     ok: false;
     error: string;
+    code?: string;
     message: string;
+    hint?: string;
+    tokenKind?: string;
+    expectedTokenKind?: string;
 }
 
 /** Error carrying the API's machine-readable code. */
 export class ApiError extends Error {
     readonly status: number;
     readonly code: string;
+    readonly hint?: string;
 
-    constructor(status: number, code: string, message: string) {
+    constructor(status: number, code: string, message: string, hint?: string) {
         super(message);
         this.name = "ApiError";
         this.status = status;
         this.code = code;
+        this.hint = hint;
     }
 }
 
@@ -105,7 +111,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         } catch {
             // Non-JSON error body; fall back to the status.
         }
-        throw new ApiError(response.status, body.error ?? "unknown", body.message ?? response.statusText);
+        throw new ApiError(
+            response.status,
+            body.error ?? body.code ?? "unknown",
+            body.message ?? response.statusText,
+            body.hint
+        );
     }
 
     return (await response.json()) as T;

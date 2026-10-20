@@ -1011,7 +1011,13 @@ mod tests {
         let total = 40 * 4;
         for index in 0..total {
             let ms_ago = (total - index) * step + 1234;
-            insert_beat(&pool, monitor.id, &stamp(ms_ago), statuses[index as usize % statuses.len()]).await;
+            insert_beat(
+                &pool,
+                monitor.id,
+                &stamp(ms_ago),
+                statuses[index as usize % statuses.len()],
+            )
+            .await;
         }
 
         let close = |a: Option<f64>, b: Option<f64>| match (a, b) {
@@ -1027,7 +1033,11 @@ mod tests {
         };
 
         let mut runs = load_runs(&pool, monitor.id).await.unwrap();
-        assert!(runs.len() < 120, "repeats collapse into runs ({})", runs.len());
+        assert!(
+            runs.len() < 120,
+            "repeats collapse into runs ({})",
+            runs.len()
+        );
         check(&runs, &uptime_windows(&pool, monitor.id).await.unwrap());
 
         // Maintained incrementally through `record`, it stays exact.

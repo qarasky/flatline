@@ -22,16 +22,35 @@ and [superboard](superboard.md), [deployment](deployment.md) and
 
 ## Authentication
 
+Credentials come in three families, told apart by prefix:
+
+| Prefix                   | Kind                | Accepted by                                      |
+| ------------------------ | ------------------- | ------------------------------------------------ |
+| `flatline_op_`           | Operator            | GUI sign-in and every `/api/v1` route            |
+| `flatline_agent_push_`   | Host (metric) agent | `/api/push/{pushToken}`, `/agent/*`, the runbook |
+| `flatline_agent_backup_` | Backup agent        | `/api/backup/v1` only                            |
+
+Legacy `flatline_<hex>` tokens minted before the split are still accepted;
+they are resolved by the store that holds them (operator table, monitor push
+token, backup-agent hash). New tokens are always minted with a family prefix.
+
 **Operator bearer token.** Every `/api/v1` route except `auth/setup`,
 `auth/login` and `openapi.json` requires
-`Authorization: Bearer flatline_<hex>`. Tokens come from the dashboard's
+`Authorization: Bearer flatline_op_<hex>`. Tokens come from the dashboard's
 **Agents** panel, backed by `POST /api/v1/api-keys`, or from the bootstrapped
 admin token printed on first boot and written to `data/initial-token.txt`
 (`0600`). `GET /api/v1/auth/setup` always answers `{ok:true,setupNeeded:false}`;
 `POST /api/v1/auth/login` accepts the token in the `password` field and echoes
-it back, and `GET /api/v1/auth/me` describes the current token. The `username`
-field is ignored — these routes exist so the dashboard's sign-in flow works
-unchanged.
+it back together with `tokenKind:"operator"`, `GET /api/v1/auth/me` reports the
+credential kind and capabilities, and `GET /api/v1/api-keys` lists operator
+tokens only. The `username` field is ignored — these routes exist so the
+dashboard's sign-in flow works unchanged.
+
+An agent token used for sign-in or on `/api/v1` is not a generic 401: the API
+answers `401` with `error:"agent_token_on_operator_api"`, the presented
+`tokenKind`, `expectedPrefix:"flatline_op_"` and a `hint`. Operator tokens on
+agent endpoints are rejected symmetrically with
+`operator_token_on_agent_api`.
 
 **There is exactly one scope: full.** Every token is a full-permission operator
 credential — the admin token and keys minted from the Agents panel or
@@ -41,53 +60,63 @@ and no way to restrict a token. `GET /api/v1/api-keys` reports
 stored as SHA-256 hashes and plaintext is shown once at mint time; keys imported
 from the previous deployment's bcrypt hashes keep verifying.
 
-Imported (bcrypt) keys are the slow path, so it is fenced: a `flatline_` token is
-only ever checked by SHA-256, a verified imported key is cached for 10 minutes
+Imported (bcrypt) keys are the slow path, so it is fenced: a `flatline_`,
+`flatline_op_` or `flatline_agent_` token is only ever checked by SHA-256, a verified imported key is cached for 10 minutes
 (its row is still read on every request, so revoking or expiring it applies at
 once), a token that failed is rejected without bcrypt for a minute, and more
 than 30 failed bcrypt checks a minute instance-wide answer `429` for further
-unknown non-`flatline_` tokens until the minute is up. `last_used_at` is updated
+unknown tokens outside those prefixes until the minute is up. `last_used_at` is updated
 at most once a minute per token.
 
-**Push token (agents).** A push token is a **second, independent credential**,
-created automatically with each `push` monitor (`pushToken` in the monitor JSON,
-also returned by `POST /api/v1/monitors`). It is not a bearer token and cannot
-call the operator API. It authenticates the agent's posts at
-`POST /api/push/{pushToken}` and acts as the fleet whitelist for `/agent/*`:
-only a host holding an active monitor's push token can download an agent
-update. `/agent/*`, `/add-push-server.md` and `/llms.txt` accept either an
-operator bearer token or a push token, via `Authorization` or `?token=`. A
-paused monitor (`active: false`) has an unusable push token and is excluded.
+**Push token (host agents).** A push token is a separate credential of the
+agent family, created automatically with each `push` monitor
+(`pushToken`, `pushTokenKind:"push_agent"` and `pushTokenPrefix` in the monitor
+JSON, also returned by `POST /api/v1/monitors`). It authenticates the agent's
+posts at `POST /api/push/{pushToken}` and acts as the fleet whitelist for
+`/agent/*`: only a host holding an active monitor's push token can download an
+agent update. `/agent/*`, `/add-push-server.md` and `/llms.txt` accept either
+an operator token or a push-agent token, via `Authorization` or `?token=`.
+Backup-agent tokens are not accepted there: metric and backup agents stay
+separate. A paused monitor (`active: false`) has an unusable push token and is
+excluded; the provisioning surfaces answer `agent_monitor_inactive` and name
+the monitor.
 
 ## Response envelope and status codes
 
 Success responses carry `"ok": true` plus endpoint data, for example
 `{"ok":true,"monitor":{...}}` or
 `{"ok":true,"monitors":[...],"count":n,"pagination":{...}}`. Failures use
-`{"ok":false,"error":"bad_request","message":"..."}`, where `error` is a stable
-machine token (`bad_request`, `not_found`, `unauthorized`, `server_error`,
-`stream_limit`, `unavailable`, `rate_limited`, `timeout`, `busy`) and `message`
-is human text. Exceptions: the push endpoint uses
+`{"ok":false,"error":"code","code":"code","message":"...","hint":"...","details":{...}}`.
+`error` and `code` carry the same stable machine string; `message` is human
+text; `hint` states the fix (it names the required credential family on auth
+errors); `details` carries structured context. Auth errors may also carry
+`tokenKind`, `expectedTokenKind`, `expectedPrefix`/`expectedPrefixes` and
+`nextActions`; 429/503 carry `retryAfterSeconds`/`Retry-After`. Examples:
+`bad_request`, `not_found`, `unauthorized`, `agent_token_on_operator_api`,
+`operator_token_on_agent_api`, `backup_agent_token_on_metric_agent_api`,
+`push_agent_token_on_backup_agent_api`, `agent_monitor_inactive`,
+`server_error`, `stream_limit`, `unavailable`, `rate_limited`, `timeout`,
+`busy`. Exceptions: the push endpoint uses
 `{"ok":false,"msg":"..."}`; badges answer `{"status":"fail","msg":...}` for a
 bad id or duration; a gated status page answers `401` with `error:"password_required"` and a
 missing page is plain-text `404`.
 
-| Code      | Meaning                                                                      | Where it occurs                                                      |
-| --------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| 200 / 201 | Success / Created                                                            | Reads and updates; `POST` monitors and API keys                      |
-| 400       | Validation failure; on push, "metrics dropped"; invalid badge duration       | Bad type/`name`/range, bad `hours`/`ids`, invalid metrics            |
-| 401       | Missing/invalid/inactive/expired token; locked status page                   | Any `/api/v1` route; gated status-page reads                         |
-| 403       | Invalid badge id                                                             | `/api/badge/{id}/...` with a non-numeric or non-positive id          |
-| 404       | Unknown resource, unknown/paused push monitor, no metrics, out-of-range ping | `.../{id}`, `POST /api/push/{pushToken}`                             |
-| 404       | Unpublished status page (without an operator token)                          | Every `/api/status-page/...` read and the unlock route               |
-| 409       | Not emitted today                                                            | A duplicate `pushToken` hits the unique index but is reported as 500 |
-| 413       | Body over the 256 KB limit                                                   | `POST /api/push/{pushToken}`                                         |
-| 429       | Too many live SSE connections                                                | `GET /api/v1/events` (`stream_limit`)                                |
-| 429       | Too many failed imported-key checks; public reads saturated (`rate_limited`) | Token-checked routes; status-page and badge routes (`Retry-After`)   |
-| 500       | Storage failure                                                              | Any handler except the push endpoint                                 |
-| 503       | Token store unreadable (`unavailable`); budget exceeded (`timeout`, `busy`)  | Token-checked routes; any timed route (`Retry-After`)                |
-| 503       | Storage failure on push (transient), with `Retry-After`                      | `POST /api/push/{pushToken}`                                         |
-| 503       | `/healthz`: database or check engine unhealthy (`reason`)                    | `GET /healthz`                                                       |
+| Code      | Meaning                                                                                                              | Where it occurs                                                      |
+| --------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 200 / 201 | Success / Created                                                                                                    | Reads and updates; `POST` monitors and API keys                      |
+| 400       | Validation failure; on push, "metrics dropped"; invalid badge duration                                               | Bad type/`name`/range, bad `hours`/`ids`, invalid metrics            |
+| 401       | Missing/invalid/inactive/expired token; agent token on operator API; operator token on agent API; locked status page | Any `/api/v1` route; push/agent routes; gated status-page reads      |
+| 403       | Invalid badge id                                                                                                     | `/api/badge/{id}/...` with a non-numeric or non-positive id          |
+| 404       | Unknown resource, unknown/paused push monitor, no metrics, out-of-range ping                                         | `.../{id}`, `POST /api/push/{pushToken}`                             |
+| 404       | Unpublished status page (without an operator token)                                                                  | Every `/api/status-page/...` read and the unlock route               |
+| 409       | Not emitted today                                                                                                    | A duplicate `pushToken` hits the unique index but is reported as 500 |
+| 413       | Body over the 256 KB limit                                                                                           | `POST /api/push/{pushToken}`                                         |
+| 429       | Too many live SSE connections                                                                                        | `GET /api/v1/events` (`stream_limit`)                                |
+| 429       | Too many failed imported-key checks; public reads saturated (`rate_limited`)                                         | Token-checked routes; status-page and badge routes (`Retry-After`)   |
+| 500       | Storage failure                                                                                                      | Any handler except the push endpoint                                 |
+| 503       | Token store unreadable (`unavailable`); budget exceeded (`timeout`, `busy`)                                          | Token-checked routes; any timed route (`Retry-After`)                |
+| 503       | Storage failure on push (transient), with `Retry-After`                                                              | `POST /api/push/{pushToken}`                                         |
+| 503       | `/healthz`: database or check engine unhealthy (`reason`)                                                            | `GET /healthz`                                                       |
 
 A `503 unavailable` says nothing about the token: clients must retry rather than
 sign out. Only a `401` means the token is wrong.
@@ -190,7 +219,8 @@ when retention is off). Values are cached for 10 s.
 
 ### Provisioning and agent downloads
 
-Outside `/api/v1`, authenticated by an operator token or a push token.
+Outside `/api/v1`, authenticated by an operator token or a push-agent token.
+Backup-agent tokens are accepted only under `/api/backup/v1`.
 
 | Method | Path                  | Purpose                                          |
 | ------ | --------------------- | ------------------------------------------------ |

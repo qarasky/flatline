@@ -250,8 +250,14 @@ async fn imports_the_production_shape() {
     assert_eq!(legacy_timeout, 48);
 
     // Imported API keys still verify through the real auth path.
-    assert_eq!(auth::verify_token(&new, "uk7_secret").await, Ok(true));
-    assert_eq!(auth::verify_token(&new, "wrong").await, Ok(false));
+    assert_eq!(
+        auth::verify_token(&new, "uk7_secret").await,
+        Ok(auth::TokenVerdict::Operator)
+    );
+    assert_eq!(
+        auth::verify_token(&new, "wrong").await,
+        Ok(auth::TokenVerdict::Invalid)
+    );
     let scheme: String = sqlx::query_scalar("SELECT scheme FROM tokens WHERE id = 7")
         .fetch_one(&new)
         .await
@@ -343,7 +349,10 @@ async fn import_is_atomic_pages_large_tables_and_skips_bad_times() {
     assert_eq!(report.metrics_hourly, 1);
     assert_eq!(report.bad_time_metrics, 4);
     assert!(
-        report.warnings.iter().any(|w| w.contains("unparseable time")),
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("unparseable time")),
         "{:?}",
         report.warnings
     );

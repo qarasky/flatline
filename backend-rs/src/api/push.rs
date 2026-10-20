@@ -42,6 +42,31 @@ pub async fn push(
     method: Method,
     body: Bytes,
 ) -> Response {
+    // Explicit token-family errors: an operator or backup credential in the
+    // push URL is a configuration mistake, not a deleted monitor. Say so
+    // instead of answering the generic "not found or not active".
+    match crate::auth::token_kind(&push_token) {
+        crate::auth::TokenKind::Operator => {
+            return crate::auth::operator_token_on_agent_api("/api/push/{pushToken}");
+        }
+        crate::auth::TokenKind::BackupAgent => {
+            return crate::auth::backup_token_on_metric_agent_api("/api/push/{pushToken}");
+        }
+        crate::auth::TokenKind::Legacy => {
+            match crate::auth::known_operator_token(&state.pool, &push_token).await {
+                Ok(true) => {
+                    return crate::auth::operator_token_on_agent_api("/api/push/{pushToken}");
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::error!("push: token kind check: {error}");
+                    return unavailable("Storage unavailable, retry later.");
+                }
+            }
+        }
+        crate::auth::TokenKind::PushAgent | crate::auth::TokenKind::Other => {}
+    }
+
     let monitor = match sqlx::query_as::<_, Monitor>(
         "SELECT * FROM monitors WHERE push_token = ? AND active = 1",
     )

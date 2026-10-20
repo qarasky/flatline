@@ -12,9 +12,11 @@ and dashboard, and [superboard](superboard.md) for the card it feeds.
   for `amd64`/`arm64`; no runtime, no interpreter.
 - **Push-only, outbound.** Outbound HTTPS, no listening port, no firewall rule;
   works behind NAT, on a laptop, on a home router.
-- **Per-monitor push token.** Each host carries its own monitor's push token, a
-  bearer secret that routes the samples and gates self-update downloads. There
-  is no fleet-wide agent credential.
+- **Per-monitor push token.** Each host carries its own monitor's push token
+  (`flatline_agent_push_...`), a bearer secret that routes the samples and gates
+  self-update downloads. It is an agent credential: the operator API and the GUI
+  reject it with `agent_token_on_operator_api`. There is no fleet-wide agent
+  credential, and backup-agent tokens are a separate family.
 - **Silence is the alert.** The agent has no "host down" concept; if pushes
   stop, the server's push-timeout path on that monitor goes down.
 - **Telemetry must not kill telemetry.** Collectors degrade to an explicit
@@ -103,17 +105,17 @@ provisioning is in the [provisioning runbook](provisioning.md).
 `/etc/superboard/config.json`; only `server_url` and `push_token` are required.
 `run` reads it, `install` writes it.
 
-| Key                           | Default                      | Meaning                                                                                                                 |
-| ----------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `server_url`                  | — (required)                 | Flatline origin, e.g. `https://uptime.example`. Plain `http://` is refused unless `allow_insecure`.                     |
-| `push_token`                  | — (required)                 | The monitor's push token. Bearer secret: keep the file 0600. Rotation is one server-side regenerate plus one line here. |
-| `interval_seconds`            | `1`                          | Seconds between live samples. An explicitly configured interval is preserved on upgrade.                                |
-| `allow_insecure`              | `false`                      | Permit plain HTTP. Off by default because metrics (hostnames, container names, versions) are useful recon in cleartext. |
-| `buffer_dir`                  | `/var/lib/superboard/buffer` | Disk-backed queue for undelivered samples. Holds hostnames and container names: keep it 0700, root-owned.               |
-| `buffer_max_bytes`            | `33554432` (32 MiB)          | Byte cap on the buffer. Oldest samples are dropped first when full, so an endless outage cannot fill the disk.          |
-| `self_update`                 | `true`                       | Let the agent replace its own binary from a server-shipped release. Set `false` on a host you update by hand.           |
-| `self_update_interval_hours`  | `24`                         | How often the agent asks the server for a newer release.                                                                |
-| `self_update_allow_downgrade` | `false`                      | Permit installing an older release, for recovering a bad rollout without host access.                                   |
+| Key                           | Default                      | Meaning                                                                                                                                                                                   |
+| ----------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server_url`                  | — (required)                 | Flatline origin, e.g. `https://uptime.example`. Plain `http://` is refused unless `allow_insecure`.                                                                                       |
+| `push_token`                  | — (required)                 | The monitor's push token (`flatline_agent_push_...`; legacy `flatline_...` still accepted). Bearer secret: keep the file 0600. Rotation is one server-side regenerate plus one line here. |
+| `interval_seconds`            | `1`                          | Seconds between live samples. An explicitly configured interval is preserved on upgrade.                                                                                                  |
+| `allow_insecure`              | `false`                      | Permit plain HTTP. Off by default because metrics (hostnames, container names, versions) are useful recon in cleartext.                                                                   |
+| `buffer_dir`                  | `/var/lib/superboard/buffer` | Disk-backed queue for undelivered samples. Holds hostnames and container names: keep it 0700, root-owned.                                                                                 |
+| `buffer_max_bytes`            | `33554432` (32 MiB)          | Byte cap on the buffer. Oldest samples are dropped first when full, so an endless outage cannot fill the disk.                                                                            |
+| `self_update`                 | `true`                       | Let the agent replace its own binary from a server-shipped release. Set `false` on a host you update by hand.                                                                             |
+| `self_update_interval_hours`  | `24`                         | How often the agent asks the server for a newer release.                                                                                                                                  |
+| `self_update_allow_downgrade` | `false`                      | Permit installing an older release, for recovering a bad rollout without host access.                                                                                                     |
 
 ## Collectors
 

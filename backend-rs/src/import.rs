@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use sqlx::Row;
 use sqlx::sqlite::{
-    SqliteConnection, SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow,
+    SqliteConnectOptions, SqliteConnection, SqlitePool, SqlitePoolOptions, SqliteRow,
 };
 
 use crate::auth;
@@ -600,14 +600,12 @@ async fn import_metrics(
                     report.bad_time_metrics += 1;
                     continue;
                 };
-                sqlx::query(
-                    "INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)",
-                )
-                .bind(monitor_id)
-                .bind(time)
-                .bind(text_or(row, &cols, "payload", "{}"))
-                .execute(&mut *new)
-                .await?;
+                sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
+                    .bind(monitor_id)
+                    .bind(time)
+                    .bind(text_or(row, &cols, "payload", "{}"))
+                    .execute(&mut *new)
+                    .await?;
                 report.metrics_raw += 1;
             }
             match next_page_after(&rows, &cols) {

@@ -3,6 +3,10 @@
 //! The monitor surface is deliberately small — push, http(s), ping and group
 //! containers — plus the telemetry pipeline, the Superboard read APIs, badges
 //! and single-token auth. The Go agent and the SPA are reused unchanged.
+
+// monitor_json builds one large json! literal; the default macro recursion
+// limit is too small once it carries the token-family fields.
+#![recursion_limit = "256"]
 //! Architecture: docs/architecture.md.
 
 pub mod api;
@@ -203,10 +207,7 @@ pub async fn run() -> anyhow::Result<()> {
     {
         tracing::warn!("shutdown: database pool close timed out");
     }
-    tracing::info!(
-        "shutdown complete in {}ms",
-        signalled.elapsed().as_millis()
-    );
+    tracing::info!("shutdown complete in {}ms", signalled.elapsed().as_millis());
 
     served?;
     Ok(())

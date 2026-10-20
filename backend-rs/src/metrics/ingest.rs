@@ -486,8 +486,7 @@ impl Metrics {
                     .and_then(Value::as_object)
                     .is_none_or(|before| {
                         before.iter().any(|(name, count)| {
-                            reported.get(name).and_then(Value::as_u64)
-                                < count.as_u64().or(Some(0))
+                            reported.get(name).and_then(Value::as_u64) < count.as_u64().or(Some(0))
                         })
                     });
             if shrank && let Err(error) = self.reset_collector_acks(monitor_id, reported).await {

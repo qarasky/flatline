@@ -36,12 +36,28 @@ const LLMS: &str = "\
 # Flatline
 
 > Flatline is the server-monitoring service for this organisation. This file
-> points LLM agents at the provisioning runbook, which is tokenized and
-> ready to use as-is.
+> points LLM agents at the tokenized resources for one job: deploy a host
+> agent and put its websites on the board.
 
-- [Provisioning runbook]({{ORIGIN}}/add-push-server.md?token={{TOKEN}}): add servers, monitors and groups; install or update the monitoring agent.
+## Credentials
+
+- `flatline_op_...` — operator token: GUI sign-in and every `/api/v1` call.
+- `flatline_agent_push_...` — host (metric) agent token: `/api/push/{token}`
+  and `/agent/*` only. It cannot call the operator API.
+- `flatline_agent_backup_...` — backup agent token: `/api/backup/v1` only.
+- Legacy `flatline_...` tokens still work but must not be minted.
+
+Using a credential on the wrong surface returns an explicit
+`agent_token_on_operator_api` / `operator_token_on_agent_api` error with a
+`hint`, not a bare 401. Never print a token.
+
+## Start here
+
+- [AI-assisted deployment runbook]({{ORIGIN}}/add-push-server.md?token={{TOKEN}}):
+  analyse the host, install or reuse the agent, request operator access,
+  add websites and notifications, group and link them, then verify.
 - [OpenAPI document]({{ORIGIN}}/api/v1/openapi.json): the full HTTP API.
-- [Agent downloads]({{ORIGIN}}/agent/version?token={{TOKEN}}): latest agent version, checksums and URLs.
+- [Agent downloads]({{ORIGIN}}/agent/version?token={{TOKEN}}): version, checksums and URLs.
 ";
 
 /// Prefix for agent build file names served under `/agent/`.
@@ -161,13 +177,65 @@ async fn agent_assets(dir: &Path) -> Vec<AgentAsset> {
     out
 }
 
-/// The provisioning token: `?token=` first, then `Authorization: Bearer`.
+/// Who fetched a provisioning document: an operator or a push agent.
+struct Caller {
+    token: String,
+    kind: CallerKind,
+    /// The prefix family actually used, which differs from `kind` for
+    /// legacy tokens minted before the split.
+    prefix_kind: crate::auth::TokenKind,
+    monitor: Option<MonitorIdentity>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CallerKind {
+    Operator,
+    PushAgent,
+}
+
+impl CallerKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Operator => "operator",
+            Self::PushAgent => "push_agent",
+        }
+    }
+}
+
+struct MonitorIdentity {
+    id: i64,
+    name: String,
+}
+
+impl Caller {
+    fn token_kind_prefix(&self) -> &'static str {
+        self.prefix_kind.prefix()
+    }
+
+    fn monitor_id(&self) -> String {
+        self.monitor
+            .as_ref()
+            .map(|monitor| monitor.id.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    fn monitor_name(&self) -> String {
+        self.monitor
+            .as_ref()
+            .map(|monitor| monitor.name.clone())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+}
+
+/// The provisioning credential: `?token=` first, then `Authorization: Bearer`.
 ///
-/// Two credentials are accepted: an operator API key (what the runbook links
-/// use) and a monitor push token (what a provisioned agent carries). The
-/// push-token path is what makes self-update possible without handing every
-/// host an operator key. Push tokens are checked first: they are what agents
-/// poll with, and the lookup is a single indexed query.
+/// Two credential families are accepted here:
+/// - operator tokens (`flatline_op_...`), which can also use the operator API;
+/// - push-agent tokens (`flatline_agent_push_...`, or a legacy monitor token),
+///   which only unlock the installer, downloads and this runbook.
+///
+/// Backup-agent tokens are rejected with an explicit message: they are for
+/// `/api/backup/v1`, never for the metric-agent installer.
 ///
 /// Called once per request. `Err` carries the response to send: 401 for a
 /// missing or invalid token, 503/429 when the token could not be checked.
@@ -176,7 +244,7 @@ async fn authorize(
     state: &AppState,
     params: &HashMap<String, String>,
     headers: &HeaderMap,
-) -> Result<String, Response> {
+) -> Result<Caller, Response> {
     let token = params
         .get("token")
         .map(String::as_str)
@@ -185,15 +253,73 @@ async fn authorize(
         .map(str::to_string)
         .ok_or_else(crate::auth::unauthorized)?;
 
-    let checks = async {
-        if crate::auth::verify_push_token(&state.pool, &token).await? {
-            return Ok(true);
+    // Push tokens first: that is what provisioned agents poll with, and the
+    // lookup is one indexed query. The monitor identity lets the runbook
+    // name the host monitor the AI must link websites to.
+    let monitor = sqlx::query_as::<_, (i64, String, i64)>(
+        "SELECT id, name, active FROM monitors WHERE push_token = ? LIMIT 1",
+    )
+    .bind(&token)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|error| {
+        tracing::error!("provisioning: push token lookup: {error}");
+        crate::auth::verify_error_response(&crate::auth::VerifyError::Unavailable(
+            error.to_string(),
+        ))
+    })?;
+    if let Some((id, name, _active)) = monitor {
+        let prefix_kind = crate::auth::token_kind(&token);
+        return Ok(Caller {
+            token,
+            kind: CallerKind::PushAgent,
+            prefix_kind,
+            monitor: Some(MonitorIdentity { id, name }),
+        });
+    }
+
+    match crate::auth::verify_token(&state.pool, &token).await {
+        Ok(crate::auth::TokenVerdict::Operator) => {
+            let prefix_kind = crate::auth::token_kind(&token);
+            Ok(Caller {
+                token,
+                kind: CallerKind::Operator,
+                prefix_kind,
+                monitor: None,
+            })
         }
-        crate::auth::verify_token(&state.pool, &token).await
-    };
-    match checks.await {
-        Ok(true) => Ok(token),
-        Ok(false) => Err(crate::auth::unauthorized()),
+        Ok(crate::auth::TokenVerdict::Agent(crate::auth::TokenKind::BackupAgent)) => {
+            Err(crate::auth::backup_token_on_metric_agent_api("/agent/*"))
+        }
+        Ok(crate::auth::TokenVerdict::Agent(_)) => {
+            // A push token whose monitor exists but is inactive: say so,
+            // because "invalid token" hides the actual fix.
+            let inactive: Option<(i64, String)> = sqlx::query_as(
+                "SELECT id, name FROM monitors WHERE push_token = ? AND active = 0 LIMIT 1",
+            )
+            .bind(&token)
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten();
+            match inactive {
+                Some((id, name)) => Err((
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    Json(json!({
+                        "ok": false,
+                        "error": "agent_monitor_inactive",
+                        "code": "agent_monitor_inactive",
+                        "message": format!("This push-agent token belongs to monitor #{id} ({name}), which is paused."),
+                        "tokenKind": "push_agent",
+                        "hint": "Resume the monitor (PATCH /api/v1/monitors/{id} {\"active\":true}) with an operator token, then retry. A paused monitor's token cannot download agents or push telemetry.",
+                        "docs": "/llms.txt",
+                    })),
+                )
+                    .into_response()),
+                None => Err(crate::auth::unauthorized()),
+            }
+        }
+        Ok(crate::auth::TokenVerdict::Invalid) => Err(crate::auth::unauthorized()),
         Err(error) => Err(crate::auth::verify_error_response(&error)),
     }
 }
@@ -239,12 +365,16 @@ fn render(
     template: &str,
     state: &AppState,
     headers: &HeaderMap,
-    token: &str,
+    caller: &Caller,
     version: &str,
 ) -> String {
     template
         .replace("{{ORIGIN}}", &origin(state, headers))
-        .replace("{{TOKEN}}", token)
+        .replace("{{TOKEN}}", &caller.token)
+        .replace("{{TOKEN_KIND}}", caller.kind.as_str())
+        .replace("{{TOKEN_PREFIX}}", caller.token_kind_prefix())
+        .replace("{{MONITOR_ID}}", &caller.monitor_id())
+        .replace("{{MONITOR_NAME}}", &caller.monitor_name())
         .replace("{{AGENT_VERSION}}", version)
 }
 
@@ -278,14 +408,14 @@ pub async fn runbook(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    let token = match authorize(&state, &params, &headers).await {
-        Ok(token) => token,
+    let caller = match authorize(&state, &params, &headers).await {
+        Ok(caller) => caller,
         Err(response) => return response,
     };
     let version = agent_version(&state)
         .await
         .unwrap_or_else(|| "unknown".to_string());
-    let body = render(RUNBOOK, &state, &headers, &token, &version);
+    let body = render(RUNBOOK, &state, &headers, &caller, &version);
     text_response("text/markdown; charset=utf-8", body)
 }
 
@@ -295,11 +425,11 @@ pub async fn llms(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    let token = match authorize(&state, &params, &headers).await {
-        Ok(token) => token,
+    let caller = match authorize(&state, &params, &headers).await {
+        Ok(caller) => caller,
         Err(response) => return response,
     };
-    let body = render(LLMS, &state, &headers, &token, "unknown");
+    let body = render(LLMS, &state, &headers, &caller, "unknown");
     text_response("text/plain; charset=utf-8", body)
 }
 
@@ -309,14 +439,14 @@ pub async fn installer(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    let token = match authorize(&state, &params, &headers).await {
-        Ok(token) => token,
+    let caller = match authorize(&state, &params, &headers).await {
+        Ok(caller) => caller,
         Err(response) => return response,
     };
     let version = agent_version(&state)
         .await
         .unwrap_or_else(|| "unknown".to_string());
-    let body = render(INSTALLER, &state, &headers, &token, &version);
+    let body = render(INSTALLER, &state, &headers, &caller, &version);
     text_response("text/x-shellscript; charset=utf-8", body)
 }
 

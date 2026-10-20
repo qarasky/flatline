@@ -6,7 +6,9 @@ import { Input } from "@/components/ui/input";
 
 function errorMessage(e: unknown, fallback: string): string {
     if (e instanceof ApiError) {
-        return e.message;
+        // The API's `hint` names the fix (e.g. "agent tokens are not operator
+        // tokens, mint one in Agents"); show it instead of a bare 401.
+        return e.hint ? `${e.message} ${e.hint}` : e.message;
     }
     return e instanceof Error ? e.message : fallback;
 }

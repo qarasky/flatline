@@ -136,9 +136,12 @@ container's entrypoint hands anything in the data directory back to its
 
 ## Tokens
 
-There is one credential type — a bearer token with full permission — plus
-per-monitor push tokens. Nothing is scoped, so a token is only as narrow as the
-person holding it.
+There are three credential families, told apart by prefix. Operator tokens
+(`flatline_op_`) are full-permission bearers; push-agent tokens
+(`flatline_agent_push_`) and backup-agent tokens (`flatline_agent_backup_`) are
+agent-scoped and rejected by the operator API and GUI. Nothing is scoped beyond
+that family boundary, so an operator token is only as narrow as the person
+holding it. Legacy `flatline_...` tokens keep working until rotated.
 
 | Credential         | Where it lives                                 | Rotating it                                                                                                                       |
 | ------------------ | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -160,7 +163,12 @@ Rules that keep this manageable:
 - If a token does leak, disable it first and rotate second; revocation is
   immediate, including on open SSE streams.
 - Push tokens are the exception worth distributing: an agent host holding only a
-  push token can report its own monitor and download releases, nothing else.
+  push token can report its own monitor and download releases, nothing else. A
+  push token used for GUI sign-in or `/api/v1` answers
+  `agent_token_on_operator_api`, not a bare 401.
+- Keep the two agent families apart: a backup-agent token only opens
+  `/api/backup/v1`, a push-agent token only opens its push route and
+  `/agent/*`.
 
 ## Updating the agent fleet
 

@@ -201,3 +201,36 @@ async fn missing_agent_builds_answer_404() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn runbook_names_the_host_monitor_for_push_agent_tokens() {
+    let h = harness().await;
+    std::fs::create_dir_all(&h.state.config.agent_dir).unwrap();
+    std::fs::write(h.state.config.agent_dir.join("VERSION"), "9.9.9\n").unwrap();
+
+    let push = flatline_backend::auth::mint_push_token();
+    sqlx::query("INSERT INTO monitors (name, type, push_token) VALUES ('edge-01', 'push', ?)")
+        .bind(&push)
+        .execute(&h.pool)
+        .await
+        .unwrap();
+
+    let (status, _, bytes) =
+        get_raw(&h.app, &format!("/add-push-server.md?token={push}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = String::from_utf8(bytes).unwrap();
+    assert!(
+        body.contains("`push_agent`"),
+        "the runbook must state the credential kind: {body}"
+    );
+    assert!(body.contains("edge-01"), "monitor name must render");
+    assert!(
+        body.contains("**Host push monitor**: 1 (`edge-01`)"),
+        "the monitor id and name must render"
+    );
+    assert!(!body.contains("{{"), "no placeholders may survive");
+
+    // The same token cannot touch the operator API.
+    let (status, _, _) = get_raw(&h.app, "/api/v1/monitors", Some(&push)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

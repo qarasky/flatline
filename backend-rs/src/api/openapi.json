@@ -3,7 +3,7 @@
     "info": {
         "title": "Flatline API",
         "version": "1.0.0",
-        "description": "Monitoring API for automation and agents. Every response includes an `ok` boolean. Authenticate with `Authorization: Bearer <token>`; every token is full-permission (no scopes). Failures use `{ ok, error, message }`. The agent push endpoint and the status-page read API are public."
+        "description": "Monitoring API for automation and agents. Every response includes an `ok` boolean. Authenticate with `Authorization: Bearer <token>`. Credential families: `flatline_op_...` operator (GUI sign-in and every /api/v1 call), `flatline_agent_push_...` host agent (only /api/push/{token} and /agent/*), `flatline_agent_backup_...` backup agent (only /api/backup/v1). Using a credential on the wrong surface returns an explicit error code with a `hint`. Failures use `{ ok, error, code, message, hint?, details? }`."
     },
     "servers": [
         {
@@ -16,7 +16,7 @@
             "bearerAuth": {
                 "type": "http",
                 "scheme": "bearer",
-                "description": "API token minted under Agents, or the admin token from data/initial-token.txt."
+                "description": "Operator token `flatline_op_...` from the dashboard's Agents panel, or the admin token from data/initial-token.txt. Legacy `flatline_...` tokens are still accepted. Agent tokens are rejected here with `agent_token_on_operator_api`."
             }
         },
         "parameters": {
@@ -56,7 +56,7 @@
         "schemas": {
             "Error": {
                 "type": "object",
-                "required": ["ok", "error", "message"],
+                "required": ["ok", "error", "code", "message"],
                 "properties": {
                     "ok": {
                         "type": "boolean",
@@ -64,17 +64,77 @@
                     },
                     "error": {
                         "type": "string",
-                        "enum": [
+                        "description": "Stable machine-readable error code. Same value as `code`.",
+                        "examples": [
                             "bad_request",
                             "unauthorized",
-                            "forbidden",
-                            "rate_limited",
+                            "agent_token_on_operator_api",
+                            "operator_token_on_agent_api",
+                            "agent_monitor_inactive",
+                            "backup_agent_token_on_metric_agent_api",
+                            "push_agent_token_on_backup_agent_api",
                             "not_found",
+                            "conflict",
+                            "rate_limited",
+                            "unavailable",
+                            "stream_limit",
+                            "timeout",
+                            "busy",
+                            "password_required",
                             "server_error"
                         ]
                     },
+                    "code": {
+                        "type": "string",
+                        "description": "Stable machine-readable error code. Same value as `error`."
+                    },
                     "message": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "What went wrong, in one sentence."
+                    },
+                    "hint": {
+                        "type": "string",
+                        "description": "What to do next. Names the fix or the required credential family; present on auth and validation failures."
+                    },
+                    "details": {
+                        "type": "object",
+                        "additionalProperties": true,
+                        "description": "Structured context for the error, e.g. the active run id or the conflicting field."
+                    },
+                    "tokenKind": {
+                        "type": "string",
+                        "enum": ["operator", "push_agent", "backup_agent", "legacy", "unknown"],
+                        "description": "Kind of credential that was presented, when the error is about credential kind."
+                    },
+                    "expectedTokenKind": {
+                        "type": "string",
+                        "enum": ["operator", "push_agent", "backup_agent"],
+                        "description": "Kind of credential the endpoint expects."
+                    },
+                    "expectedPrefix": {
+                        "type": "string",
+                        "description": "Prefix to mint the expected credential with."
+                    },
+                    "expectedPrefixes": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "nextActions": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Ordered recovery steps."
+                    },
+                    "retryAfterSeconds": {
+                        "type": "integer",
+                        "description": "Delay to wait before retrying a 429/503."
+                    },
+                    "docs": {
+                        "type": "string",
+                        "description": "Relative link to the LLM/runbook documentation."
                     }
                 }
             },
@@ -173,6 +233,18 @@
                             "type": "integer"
                         },
                         "description": "Acknowledged per-collector `agent.collectorErrors` counts, keyed by collector name."
+                    },
+                    "pushToken": {
+                        "type": ["string", "null"],
+                        "description": "Host-agent push token (`flatline_agent_push_...`). Bearer secret: keep it on the host."
+                    },
+                    "pushTokenKind": {
+                        "type": ["string", "null"],
+                        "const": "push_agent"
+                    },
+                    "pushTokenPrefix": {
+                        "type": ["string", "null"],
+                        "const": "flatline_agent_push_"
                     }
                 }
             },
@@ -1364,10 +1436,10 @@
         "/api/v1/auth/me": {
             "get": {
                 "summary": "Own account",
-                "description": "Requires the `read` scope.",
+                "description": "Verifies the bearer token and states its family and capabilities. An agent token answers 401 `agent_token_on_operator_api` with the expected prefix.",
                 "responses": {
                     "200": {
-                        "description": "Account plus token scopes"
+                        "description": "Token kind (`operator`), capabilities, agent-endpoint map, and the operator account."
                     }
                 }
             }

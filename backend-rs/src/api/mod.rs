@@ -27,56 +27,100 @@ use serde_json::{Value, json};
 
 use crate::AppState;
 
-/// An error rendered as the Node-compatible envelope:
-/// `{ok:false, error, message}` with the right status code.
+/// An error rendered as the Node-compatible envelope with declarative
+/// extras: `{ok:false, error, code, message, hint?, details?}`. `error` and
+/// `code` carry the same stable machine string; `message` says what
+/// happened, `hint` says what to do next, `details` carries structured
+/// context. The goal is that a human or an AI agent can fix the request
+/// without reading OpenAPI or the source.
 #[derive(Debug)]
 pub struct ApiError {
     pub status: StatusCode,
     pub error: &'static str,
     pub message: String,
+    /// Boxed so the `Err` side of every handler stays small; the extras are
+    /// present on a minority of responses.
+    pub extra: Option<Box<ApiErrorExtra>>,
+}
+
+#[derive(Debug, Default)]
+pub struct ApiErrorExtra {
+    pub hint: Option<String>,
+    pub details: Option<Value>,
 }
 
 impl ApiError {
-    pub fn bad(message: impl Into<String>) -> Self {
+    fn new(status: StatusCode, error: &'static str, message: impl Into<String>) -> Self {
         Self {
-            status: StatusCode::BAD_REQUEST,
-            error: "bad_request",
+            status,
+            error,
             message: message.into(),
+            extra: None,
         }
+    }
+
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.extra.get_or_insert_with(Default::default).hint = Some(hint.into());
+        self
+    }
+
+    pub fn with_details(mut self, details: Value) -> Self {
+        self.extra.get_or_insert_with(Default::default).details = Some(details);
+        self
+    }
+
+    pub fn bad(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "bad_request", message).with_hint(
+            "The request was rejected as invalid; `message` names the offending field or value. Read `GET /api/v1/monitor-types` for writable monitor fields and `GET /api/v1/openapi.json` for the request schema. Do not retry the same body unchanged.",
+        )
     }
 
     pub fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            error: "not_found",
-            message: message.into(),
-        }
+        Self::new(StatusCode::NOT_FOUND, "not_found", message).with_hint(
+            "The id or path does not exist, or the resource was deleted or is not visible here. List the collection first (for example `GET /api/v1/monitors?perPage=200`) and retry with a discovered id; do not reuse an id from an example.",
+        )
     }
 
     pub fn server() -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            error: "server_error",
-            message: "Internal error.".to_string(),
-        }
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "Internal error.",
+        )
+        .with_hint("This is a server-side failure, not bad input. Retry once; if it persists, check the backend log with `docker logs flatline-rust-flatline-1`.")
     }
 
     pub fn stream_limit() -> Self {
-        Self {
-            status: StatusCode::TOO_MANY_REQUESTS,
-            error: "stream_limit",
-            message: "Too many live connections.".to_string(),
-        }
+        Self::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "stream_limit",
+            "Too many live connections.",
+        )
+        .with_hint(
+            "Close idle dashboards or wall screens, then reconnect. The limit is per instance.",
+        )
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(json!({ "ok": false, "error": self.error, "message": self.message })),
-        )
-            .into_response()
+        let mut body = json!({
+            "ok": false,
+            "error": self.error,
+            "code": self.error,
+            "message": self.message,
+        });
+        if let Some(map) = body.as_object_mut()
+            && let Some(extra) = self.extra
+        {
+            if let Some(hint) = extra.hint {
+                map.insert("hint".to_string(), Value::String(hint));
+            }
+            if let Some(details) = extra.details {
+                map.insert("details".to_string(), details);
+            }
+        }
+        (self.status, Json(body)).into_response()
     }
 }
 
@@ -332,6 +376,13 @@ async fn health(State(state): State<AppState>) -> Result<Json<Value>, ApiError> 
                 status: StatusCode::SERVICE_UNAVAILABLE,
                 error: "unavailable",
                 message: "Database unavailable.".to_string(),
+                extra: Some(Box::new(ApiErrorExtra {
+                    hint: Some(
+                        "This is a storage failure, not bad input. Retry shortly; if it persists, check the backend log and the SQLite volume."
+                            .to_string(),
+                    ),
+                    details: None,
+                })),
             });
         }
     };

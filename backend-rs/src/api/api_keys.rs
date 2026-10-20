@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::api::ApiError;
-use crate::auth::{hash_token, mint_token};
+use crate::auth::{OP_TOKEN_PREFIX, hash_token, mint_op_token};
 use crate::metrics::metric_time;
 
 type TokenRow = (i64, String, String, Option<String>, i64);
@@ -66,6 +66,9 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, ApiError
             .map(|(id, name, created, expires, active)| api_key_json(*id, name, created, expires, *active))
             .collect::<Vec<_>>(),
         "availableScopes": SCOPES,
+        "tokenKind": "operator",
+        "tokenPrefix": OP_TOKEN_PREFIX,
+        "note": "This list contains operator tokens only. Agent credentials are shown on their monitor (push) or backup-agent registration (backup).",
     })))
 }
 
@@ -97,7 +100,7 @@ pub async fn create(
         .filter(|expires| !expires.is_empty())
         .map(str::to_string);
 
-    let token = mint_token();
+    let token = mint_op_token();
     let row: (i64, String, String, Option<String>, i64) = sqlx::query_as(
         "INSERT INTO tokens (name, hash, scheme, active, expires)
          VALUES (?, ?, 'sha256', ?, ?)
@@ -121,6 +124,13 @@ pub async fn create(
             "apiKey": api_key_json(row.0, &row.1, &row.2, &row.3, row.4),
             // Shown once. There is no endpoint that returns this again.
             "token": token,
+            "tokenKind": "operator",
+            "tokenPrefix": OP_TOKEN_PREFIX,
+            "usage": {
+                "gui": "Paste the full token into the sign-in form.",
+                "api": "Authorization: Bearer flatline_op_...",
+            },
+            "warning": "This token can manage the whole instance. Do not give it to a host agent: agents use flatline_agent_push_... minted with their monitor.",
         })),
     ))
 }

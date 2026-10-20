@@ -89,7 +89,16 @@ impl IntoResponse for BackupApiError {
         let mut body = serde_json::Map::new();
         body.insert("ok".to_string(), false.into());
         body.insert("error".to_string(), self.api.error.into());
+        body.insert("code".to_string(), self.api.error.into());
         body.insert("message".to_string(), self.api.message.into());
+        if let Some(extra) = self.api.extra {
+            if let Some(hint) = extra.hint {
+                body.insert("hint".to_string(), hint.into());
+            }
+            if let Some(details) = extra.details {
+                body.insert("details".to_string(), details);
+            }
+        }
         body.extend(self.details);
         let mut response = (self.api.status, Json(serde_json::Value::Object(body))).into_response();
         if let Some(seconds) = self.retry_after
@@ -106,6 +115,7 @@ fn coded(status: StatusCode, error: &'static str, message: String) -> BackupApiE
         status,
         error,
         message,
+        extra: None,
     }
     .into()
 }
@@ -186,6 +196,44 @@ pub async fn require_agent(
         return crate::auth::unauthorized();
     };
 
+    // Say which credential family was presented instead of a bare 401.
+    match crate::auth::token_kind(token) {
+        crate::auth::TokenKind::PushAgent => {
+            return crate::auth::push_token_on_backup_agent_api();
+        }
+        crate::auth::TokenKind::Operator => {
+            return crate::auth::operator_token_on_agent_api("/api/backup/v1");
+        }
+        crate::auth::TokenKind::Legacy => {
+            match crate::auth::legacy_agent_kind(&state.pool, token).await {
+                Ok(Some(crate::auth::TokenKind::PushAgent)) => {
+                    return crate::auth::push_token_on_backup_agent_api();
+                }
+                Ok(_) => match crate::auth::known_operator_token(&state.pool, token).await {
+                    Ok(true) => {
+                        return crate::auth::operator_token_on_agent_api("/api/backup/v1");
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::error!("backup agent auth: token kind check: {error}");
+                        return api_error(BackupError::Unavailable(
+                            "credential check is temporarily unavailable".to_string(),
+                        ))
+                        .into_response();
+                    }
+                },
+                Err(error) => {
+                    tracing::error!("backup agent auth: token kind check: {error}");
+                    return api_error(BackupError::Unavailable(
+                        "credential check is temporarily unavailable".to_string(),
+                    ))
+                    .into_response();
+                }
+            }
+        }
+        crate::auth::TokenKind::BackupAgent | crate::auth::TokenKind::Other => {}
+    }
+
     match backups::agents::authenticate(&state.pool, token).await {
         Ok(Some(agent_id)) => {
             request.extensions_mut().insert(AgentId(agent_id));
@@ -251,7 +299,17 @@ pub async fn create_agent(
 
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({ "ok": true, "agent": agent, "token": token })),
+        Json(serde_json::json!({
+            "ok": true,
+            "agent": agent,
+            // Shown once. This credential opens /api/backup/v1 only; it is
+            // not an operator token and not a host-agent push token.
+            "token": token,
+            "tokenKind": "backup_agent",
+            "tokenPrefix": crate::auth::BACKUP_TOKEN_PREFIX,
+            "usage": "Authorization: Bearer flatline_agent_backup_... on /api/backup/v1",
+            "warning": "Do not paste this into the dashboard or use it on /api/v1; the API rejects it with backup_agent_token_on_metric_agent_api on agent routes and agent_token_on_operator_api elsewhere."
+        })),
     )
         .into_response())
 }
@@ -276,9 +334,14 @@ pub async fn rotate_token(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, BackupApiError> {
     let (agent, token) = state.backups.rotate_token(&id).await.map_err(api_error)?;
-    Ok(Json(
-        serde_json::json!({ "ok": true, "agent": agent, "token": token }),
-    ))
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "agent": agent,
+        "token": token,
+        "tokenKind": "backup_agent",
+        "tokenPrefix": crate::auth::BACKUP_TOKEN_PREFIX,
+        "usage": "Authorization: Bearer flatline_agent_backup_... on /api/backup/v1",
+    })))
 }
 
 /// POST /api/v1/backup-agents/{id}/revoke-token

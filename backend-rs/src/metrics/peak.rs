@@ -232,7 +232,10 @@ mod tests {
         // Monitor 0 was warmed first but keeps recording: it must survive.
         state.record(0, 1_000, Some(10.0));
         state.warm(CACHE_MONITORS as i64, &[]);
-        assert!(state.is_warm(0), "an active window is never the one evicted");
+        assert!(
+            state.is_warm(0),
+            "an active window is never the one evicted"
+        );
         assert!(!state.is_warm(1), "the least recently used window goes");
         assert!(state.is_warm(CACHE_MONITORS as i64));
     }

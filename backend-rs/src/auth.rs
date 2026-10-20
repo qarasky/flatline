@@ -16,12 +16,100 @@ use sqlx::SqlitePool;
 
 use crate::AppState;
 
-/// Prefix for tokens minted here; matches the old `uk` keys' spirit while
-/// being obviously a Flatline credential.
+/// Operator tokens: GUI sign-in and every `/api/v1` request. They control the
+/// whole instance and are never accepted by agent endpoints.
+pub const OP_TOKEN_PREFIX: &str = "flatline_op_";
+
+/// The shared prefix of every agent credential. Push (metric) and backup
+/// agents stay separate stores and separate tokens, but both are visibly
+/// agent credentials so a human or an AI cannot mistake one for an operator
+/// token.
+pub const AGENT_TOKEN_PREFIX: &str = "flatline_agent_";
+
+/// A host (metric) agent's push token, stored on its monitor.
+pub const PUSH_TOKEN_PREFIX: &str = "flatline_agent_push_";
+
+/// A backup agent's token, stored (hashed) on its `backup_agents` row. This
+/// constant mirrors `backups::agents::TOKEN_PREFIX`; both must agree.
+pub const BACKUP_TOKEN_PREFIX: &str = "flatline_agent_backup_";
+
+/// The pre-split namespace. Kept so tokens minted before the split keep
+/// working; new tokens never use it. Imported Node keys are `uk<id>_<secret>`.
 ///
-/// Imported Node keys are `uk<id>_<secret>`, so a `flatline_` token can only
-/// ever be a sha256 token: [`verify_token`] never runs bcrypt for one.
-pub const TOKEN_PREFIX: &str = "flatline_";
+/// A legacy `flatline_` token can be either an operator token (row in
+/// `tokens`) or a monitor push token, so [`verify_token`] resolves it by
+/// store rather than by prefix.
+pub const LEGACY_TOKEN_PREFIX: &str = "flatline_";
+
+/// Which kind of bearer credential a string looks like. Prefixes decide the
+/// new tokens outright; legacy tokens are resolved against the stores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenKind {
+    Operator,
+    PushAgent,
+    BackupAgent,
+    /// `flatline_`-prefixed, minted before the split: operator or push
+    /// depending on which store holds it.
+    Legacy,
+    /// Imported `uk<id>_<secret>` key or junk.
+    Other,
+}
+
+impl TokenKind {
+    pub fn is_agent(self) -> bool {
+        matches!(self, Self::PushAgent | Self::BackupAgent)
+    }
+
+    /// Stable machine name used in API responses.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Operator => "operator",
+            Self::PushAgent => "push_agent",
+            Self::BackupAgent => "backup_agent",
+            Self::Legacy => "legacy",
+            Self::Other => "unknown",
+        }
+    }
+
+    /// The prefix this kind of token is minted with.
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Self::Operator => OP_TOKEN_PREFIX,
+            Self::PushAgent => PUSH_TOKEN_PREFIX,
+            Self::BackupAgent => BACKUP_TOKEN_PREFIX,
+            Self::Legacy => LEGACY_TOKEN_PREFIX,
+            Self::Other => "",
+        }
+    }
+}
+
+/// Classify a token by its prefix alone. No store access.
+pub fn token_kind(token: &str) -> TokenKind {
+    if token.starts_with(PUSH_TOKEN_PREFIX) {
+        TokenKind::PushAgent
+    } else if token.starts_with(BACKUP_TOKEN_PREFIX) || token.starts_with("flatline_backup_") {
+        TokenKind::BackupAgent
+    } else if token.starts_with(OP_TOKEN_PREFIX) {
+        TokenKind::Operator
+    } else if token.starts_with(LEGACY_TOKEN_PREFIX) {
+        TokenKind::Legacy
+    } else {
+        TokenKind::Other
+    }
+}
+
+/// The verdict of verifying a bearer token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenVerdict {
+    /// A valid operator token: GUI sign-in and the operator API.
+    Operator,
+    /// A credential belonging to an agent store. It is not valid for the
+    /// operator API or GUI sign-in; handlers answer with an explicit
+    /// "agent token" error instead of a bare 401.
+    Agent(TokenKind),
+    /// Not a credential of any kind.
+    Invalid,
+}
 
 /// How long a verified imported (bcrypt) key skips bcrypt. The row is still
 /// re-read on every request, so revocation and expiry apply immediately;
@@ -174,11 +262,20 @@ pub fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 
-/// Mint a fresh token: 20 random bytes, hex encoded.
-pub fn mint_token() -> String {
+/// Mint a fresh operator token: `flatline_op_` + 20 random bytes, hex encoded.
+pub fn mint_op_token() -> String {
+    mint_with_prefix(OP_TOKEN_PREFIX)
+}
+
+/// Mint a fresh host-agent push token.
+pub fn mint_push_token() -> String {
+    mint_with_prefix(PUSH_TOKEN_PREFIX)
+}
+
+fn mint_with_prefix(prefix: &str) -> String {
     let mut bytes = [0u8; 20];
     rand::rng().fill_bytes(&mut bytes);
-    format!("{TOKEN_PREFIX}{}", hex::encode(bytes))
+    format!("{prefix}{}", hex::encode(bytes))
 }
 
 #[derive(sqlx::FromRow)]
@@ -221,23 +318,35 @@ pub async fn verify_push_token(pool: &SqlitePool, token: &str) -> Result<bool, V
     Ok(found.is_some())
 }
 
-/// Verify a bearer token against the token table.
+/// Verify a bearer token for operator use (GUI sign-in and `/api/v1`).
 ///
-/// `Ok(false)` means the token is not valid; `Err` means it could not be
-/// checked (the database failed, or the failed-check limiter tripped) and
-/// says nothing about the token — callers answer 503/429, never 401.
+/// Returns [`TokenVerdict::Agent`] when the token belongs to a push or backup
+/// agent store, so the caller can say *which* kind of credential was used
+/// instead of a bare 401. `Err` means the store could not be checked (the
+/// database failed, or the failed-check limiter tripped) and says nothing
+/// about the token — callers answer 503/429, never 401.
 ///
 /// Two schemes coexist: sha256 for tokens minted here, bcrypt for API keys
 /// imported from the Node database — so existing automation keeps working
 /// after cutover. Bcrypt is the slow path and is fenced accordingly:
-/// `flatline_` tokens never reach it, a verified imported key is cached (its
-/// row is still re-read, so revocation and expiry apply at once), a token
-/// that just failed is rejected from a short negative cache, verification
-/// runs on the blocking pool behind a small semaphore, and failed checks are
-/// budgeted instance-wide.
-pub async fn verify_token(pool: &SqlitePool, token: &str) -> Result<bool, VerifyError> {
+/// `flatline_`/`flatline_op_`/`flatline_agent_` tokens never reach it, a
+/// verified imported key is cached (its row is still re-read, so revocation
+/// and expiry apply at once), a token that just failed is rejected from a
+/// short negative cache, verification runs on the blocking pool behind a
+/// small semaphore, and failed checks are budgeted instance-wide.
+///
+/// Legacy `flatline_` tokens are resolved by store, not prefix: an operator
+/// row in `tokens` wins, then a monitor push token, then a backup-agent hash.
+pub async fn verify_token(pool: &SqlitePool, token: &str) -> Result<TokenVerdict, VerifyError> {
     if token.is_empty() {
-        return Ok(false);
+        return Ok(TokenVerdict::Invalid);
+    }
+
+    let kind = token_kind(token);
+    // Prefixes minted after the split are authoritative: an agent-prefixed
+    // credential is never an operator token, whether or not it exists.
+    if kind.is_agent() {
+        return Ok(TokenVerdict::Agent(kind));
     }
 
     let digest = hash_token(token);
@@ -250,15 +359,24 @@ pub async fn verify_token(pool: &SqlitePool, token: &str) -> Result<bool, Verify
 
     if let Some(row) = found {
         if !token_valid(&row) {
-            return Ok(false);
+            return Ok(TokenVerdict::Invalid);
         }
         touch(pool, &digest, row.id);
-        return Ok(true);
+        return Ok(TokenVerdict::Operator);
     }
 
-    // Minted tokens are sha256-only; a miss is final.
-    if token.starts_with(TOKEN_PREFIX) {
-        return Ok(false);
+    // Minted tokens are sha256-only; a miss on a post-split operator token is
+    // final. A legacy `flatline_` miss may still be an agent credential, and
+    // saying so is the whole point of the split.
+    if token.starts_with(OP_TOKEN_PREFIX) {
+        return Ok(TokenVerdict::Invalid);
+    }
+    if kind == TokenKind::Legacy {
+        let agent = legacy_agent_kind(pool, token).await?;
+        return Ok(match agent {
+            Some(kind) => TokenVerdict::Agent(kind),
+            None => TokenVerdict::Invalid,
+        });
     }
 
     // A recently verified imported key: re-read its row by the hash it
@@ -274,17 +392,17 @@ pub async fn verify_token(pool: &SqlitePool, token: &str) -> Result<bool, Verify
         match row {
             Some(row) => {
                 if !token_valid(&row) {
-                    return Ok(false);
+                    return Ok(TokenVerdict::Invalid);
                 }
                 touch(pool, &digest, row.id);
-                return Ok(true);
+                return Ok(TokenVerdict::Operator);
             }
             None => VERIFIED.lock().unwrap().remove(&digest),
         }
     }
 
     if REJECTED.lock().unwrap().get(&digest).is_some() {
-        return Ok(false);
+        return Ok(TokenVerdict::Invalid);
     }
 
     let imported: Vec<TokenRow> =
@@ -297,7 +415,7 @@ pub async fn verify_token(pool: &SqlitePool, token: &str) -> Result<bool, Verify
         .map(|row| (row.id, row.hash))
         .collect();
     if candidates.is_empty() {
-        return Ok(false);
+        return Ok(TokenVerdict::Invalid);
     }
 
     if FAILURES.lock().unwrap().exhausted(Instant::now()) {
@@ -323,21 +441,65 @@ pub async fn verify_token(pool: &SqlitePool, token: &str) -> Result<bool, Verify
         Some((id, hash)) => {
             VERIFIED.lock().unwrap().insert(digest.clone(), hash);
             touch(pool, &digest, id);
-            Ok(true)
+            Ok(TokenVerdict::Operator)
         }
         None => {
             FAILURES.lock().unwrap().record_failure(Instant::now());
             REJECTED.lock().unwrap().insert(digest, ());
-            Ok(false)
+            Ok(TokenVerdict::Invalid)
         }
     }
+}
+
+/// Which agent store holds a legacy `flatline_` token, if any.
+///
+/// Two indexed lookups on the slow path only (a token that missed the
+/// operator table), so a legacy agent token gets a precise error without
+/// making the normal operator path pay for it.
+pub async fn legacy_agent_kind(
+    pool: &SqlitePool,
+    token: &str,
+) -> Result<Option<TokenKind>, VerifyError> {
+    let monitor: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM monitors WHERE push_token = ? LIMIT 1")
+            .bind(token)
+            .fetch_optional(pool)
+            .await?;
+    if monitor.is_some() {
+        return Ok(Some(TokenKind::PushAgent));
+    }
+
+    let backup: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM backup_agents WHERE token_hash = ? LIMIT 1")
+            .bind(hash_token(token))
+            .fetch_optional(pool)
+            .await?;
+    Ok(backup.map(|_| TokenKind::BackupAgent))
+}
+
+/// Whether the token is a known operator token (sha256 row only).
+///
+/// Used by agent endpoints to explain a wrong credential kind without
+/// running bcrypt: an operator token presented as an agent credential gets
+/// "this is an operator token", not "invalid".
+pub async fn known_operator_token(pool: &SqlitePool, token: &str) -> Result<bool, VerifyError> {
+    if token.is_empty() || token_kind(token).is_agent() {
+        return Ok(false);
+    }
+    let digest = hash_token(token);
+    let found: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM tokens WHERE hash = ? AND scheme = 'sha256'")
+            .bind(&digest)
+            .fetch_optional(pool)
+            .await?;
+    Ok(found.is_some() || token.starts_with(OP_TOKEN_PREFIX))
 }
 
 /// Whether a revalidation result means the token was revoked. A store error
 /// is not a revocation: the SSE stream skips that round instead of telling
 /// the dashboard to sign out.
-pub fn is_revoked(result: &Result<bool, VerifyError>) -> bool {
-    matches!(result, Ok(false))
+pub fn is_revoked(result: &Result<TokenVerdict, VerifyError>) -> bool {
+    matches!(result, Ok(TokenVerdict::Invalid))
 }
 
 /// Record last use, at most once per [`TOUCH_INTERVAL`] per token and off
@@ -375,7 +537,7 @@ pub async fn ensure_initial_token(
         return Ok(None);
     }
 
-    let token = mint_token();
+    let token = mint_op_token();
     sqlx::query("INSERT INTO tokens (name, hash, scheme) VALUES ('admin', ?, 'sha256')")
         .bind(hash_token(&token))
         .execute(pool)
@@ -388,7 +550,7 @@ pub async fn ensure_initial_token(
 /// Mint an admin token unconditionally. Used by the importer: the operator
 /// must be able to sign in even when every imported key's plaintext is lost.
 pub async fn mint_admin_token(pool: &SqlitePool, data_dir: &Path) -> anyhow::Result<String> {
-    let token = mint_token();
+    let token = mint_op_token();
     sqlx::query("INSERT INTO tokens (name, hash, scheme) VALUES ('admin', ?, 'sha256')")
         .bind(hash_token(&token))
         .execute(pool)
@@ -437,10 +599,115 @@ pub async fn require_token(
         return unauthorized();
     };
     match verify_token(&state.pool, token).await {
-        Ok(true) => next.run(request).await,
-        Ok(false) => unauthorized(),
+        Ok(TokenVerdict::Operator) => next.run(request).await,
+        Ok(TokenVerdict::Agent(kind)) => agent_token_on_operator_api(kind),
+        Ok(TokenVerdict::Invalid) => unauthorized(),
         Err(error) => verify_error_response(&error),
     }
+}
+
+/// The response for an agent credential used on the operator API or GUI
+/// sign-in. Explicit on purpose: a generic 401 sends humans and AI agents
+/// hunting through OpenAPI or source for the difference.
+pub fn agent_token_on_operator_api(kind: TokenKind) -> Response {
+    let (label, endpoint_hint) = match kind {
+        TokenKind::PushAgent => (
+            "host-agent token",
+            "Push-agent tokens are only accepted by /api/push/{pushToken} and /agent/*. GUI sign-in and /api/v1 need an operator token (`flatline_op_...`); mint one in the dashboard's Agents panel.",
+        ),
+        TokenKind::BackupAgent => (
+            "backup-agent token",
+            "Backup-agent tokens are only accepted under /api/backup/v1. GUI sign-in and /api/v1 need an operator token (`flatline_op_...`); mint one in the dashboard's Agents panel.",
+        ),
+        _ => (
+            "agent token",
+            "Agent tokens are only accepted by agent endpoints. GUI sign-in and /api/v1 need an operator token (`flatline_op_...`).",
+        ),
+    };
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({
+            "ok": false,
+            "error": "agent_token_on_operator_api",
+            "code": "agent_token_on_operator_api",
+            "message": format!(
+                "This is a {label} (`{}...`), not an operator token.",
+                kind.prefix()
+            ),
+            "tokenKind": kind.as_str(),
+            "expectedTokenKind": "operator",
+            "expectedPrefix": OP_TOKEN_PREFIX,
+            "hint": endpoint_hint,
+            "nextActions": [
+                "Use an operator token (`flatline_op_...`) for GUI sign-in and /api/v1 requests.",
+                "Mint or rotate an operator token in the dashboard: Agents panel -> API keys.",
+                "Keep agent tokens in the host agent config; never paste them into a browser login."
+            ],
+            "docs": "/llms.txt",
+        })),
+    )
+        .into_response()
+}
+
+/// The response for an operator credential used on an agent endpoint.
+pub fn operator_token_on_agent_api(endpoint: &str) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({
+            "ok": false,
+            "error": "operator_token_on_agent_api",
+            "code": "operator_token_on_agent_api",
+            "message": "This is an operator token, not an agent token.",
+            "tokenKind": "operator",
+            "expectedTokenKind": "agent",
+            "expectedPrefixes": [PUSH_TOKEN_PREFIX, BACKUP_TOKEN_PREFIX],
+            "hint": format!(
+                "`{endpoint}` authenticates a push or backup agent. Use the host monitor's push token (`flatline_agent_push_...`) or the backup agent's token (`flatline_agent_backup_...`), not an operator token."
+            ),
+            "docs": "/llms.txt",
+        })),
+    )
+        .into_response()
+}
+
+/// The response for a backup-agent credential used on a metric-agent route.
+pub fn backup_token_on_metric_agent_api(endpoint: &str) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({
+            "ok": false,
+            "error": "backup_agent_token_on_metric_agent_api",
+            "code": "backup_agent_token_on_metric_agent_api",
+            "message": "This is a backup-agent token, not a host (metric) agent token.",
+            "tokenKind": "backup_agent",
+            "expectedTokenKind": "push_agent",
+            "expectedPrefix": PUSH_TOKEN_PREFIX,
+            "hint": format!(
+                "`{endpoint}` serves the host telemetry agent. Use the push monitor's token (`flatline_agent_push_...`). Backup agents authenticate under /api/backup/v1 with `flatline_agent_backup_...`."
+            ),
+            "docs": "/llms.txt",
+        })),
+    )
+        .into_response()
+}
+
+/// The response for a push-agent credential used on a backup-agent route.
+pub fn push_token_on_backup_agent_api() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({
+            "ok": false,
+            "error": "push_agent_token_on_backup_agent_api",
+            "code": "push_agent_token_on_backup_agent_api",
+            "message": "This is a host (metric) agent token, not a backup-agent token.",
+            "tokenKind": "push_agent",
+            "expectedTokenKind": "backup_agent",
+            "expectedPrefix": BACKUP_TOKEN_PREFIX,
+            "hint": "Backup agents authenticate under /api/backup/v1 with their own `flatline_agent_backup_...` credential from the backup-agent registration response. Push monitor tokens only serve /api/push/{pushToken} and /agent/*.",
+            "docs": "/llms.txt",
+        })),
+    )
+        .into_response()
 }
 
 /// The response for a token that could not be checked.
@@ -454,7 +721,10 @@ pub fn verify_error_response(error: &VerifyError) -> Response {
                 Json(json!({
                     "ok": false,
                     "error": "unavailable",
+                    "code": "unavailable",
                     "message": "The token could not be checked right now; retry shortly.",
+                    "retryAfterSeconds": 5,
+                    "hint": "This is a database problem, not a bad token. Retry the same request after the delay; do not mint a new token.",
                 })),
             )
                 .into_response()
@@ -465,21 +735,29 @@ pub fn verify_error_response(error: &VerifyError) -> Response {
             Json(json!({
                 "ok": false,
                 "error": "rate_limited",
+                "code": "rate_limited",
                 "message": "Too many failed sign-in attempts; retry in a minute.",
+                "retryAfterSeconds": 60,
+                "hint": "The instance-wide budget for failed imported-key checks is exhausted. Wait, then retry. Minted operator tokens are unaffected.",
             })),
         )
             .into_response(),
     }
 }
 
-/// JSON 401, matching the Node backend's error envelope.
+/// JSON 401 for a missing or unknown bearer token.
 pub fn unauthorized() -> Response {
     (
         StatusCode::UNAUTHORIZED,
         Json(json!({
             "ok": false,
             "error": "unauthorized",
+            "code": "unauthorized",
             "message": "Missing or invalid token.",
+            "expectedTokenKind": "operator",
+            "expectedPrefix": OP_TOKEN_PREFIX,
+            "hint": "Send `Authorization: Bearer flatline_op_...`. Operator tokens sign in to the GUI and authorize /api/v1. Host agents use `flatline_agent_push_...` on /api/push/{token}; backup agents use `flatline_agent_backup_...` on /api/backup/v1.",
+            "docs": "/llms.txt",
         })),
     )
         .into_response()
@@ -510,8 +788,8 @@ mod tests {
     #[tokio::test]
     async fn minted_tokens_are_hashed_and_verifiable() {
         let pool = test_pool().await;
-        let token = mint_token();
-        assert!(token.starts_with(TOKEN_PREFIX));
+        let token = mint_op_token();
+        assert!(token.starts_with(OP_TOKEN_PREFIX));
 
         sqlx::query("INSERT INTO tokens (name, hash, scheme) VALUES ('t', ?, 'sha256')")
             .bind(hash_token(&token))
@@ -519,9 +797,15 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(verify_token(&pool, &token).await, Ok(true));
-        assert_eq!(verify_token(&pool, "flatline_wrong").await, Ok(false));
-        assert_eq!(verify_token(&pool, "").await, Ok(false));
+        assert_eq!(
+            verify_token(&pool, &token).await,
+            Ok(TokenVerdict::Operator)
+        );
+        assert_eq!(
+            verify_token(&pool, "flatline_wrong").await,
+            Ok(TokenVerdict::Invalid)
+        );
+        assert_eq!(verify_token(&pool, "").await, Ok(TokenVerdict::Invalid));
 
         // The stored row is a hash, not the token.
         let stored: String = sqlx::query_scalar("SELECT hash FROM tokens")
@@ -539,10 +823,13 @@ mod tests {
 
         assert_eq!(
             verify_token(&pool, "uk7_supersecret").await,
-            Ok(true),
+            Ok(TokenVerdict::Operator),
             "imported keys must keep working"
         );
-        assert_eq!(verify_token(&pool, "uk7_wrong").await, Ok(false));
+        assert_eq!(
+            verify_token(&pool, "uk7_wrong").await,
+            Ok(TokenVerdict::Invalid)
+        );
     }
 
     #[tokio::test]
@@ -556,8 +843,8 @@ mod tests {
         );
         // The SSE revalidation keeps the stream open on such a round.
         assert!(!is_revoked(&result));
-        assert!(is_revoked(&Ok(false)));
-        assert!(!is_revoked(&Ok(true)));
+        assert!(is_revoked(&Ok(TokenVerdict::Invalid)));
+        assert!(!is_revoked(&Ok(TokenVerdict::Operator)));
         assert!(matches!(
             verify_push_token(&pool, "anything").await,
             Err(VerifyError::Unavailable(_))
@@ -572,7 +859,7 @@ mod tests {
         insert_bcrypt(&pool, "flatline_imported_lookalike").await;
         assert_eq!(
             verify_token(&pool, "flatline_imported_lookalike").await,
-            Ok(false),
+            Ok(TokenVerdict::Invalid),
             "a flatline_ token is sha256-only"
         );
     }
@@ -584,7 +871,10 @@ mod tests {
         let id = insert_bcrypt(&pool, plaintext).await;
         let digest = hash_token(plaintext);
 
-        assert_eq!(verify_token(&pool, plaintext).await, Ok(true));
+        assert_eq!(
+            verify_token(&pool, plaintext).await,
+            Ok(TokenVerdict::Operator)
+        );
         assert!(
             VERIFIED.lock().unwrap().get(&digest).is_some(),
             "a verified imported key is cached"
@@ -605,7 +895,7 @@ mod tests {
             .insert(hash_token(seeded_plain), decoy);
         assert_eq!(
             verify_token(&pool, seeded_plain).await,
-            Ok(true),
+            Ok(TokenVerdict::Operator),
             "a cached key is accepted without bcrypt"
         );
 
@@ -615,13 +905,19 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(verify_token(&pool, plaintext).await, Ok(false));
+        assert_eq!(
+            verify_token(&pool, plaintext).await,
+            Ok(TokenVerdict::Invalid)
+        );
         sqlx::query("UPDATE tokens SET expires = NULL, active = 0 WHERE id = ?")
             .bind(id)
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(verify_token(&pool, plaintext).await, Ok(false));
+        assert_eq!(
+            verify_token(&pool, plaintext).await,
+            Ok(TokenVerdict::Invalid)
+        );
 
         // A deleted key drops out of the cache.
         sqlx::query("DELETE FROM tokens WHERE id = ?")
@@ -629,7 +925,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(verify_token(&pool, plaintext).await, Ok(false));
+        assert_eq!(
+            verify_token(&pool, plaintext).await,
+            Ok(TokenVerdict::Invalid)
+        );
         assert!(VERIFIED.lock().unwrap().get(&digest).is_none());
     }
 
@@ -637,7 +936,10 @@ mod tests {
     async fn rejected_tokens_skip_bcrypt_for_a_while() {
         let pool = test_pool().await;
         insert_bcrypt(&pool, "uk5_real").await;
-        assert_eq!(verify_token(&pool, "uk5_junk_rejected").await, Ok(false));
+        assert_eq!(
+            verify_token(&pool, "uk5_junk_rejected").await,
+            Ok(TokenVerdict::Invalid)
+        );
         assert!(
             REJECTED
                 .lock()
@@ -677,13 +979,16 @@ mod tests {
     #[tokio::test]
     async fn last_use_is_written_at_most_once_per_interval() {
         let pool = test_pool().await;
-        let token = mint_token();
+        let token = mint_op_token();
         sqlx::query("INSERT INTO tokens (name, hash, scheme) VALUES ('t', ?, 'sha256')")
             .bind(hash_token(&token))
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(verify_token(&pool, &token).await, Ok(true));
+        assert_eq!(
+            verify_token(&pool, &token).await,
+            Ok(TokenVerdict::Operator)
+        );
         assert!(TOUCHED.lock().unwrap().get(&hash_token(&token)).is_some());
 
         // Clear the column; a second verification inside the interval must
@@ -693,7 +998,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(verify_token(&pool, &token).await, Ok(true));
+        assert_eq!(
+            verify_token(&pool, &token).await,
+            Ok(TokenVerdict::Operator)
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
         let last: Option<String> = sqlx::query_scalar("SELECT last_used_at FROM tokens")
             .fetch_one(&pool)
@@ -715,7 +1023,10 @@ mod tests {
         let second = ensure_initial_token(&pool, dir.path()).await.unwrap();
         assert!(second.is_none());
 
-        assert_eq!(verify_token(&pool, &first.unwrap()).await, Ok(true));
+        assert_eq!(
+            verify_token(&pool, &first.unwrap()).await,
+            Ok(TokenVerdict::Operator)
+        );
     }
 
     #[tokio::test]
