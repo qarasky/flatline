@@ -382,6 +382,49 @@
                 }
             }
         },
+        "/healthz": {
+            "get": {
+                "summary": "Liveness probe",
+                "description": "No token. 200 only when `SELECT 1` answers within 2 s and the check engine's watchdog ticked within 30 s; used by the container healthcheck.",
+                "security": [],
+                "responses": {
+                    "200": {
+                        "description": "Healthy",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "status": {
+                                            "type": "string",
+                                            "enum": ["ok"]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Unhealthy; `reason` names the failing part",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "status": {
+                                            "type": "string"
+                                        },
+                                        "reason": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/health": {
             "get": {
                 "summary": "Aggregate health across all monitors",
@@ -434,6 +477,9 @@
                                 }
                             }
                         }
+                    },
+                    "503": {
+                        "description": "The database query failed; the summary is unknown, not zero."
                     }
                 }
             }
