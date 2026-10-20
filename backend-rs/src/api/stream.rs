@@ -72,12 +72,11 @@ pub async fn events(
                 }
                 received = receiver.recv() => match received {
                     Ok(event) => {
-                        if !metrics_enabled
-                            && event.get("type").and_then(|t| t.as_str()) == Some("metrics")
-                        {
+                        // Pre-serialized at publish time: no per-stream JSON work.
+                        if !metrics_enabled && event.kind() == "metrics" {
                             continue;
                         }
-                        yield Ok(Event::default().data(event.to_string()));
+                        yield Ok(Event::default().data(event.data()));
                     }
                     // A lagging receiver means a slow client: drop it rather
                     // than queue stale telemetry.
