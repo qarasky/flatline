@@ -200,6 +200,8 @@ export function MonitorDetail({
 
     useEffect(() => {
         let cancelled = false;
+        // Heartbeat-triggered reloads are aborted when the view goes away.
+        const live = new AbortController();
         // A monitor switch must not show the previous monitor's backup rows
         // while the new snapshot is still loading.
         setBackups([]);
@@ -222,9 +224,28 @@ export function MonitorDetail({
                 if (!stale()) {
                     setError(e instanceof Error ? e.message : "Could not load monitor.");
                 }
+            }
+        }
+
+        // Backup rows cost 1 + N requests, so they load on mount, on a
+        // backup-specific event and after a reconnect only, never on
+        // heartbeats or generic invalidations. One load runs at a time; an
+        // event during a load schedules exactly one follow-up.
+        let backupController: AbortController | null = null;
+        let backupLoading = false;
+        let backupDirty = false;
+        async function loadBackups() {
+            if (cancelled) {
                 return;
             }
-
+            if (backupLoading) {
+                backupDirty = true;
+                return;
+            }
+            backupLoading = true;
+            backupController = new AbortController();
+            const signal = backupController.signal;
+            const stale = () => cancelled || currentMonitor.current !== id || signal.aborted;
             // Backup health is a separate read: a failure here must keep the
             // monitor details visible and report only the backup problem.
             try {
@@ -249,16 +270,36 @@ export function MonitorDetail({
                 if (!stale()) {
                     setBackupError(e instanceof Error ? `Backups unavailable: ${e.message}` : "Backups unavailable.");
                 }
+            } finally {
+                backupLoading = false;
+                if (backupDirty && !cancelled) {
+                    backupDirty = false;
+                    void loadBackups();
+                }
             }
         }
 
+        void loadBackups();
+        let connectedOnce = false;
         const stop = watchLive({
             metrics: false,
             snapshot: load,
+            ready: () => {
+                // The first connect follows the mount load; later ones may
+                // have missed backup events while disconnected.
+                if (connectedOnce) {
+                    void loadBackups();
+                }
+                connectedOnce = true;
+            },
+            backups: () => void loadBackups(),
             event: (event) => {
-                if (!cancelled && event.type === "heartbeat" && event.monitorId === id) {
+                if (cancelled) {
+                    return;
+                }
+                if (event.type === "heartbeat" && event.monitorId === id) {
                     setMonitor((previous) => (previous ? { ...previous, ...event.patch } : previous));
-                    void load();
+                    void load(live.signal);
                 }
             },
             error: () => {
@@ -269,6 +310,8 @@ export function MonitorDetail({
         });
         return () => {
             cancelled = true;
+            live.abort();
+            backupController?.abort();
             stop();
         };
     }, [id]);

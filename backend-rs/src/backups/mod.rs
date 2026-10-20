@@ -600,7 +600,7 @@ impl Backups {
         })?;
 
         let summary = self.agent_summary(&id, now.timestamp_millis()).await?;
-        self.events.invalidate();
+        self.publish_change();
         Ok((summary, token))
     }
 
@@ -731,7 +731,7 @@ impl Backups {
             other => Error::from(other),
         })?;
 
-        self.events.invalidate();
+        self.publish_change();
         self.agent_summary(id, Utc::now().timestamp_millis()).await
     }
 
@@ -745,7 +745,7 @@ impl Backups {
             .execute(&self.pool)
             .await?;
 
-        self.events.invalidate();
+        self.publish_change();
         let summary = self
             .agent_summary(id, Utc::now().timestamp_millis())
             .await?;
@@ -762,7 +762,7 @@ impl Backups {
         .execute(&self.pool)
         .await?;
 
-        self.events.invalidate();
+        self.publish_change();
         self.agent_summary(id, Utc::now().timestamp_millis()).await
     }
 
@@ -862,7 +862,7 @@ impl Backups {
 
         let id = uuid::Uuid::new_v4().to_string();
         insert_run(&self.pool, &id, agent_id, &validated, now).await?;
-        self.events.invalidate();
+        self.publish_change();
         self.run_by_id(&id).await
     }
 
@@ -926,7 +926,7 @@ impl Backups {
                     run_blocking(&storage, move |storage| storage.prepare_run(&agent, &run))
                         .await
                         .map_err(storage_error)?;
-                    self.events.invalidate();
+                    self.publish_change();
                     return self.run_by_id(&existing.id).await;
                 }
                 _ => {
@@ -955,7 +955,7 @@ impl Backups {
             return Err(storage_error(error));
         }
 
-        self.events.invalidate();
+        self.publish_change();
         self.run_by_id(&id).await
     }
 
@@ -1172,7 +1172,7 @@ impl Backups {
         .execute(&self.pool)
         .await?;
 
-        self.events.invalidate();
+        self.publish_change();
         self.run_by_id(run_id).await
     }
 
@@ -1210,7 +1210,7 @@ impl Backups {
         .bind(run_id)
         .execute(&self.pool)
         .await?;
-        self.events.invalidate();
+        self.publish_change();
         self.run_by_id(run_id).await
     }
 
@@ -1312,7 +1312,7 @@ impl Backups {
         .bind(&row.id)
         .execute(&self.pool)
         .await?;
-        self.events.invalidate();
+        self.publish_change();
         Ok(())
     }
 
@@ -1379,7 +1379,7 @@ impl Backups {
             .bind(&existing.id)
             .execute(&self.pool)
             .await?;
-            self.events.invalidate();
+            self.publish_change();
             return self.run_by_id(&existing.id).await;
         }
 
@@ -1400,7 +1400,7 @@ impl Backups {
         .execute(&self.pool)
         .await?;
 
-        self.events.invalidate();
+        self.publish_change();
         self.run_by_id(&id).await
     }
 
@@ -1435,6 +1435,13 @@ impl Backups {
         Ok(storage)
     }
 
+    /// Tell live clients that backup data changed. A dedicated event type,
+    /// not the generic `invalidate`: only views that show backups reload,
+    /// and backup progress never re-snapshots the monitor roster.
+    fn publish_change(&self) {
+        self.events.publish(serde_json::json!({ "type": "backups" }));
+    }
+
     fn invalidate_progress(&self) {
         let now = std::time::Instant::now();
         let mut last = self.progress_event.lock().unwrap();
@@ -1443,7 +1450,7 @@ impl Backups {
         if due {
             *last = Some(now);
             drop(last);
-            self.events.invalidate();
+            self.publish_change();
         }
     }
 
@@ -1496,7 +1503,7 @@ impl Backups {
             .bind(run_id)
             .execute(&self.pool)
             .await?;
-        self.events.invalidate();
+        self.publish_change();
         Ok(())
     }
 
@@ -1563,7 +1570,7 @@ impl Backups {
         .execute(&self.pool)
         .await?;
 
-        self.events.invalidate();
+        self.publish_change();
         self.run_by_id(run_id).await
     }
 

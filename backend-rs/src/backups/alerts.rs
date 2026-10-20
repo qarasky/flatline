@@ -39,7 +39,7 @@ impl Backups {
             .bind(&row.id)
             .execute(&self.pool)
             .await?;
-            self.events.invalidate();
+            self.publish_change();
 
             let message = match current.as_str() {
                 "failed" => {

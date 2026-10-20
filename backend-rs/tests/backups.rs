@@ -339,7 +339,7 @@ async fn run_metadata_validates_time_and_limits() {
 }
 
 #[tokio::test]
-async fn backup_mutations_publish_invalidate() {
+async fn backup_mutations_publish_backup_events() {
     use flatline_backend::backups::{storage::NoFaults, NewAgent};
     use sha2::{Digest, Sha256};
     use std::sync::Arc;
@@ -366,7 +366,9 @@ async fn backup_mutations_publish_invalidate() {
             .await
             .expect("a backup mutation must publish an event")
             .expect("the event stream must stay open");
-        assert_eq!(event["type"], "invalidate", "unexpected event: {event}");
+        // Review M4: a backup-specific event, so live clients reload backup
+        // data only when it changed (not on every heartbeat/invalidate).
+        assert_eq!(event["type"], "backups", "unexpected event: {event}");
     }
 
     let (agent, _) = h

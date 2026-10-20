@@ -275,6 +275,10 @@ export function watchLive(options: {
     snapshot: (signal?: AbortSignal) => Promise<void>;
     event: (event: LiveEvent) => void;
     error: (error: Error) => void;
+    /** Called after every (re)connect snapshot, for data the snapshot does not cover. */
+    ready?: () => void;
+    /** Backup agents, runs or verifications changed (the event carries no data). */
+    backups?: () => void;
     /** Deadline for one snapshot; overridable for tests. */
     snapshotTimeoutMs?: number;
     /** Abort the stream after this much silence; overridable for tests. */
@@ -409,6 +413,13 @@ export function watchLive(options: {
                         if (event.type === "ready" || event.type === "invalidate") {
                             await untilStreamDies(runSnapshot(), currentController.signal);
                             delay = 1000;
+                            if (event.type === "ready" && !stopped && epoch === generation) {
+                                options.ready?.();
+                            }
+                        } else if (event.type === "backups") {
+                            if (!stopped && epoch === generation) {
+                                options.backups?.();
+                            }
                         } else if (
                             (event.type === "metrics" || event.type === "heartbeat") &&
                             !stopped &&

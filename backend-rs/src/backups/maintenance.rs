@@ -196,7 +196,7 @@ impl Backups {
         }
 
         if changed {
-            self.events.invalidate();
+            self.publish_change();
         }
         Ok(())
     }
