@@ -50,6 +50,14 @@ records which have been applied, and the backend refuses to start if the
 database contains a migration it does not know — so a code rollback also needs
 the matching database (see [operations](operations.md)).
 
+The database runs in WAL mode with `synchronous = NORMAL` (the safe setting for
+WAL: a power cut can lose the last few commits, never corrupt the file), a 5 s
+busy timeout and `journal_size_limit` = 64 MB, so the `-wal` file shrinks back
+after a large delete instead of staying at its peak. SQLite has one write lock;
+long maintenance work (heartbeat retention, monitor deletion, raw pruning) is
+therefore done in bounded batches of short transactions, so pushes and check
+loops waiting for the lock get it between batches.
+
 | Table                                                                                                       | Holds                                                                                                                 |
 | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `monitors`                                                                                                  | Monitor definitions, including agent-warning acknowledgements and the hosting `provider`.                             |
@@ -71,7 +79,19 @@ years. The rollup job runs hourly and is idempotent, re-folding the last two
 complete hours so late and backfilled samples land. Raw pruning only deletes a
 sample once it is represented in an hourly bucket, and a _dirty hour_ marker is
 written whenever a sample arrives late for an hour that may already have been
-folded — so pruning can never run ahead of repair.
+folded — so pruning can never run ahead of repair. A run consumes only the
+markers it read (by id), so a marker written while a run is folding survives
+for the next run; on-time samples mark their hour once, late samples every
+time, in the same transaction as the raw row. The repair sweep's cursor only
+advances after its window was folded, so a failed run retries the same window.
+A raw row whose time does not parse can never be folded or read: the job skips
+it rather than stopping, and the raw prune drops it once it sorts below the
+retention cutoff.
+
+Heartbeat retention runs ten minutes after boot (not alongside every check
+loop's first beat) and daily at 04:32, per monitor in batches of 1000 rows,
+always keeping each monitor's newest beat before the cutoff. Deleting a monitor
+removes its telemetry and heartbeats in batches before the monitor row itself.
 
 History windows above a week read the hourly tier; the response's `basis` field
 says which tier answered, and percentiles describe hourly averages while `peak`
@@ -93,12 +113,18 @@ The dashboard and Superboard hold one SSE connection to `/api/v1/events`:
 
 ### The live cache
 
-The newest telemetry sample per monitor is cached in-process (bounded, 512
-monitors) so the metrics endpoints and the SSE stream never need a query for
-"right now". REST falls back to the archived rows after a restart or eviction,
-which means a restart can lose at most the unarchived window (~30 s of samples).
-Restart-recovery information such as the 10-minute CPU peak is warmed from the
-archived snapshots.
+The newest telemetry sample per monitor is cached in-process (bounded, 2048
+monitors, least recently updated evicted first) so the metrics endpoints and the
+SSE stream never need a query for "right now". REST falls back to the archived
+rows after a restart or eviction, which means a restart can lose at most the
+unarchived window (~30 s of samples). Restart-recovery information is warmed
+from the archived snapshots: the 10-minute CPU peak, and the 30 s archive clock
+(so a monitor that was evicted does not archive every push until it re-warms).
+
+Live events are serialized once when published and shared by every open stream
+(a 4096-event buffer, about 40 s at 100 agents); a stream that still falls
+behind is closed and the client reconnects. `?metrics=0` streams skip metrics
+events without touching their payload.
 
 ## Authentication model
 
