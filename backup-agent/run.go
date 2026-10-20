@@ -97,6 +97,7 @@ func (r Runner) Run(ctx context.Context, cfg Config) error {
 		}
 		if _, err := r.Upload(ctx, cfg, pending); err != nil {
 			if !errors.Is(err, errRunTerminal) {
+				r.reportUploadFailure(ctx, cfg, pending, err)
 				return fmt.Errorf("deliver pending bundle: %w", err)
 			}
 			// The server refused to reopen a terminal run (run_terminal or
@@ -139,6 +140,7 @@ func (r Runner) Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("persist pending bundle: %w", err)
 	}
 	if _, err := r.Upload(ctx, cfg, bundle); err != nil {
+		r.reportUploadFailure(ctx, cfg, bundle, err)
 		return fmt.Errorf("upload bundle: %w", err)
 	}
 	return clearPending(cfg, spool)
@@ -164,6 +166,43 @@ func (r Runner) report(ctx context.Context, cfg Config, clientRunID, exportStart
 			Code:            code,
 		})
 	}
+}
+
+// reportUploadFailure tells the office that an exported bundle was not
+// delivered. It must not touch the bundle's own server run (that would make
+// the retry terminal), so it uses a derived clientRunId, one per bundle and
+// code, carrying the bundle's export start time: a later successful delivery
+// of the same bundle is newer and clears the failure.
+func (r Runner) reportUploadFailure(ctx context.Context, cfg Config, bundle Bundle, err error) {
+	if ctx.Err() != nil {
+		return // shutdown, not a delivery failure
+	}
+	code := uploadFailureCode(err)
+	if code == "" {
+		return
+	}
+	r.report(ctx, cfg, uploadFailureRunID(bundle.ClientRunID, code), bundle.ExportStartedAt, code)
+}
+
+func uploadFailureCode(err error) string {
+	var permanent *permanentError
+	if errors.As(err, &permanent) {
+		switch {
+		case permanent.status == 401 || permanent.status == 403:
+			return "" // the report would be refused with the same credential
+		case permanent.status == 507:
+			return "office_storage_full"
+		}
+	}
+	return "upload_failed"
+}
+
+func uploadFailureRunID(clientRunID, code string) string {
+	suffix := "-" + code
+	if len(clientRunID)+len(suffix) > 128 {
+		clientRunID = clientRunID[:128-len(suffix)]
+	}
+	return clientRunID + suffix
 }
 
 func reportRetryable(err error) bool {

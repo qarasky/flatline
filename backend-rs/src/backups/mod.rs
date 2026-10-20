@@ -1518,10 +1518,13 @@ impl Backups {
         row: AgentRow,
         now_ms: i64,
     ) -> Result<AgentSummary, Error> {
+        // Latest by export time. On a tie (an upload-failure report shares
+        // its bundle's export time) a completed delivery wins.
         let latest: Option<RunRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {RUN_COLUMNS} FROM backup_runs
               WHERE agent_id = ?
-              ORDER BY COALESCE(export_finished_at, export_started_at, created_at) DESC, id DESC
+              ORDER BY COALESCE(export_finished_at, export_started_at, created_at) DESC,
+                       status = 'completed' DESC, id DESC
               LIMIT 1"
         )))
         .bind(&row.id)

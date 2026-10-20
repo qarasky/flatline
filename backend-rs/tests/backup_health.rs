@@ -805,3 +805,122 @@ async fn latest_failure_survives_receipt_order() {
     assert_eq!(ordering["lastErrorCode"], "export_failed");
     assert_eq!(ordering["health"], "failed");
 }
+
+/// Review M2: alerts skipped agents without a monitor, so an unlinked agent
+/// or one whose monitor was deleted (ON DELETE SET NULL) never alerted, and
+/// upload-phase failures (507 full office storage) were never reported.
+#[tokio::test]
+async fn unlinked_agents_and_upload_failures_still_alert() {
+    let h = harness().await;
+    let (telegram_url, records) = fake_telegram().await;
+    let config = json!({
+        "telegramBotToken": "123:abc",
+        "telegramChatID": "42",
+        "telegramServerUrl": telegram_url,
+    })
+    .to_string();
+    sqlx::query(
+        "INSERT INTO notifications (name, type, active, is_default, config)
+         VALUES ('office', 'telegram', 1, 1, ?)",
+    )
+    .bind(config)
+    .execute(&h.pool)
+    .await
+    .unwrap();
+    let monitor_id: i64 = sqlx::query_scalar(
+        "INSERT INTO monitors (name, type, active) VALUES ('MEKS', 'push', 1) RETURNING id",
+    )
+    .fetch_one(&h.pool)
+    .await
+    .unwrap();
+
+    let t0 = chrono::Utc::now();
+    let (linked_id, linked_token) = register_at(&h, "meks", Some(monitor_id), t0).await;
+    let (_, unlinked_token) = register_at(&h, "zhkhteam", None, t0).await;
+    sqlx::query("DELETE FROM monitors WHERE id = ?")
+        .bind(monitor_id)
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    let orphaned: Option<i64> =
+        sqlx::query_scalar("SELECT monitor_id FROM backup_agents WHERE id = ?")
+            .bind(&linked_id)
+            .fetch_one(&h.pool)
+            .await
+            .unwrap();
+    assert_eq!(orphaned, None, "monitor deletion unlinks the agent");
+
+    // The agent reports a 507 during upload under a derived clientRunId.
+    // Canonical storage form, as the receiver writes it.
+    let exported = (t0 - chrono::Duration::minutes(30))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    for (token, code) in [
+        (&linked_token, "office_storage_full"),
+        (&unlinked_token, "upload_failed"),
+    ] {
+        let (status, body) = send(
+            &h.app,
+            request(
+                "POST",
+                "/api/backup/v1/failures",
+                Some(token),
+                Some(json!({
+                    "clientRunId": format!("bundle-1-{code}"),
+                    "exportStartedAt": exported,
+                    "code": code,
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, 200, "{code} must be accepted: {body}");
+    }
+
+    h.state
+        .backups
+        .evaluate_health(t0.timestamp_millis())
+        .await
+        .unwrap();
+    let texts: Vec<String> = records
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|record| record["text"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(texts.len(), 2, "both agents alert via the default: {texts:?}");
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("meks") && text.contains("office_storage_full"))
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("zhkhteam") && text.contains("not delivered"))
+    );
+
+    // The same bundle is delivered later: its completion shares the export
+    // time of the failure report and must win, then recovery is announced.
+    let mut delivered = RunSeed::new(&linked_id);
+    delivered.status = "completed".to_string();
+    delivered.export_started_at = exported.clone();
+    delivered.export_finished_at = Some(exported.clone());
+    delivered.completed_at = Some(t0.to_rfc3339());
+    delivered.received_bytes = 1024;
+    insert_seed(&h.pool, &delivered).await;
+    for _ in 0..3 {
+        // Repeated evaluations: the tie-break must be deterministic.
+        h.state
+            .backups
+            .evaluate_health((t0 + chrono::Duration::minutes(1)).timestamp_millis())
+            .await
+            .unwrap();
+    }
+    let texts: Vec<String> = records
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|record| record["text"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    assert!(texts[2].contains("meks") && texts[2].contains("recovery"));
+}

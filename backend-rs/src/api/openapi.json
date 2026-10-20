@@ -574,6 +574,9 @@
                             "auth_failed",
                             "config_invalid",
                             "source_changed",
+                            "bundle_quarantined",
+                            "office_storage_full",
+                            "export_attempts_exhausted",
                             "unknown"
                         ]
                     }

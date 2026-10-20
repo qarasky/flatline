@@ -219,11 +219,29 @@ pub const FAILURE_CODES: &[&str] = &[
     "source_changed",
     // The agent moved an undeliverable pending bundle to quarantine/.
     "bundle_quarantined",
+    // Office storage answered 507: the reserve would be violated.
+    "office_storage_full",
+    // The daily cap on export attempts was reached.
+    "export_attempts_exhausted",
     "unknown",
 ];
 
 pub fn valid_failure_code(code: &str) -> bool {
     FAILURE_CODES.contains(&code)
+}
+
+/// Codes describing a bundle that was exported but not delivered, as
+/// opposed to an export that failed.
+pub fn is_delivery_code(code: &str) -> bool {
+    matches!(
+        code,
+        "upload_failed"
+            | "office_storage_full"
+            | "bundle_quarantined"
+            | "auth_failed"
+            | CODE_ABANDONED
+            | "upload_expired"
+    )
 }
 
 /// Derived agent health. The spec's single enum, in precedence order:

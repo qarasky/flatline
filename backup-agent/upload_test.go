@@ -841,3 +841,56 @@ func TestUnavailableCredentialCheckIsRetried(t *testing.T) {
 		t.Fatalf("exhausted 503 = %v", err)
 	}
 }
+
+// Review M2: upload-phase failures, including a 507 from full office
+// storage, were never reported. They are reported under a derived
+// clientRunId (never the bundle's own run) with the bundle's export time.
+func TestUploadFailuresAreReported(t *testing.T) {
+	type report struct{ clientRunID, started, code string }
+	for name, testCase := range map[string]struct {
+		err  error
+		code string
+	}{
+		"office storage full": {&permanentError{status: 507, code: "insufficient_storage"}, "office_storage_full"},
+		"network":             {errors.New("server unreachable"), "upload_failed"},
+		"revoked token":       {&permanentError{status: 401}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newFixture(t)
+			cfg := runnerConfig(t, fixture, "meks")
+			var reports []report
+			exports := 0
+			runner := DefaultRunner()
+			runner.ReportFailure = func(_ context.Context, _ Config, clientRunID, started, code string) error {
+				reports = append(reports, report{clientRunID, started, code})
+				return nil
+			}
+			runner.Export = fakeExport(&exports)
+			var uploaded Bundle
+			runner.Upload = func(_ context.Context, _ Config, bundle Bundle) (RunSummary, error) {
+				uploaded = bundle
+				return RunSummary{}, testCase.err
+			}
+			if err := runner.Run(context.Background(), cfg); err == nil {
+				t.Fatal("the upload failure must fail the run")
+			}
+			if testCase.code == "" {
+				if len(reports) != 0 {
+					t.Fatalf("an auth failure cannot be reported: %+v", reports)
+				}
+				return
+			}
+			if len(reports) != 1 {
+				t.Fatalf("reports = %+v", reports)
+			}
+			got := reports[0]
+			if got.code != testCase.code || got.clientRunID != uploaded.ClientRunID+"-"+testCase.code ||
+				got.started != uploaded.ExportStartedAt {
+				t.Fatalf("report = %+v for bundle %s", got, uploaded.ClientRunID)
+			}
+			if _, exists, err := loadPending(cfg, mustSpool(t, cfg)); err != nil || !exists {
+				t.Fatalf("the pending bundle must survive: %v", err)
+			}
+		})
+	}
+}
