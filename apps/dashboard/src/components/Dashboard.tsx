@@ -4,7 +4,6 @@ import {
     deleteMonitor,
     fetchAllMonitors,
     updateMonitor,
-    watchLive,
     getToken,
     pauseMonitor,
     resumeMonitor,
@@ -12,6 +11,7 @@ import {
     type HealthSummary,
     type MonitorSummary,
 } from "@/lib/api";
+import { subscribeLive } from "@/lib/live-hub";
 import { MonitorForm } from "@/components/MonitorForm";
 import { MonitorDetail } from "@/components/MonitorDetail";
 import {
@@ -656,7 +656,7 @@ export function Dashboard() {
             return;
         }
 
-        const stop = watchLive({
+        const stop = subscribeLive({
             metrics: false,
             snapshot: (signal) => load(true, signal),
             event: (event) => {

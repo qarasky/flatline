@@ -1,45 +1,14 @@
 import { useEffect, useState } from "react";
-import { fetchMonitor, watchLive, type MonitorSummary } from "@/lib/api";
+import { fetchHeartbeats, fetchMonitor, type MonitorSummary } from "@/lib/api";
+import { prependBeat, type HeartbeatEntry } from "@/lib/heartbeat-log";
+import { subscribeLive } from "@/lib/live-hub";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
-export interface HeartbeatEntry {
-    time: string;
-    status: number;
-    ping: number | null;
-    msg: string;
-    important: boolean;
-}
+export type { HeartbeatEntry };
 
-/**
- * Fetch recent heartbeats for a monitor.
- * @param id Monitor id
- * @param limit How many to take
- * @param signal Cancels the request when the caller's deadline fires
- * @returns Heartbeats newest first, plus the total
- */
-async function fetchHeartbeats(
-    id: number,
-    limit = 120,
-    signal?: AbortSignal
-): Promise<{ heartbeats: HeartbeatEntry[]; total: number }> {
-    const token = window.localStorage.getItem("flatline.token");
-    const base = (import.meta.env.VITE_FLATLINE_URL as string | undefined) ?? "";
-    const response = await fetch(`${base}/api/v1/monitors/${id}/heartbeats?limit=${limit}`, {
-        headers: {
-            Accept: "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        signal,
-    });
-
-    if (!response.ok) {
-        throw new Error(`Could not load history (${response.status})`);
-    }
-
-    const body = await response.json();
-    return { heartbeats: body.heartbeats ?? [], total: body.total ?? 0 };
-}
+/** Rows kept in the recent-checks list. */
+const BEAT_LIMIT = 120;
 
 function statusOf(status: number): { label: string; tone: "up" | "down" | "degraded" | "maintenance" | "neutral" } {
     switch (status) {
@@ -178,22 +147,24 @@ export function MonitorDetail({
     onEdit: (monitor: MonitorSummary & Record<string, unknown>) => void;
 }) {
     const [monitor, setMonitor] = useState<(MonitorSummary & Record<string, unknown>) | null>(null);
-    const [beats, setBeats] = useState<HeartbeatEntry[]>([]);
-    const [total, setTotal] = useState(0);
+    // One state so a live beat updates the list and the total together.
+    const [log, setLog] = useState<{ beats: HeartbeatEntry[]; total: number }>({ beats: [], total: 0 });
+    const { beats, total } = log;
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         let cancelled = false;
 
+        // Full reload only on (re)connect and invalidate: the shared stream's
+        // snapshot. Individual beats are appended locally below.
         async function load(signal?: AbortSignal) {
             try {
-                const [m, h] = await Promise.all([fetchMonitor(id, signal), fetchHeartbeats(id, 120, signal)]);
+                const [m, h] = await Promise.all([fetchMonitor(id, signal), fetchHeartbeats(id, BEAT_LIMIT, signal)]);
                 if (cancelled) {
                     return;
                 }
                 setMonitor(m.monitor);
-                setBeats(h.heartbeats);
-                setTotal(h.total);
+                setLog({ beats: h.heartbeats, total: h.total });
                 setError(null);
             } catch (e) {
                 if (!cancelled) {
@@ -202,14 +173,18 @@ export function MonitorDetail({
             }
         }
 
-        const stop = watchLive({
+        const stop = subscribeLive({
             metrics: false,
             snapshot: load,
             event: (event) => {
-                if (!cancelled && event.type === "heartbeat" && event.monitorId === id) {
-                    setMonitor((previous) => (previous ? { ...previous, ...event.patch } : previous));
-                    void load();
+                if (cancelled || event.type !== "heartbeat" || event.monitorId !== id) {
+                    return;
                 }
+                setMonitor((previous) => (previous ? { ...previous, ...event.patch } : previous));
+                setLog((previous) => {
+                    const next = prependBeat(previous.beats, event.patch, BEAT_LIMIT);
+                    return next.added ? { beats: next.beats, total: previous.total + 1 } : previous;
+                });
             },
             error: () => {
                 if (!cancelled) {

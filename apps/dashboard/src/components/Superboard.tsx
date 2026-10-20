@@ -5,13 +5,13 @@ import {
     fetchBulkMonitorLinks,
     fetchLatestMetricsBulk,
     fetchAllMonitors,
-    watchLive,
     getToken,
     setToken,
     type MonitorLinks,
     type MonitorSummary,
     type ResolvedMonitorLink,
 } from "@/lib/api";
+import { subscribeLive } from "@/lib/live-hub";
 import { navigate } from "@/lib/router";
 import { TokenGate } from "@/components/TokenGate";
 import { FleetCard, type FleetServer } from "@/components/FleetCard";
@@ -299,7 +299,7 @@ function Superboard({
         // wakes up foregrounded must never flash "no servers" because the
         // first fetch was cancelled by a visibility change. The interval,
         // however, skips hidden ticks — no point polling a board nobody sees.
-        const stop = watchLive({
+        const stop = subscribeLive({
             snapshot: load,
             event: (event) => {
                 if (!alive) {
