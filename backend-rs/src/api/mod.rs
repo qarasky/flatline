@@ -3,6 +3,7 @@
 pub mod api_keys;
 pub mod auth;
 pub mod badges;
+pub mod limits;
 pub mod links;
 pub mod metrics;
 pub mod monitors;
@@ -84,6 +85,13 @@ impl IntoResponse for ApiError {
 /// path), badges, the status-page read API, `robots.txt` and the OpenAPI
 /// document. Everything else under `/api/v1` needs a bearer token. The SPA
 /// fallback answers the remaining GET/HEAD paths when a build exists.
+///
+/// Request budgets are applied per route group (see [`limits`]): most
+/// groups get [`limits::DEFAULT_TIMEOUT`] and a slot from the instance-wide
+/// in-flight cap; the public reads get a shorter timeout and their own,
+/// tighter concurrency limit; the SSE stream and agent binary downloads are
+/// deliberately exempt from the timeout. A new long-running group (uploads)
+/// must be merged with its own budget rather than the default.
 pub fn router(state: AppState) -> Router {
     let public = Router::new()
         .route("/api/v1/auth/setup", get(auth::setup_status))
@@ -94,11 +102,18 @@ pub fn router(state: AppState) -> Router {
         .route("/llms.txt", get(provisioning::llms))
         .route("/agent/install.sh", get(provisioning::installer))
         .route("/agent/sha256sums", get(provisioning::checksums))
-        .route("/agent/version", get(provisioning::version))
-        // Serves whatever builds the deployment ships (name: superboard-<os>-<arch>).
-        // Static routes above win over this parameter, so version/checksums
-        // and the installer are never shadowed.
-        .route("/agent/{file}", get(provisioning::agent_file))
+        .route("/agent/version", get(provisioning::version));
+
+    // Serves whatever builds the deployment ships (name: superboard-<os>-<arch>).
+    // Static routes above win over this parameter, so version/checksums
+    // and the installer are never shadowed. No timeout: the body streams a
+    // ~10 MB binary to hosts on slow links.
+    let agent_downloads = Router::new().route("/agent/{file}", get(provisioning::agent_file));
+
+    // Status pages and badges: polled by every open page, wall screen and
+    // README; cached (`public_cache`) and capped here so a flood cannot
+    // starve the pool.
+    let public_reads = Router::new()
         .route(
             "/api/status-page/resolve-host",
             get(status_pages::resolve_host),
@@ -203,15 +218,51 @@ pub fn router(state: AppState) -> Router {
             patch(api_keys::patch).delete(api_keys::delete),
         )
         .route("/api/v1/monitor-types", get(monitor_types))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::require_token,
+        ));
+
+    // The SSE stream: authenticated like the rest, but long-lived by
+    // design, so no request timeout.
+    let stream = Router::new()
         .route("/api/v1/events", get(stream::events))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_token,
         ));
 
-    public
-        .merge(agent)
-        .merge(authed)
+    let standard = |router: Router<AppState>| {
+        limits::with_concurrency_limit(
+            limits::with_timeout(router, limits::DEFAULT_TIMEOUT),
+            &limits::GLOBAL_SLOTS,
+            limits::GLOBAL_WAIT,
+            limits::global_busy,
+        )
+    };
+    // Exempt groups still take a global slot, released as soon as the
+    // response head is out (a streaming body does not hold it).
+    let untimed = |router: Router<AppState>| {
+        limits::with_concurrency_limit(
+            router,
+            &limits::GLOBAL_SLOTS,
+            limits::GLOBAL_WAIT,
+            limits::global_busy,
+        )
+    };
+    let public_reads = limits::with_concurrency_limit(
+        limits::with_timeout(public_reads, limits::PUBLIC_TIMEOUT),
+        &limits::PUBLIC_SLOTS,
+        limits::PUBLIC_WAIT,
+        limits::public_busy,
+    );
+
+    standard(public)
+        .merge(public_reads)
+        .merge(untimed(agent_downloads))
+        .merge(standard(agent))
+        .merge(standard(authed))
+        .merge(untimed(stream))
         .fallback(web::fallback)
         .with_state(state)
 }
