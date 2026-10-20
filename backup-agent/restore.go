@@ -64,9 +64,12 @@ type RestoreReport struct {
 	RestoreStatus   string   `json:"restoreStatus"`
 	Databases       []string `json:"databases,omitempty"`
 	Objects         int      `json:"objects"`
-	Error           string   `json:"error,omitempty"`
-	StartedAt       string   `json:"startedAt"`
-	FinishedAt      string   `json:"finishedAt"`
+	// Vanished counts listed objects deleted before export could read
+	// them; they are named in the manifest and are not restored.
+	Vanished   int    `json:"vanished,omitempty"`
+	Error      string `json:"error,omitempty"`
+	StartedAt  string `json:"startedAt"`
+	FinishedAt string `json:"finishedAt"`
 }
 
 // RestoreExecutor is injectable so offline tests prove target checks,
@@ -196,6 +199,7 @@ func restoreBundleWith(ctx context.Context, bundlePath, identityFile string, tar
 		return report, err
 	}
 	report.ArchiveVerified = true
+	report.Vanished = len(verified.Manifest.Vanished)
 	if err := validateRestoreMappings(verified.Manifest, target, false); err != nil {
 		report.Error = err.Error()
 		return report, err
@@ -246,6 +250,7 @@ func compareRestoreWith(ctx context.Context, bundlePath, identityFile string, ta
 		return report, err
 	}
 	report.ArchiveVerified = true
+	report.Vanished = len(verified.Manifest.Vanished)
 	if err := validateRestoreMappings(verified.Manifest, target, false); err != nil {
 		report.Error = err.Error()
 		return report, err

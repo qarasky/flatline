@@ -57,6 +57,10 @@ func (s *exportState) addFile(file ExportFile) {
 	})
 }
 
+func (s *exportState) addVanished(bucket, key string) {
+	s.manifest.Vanished = append(s.manifest.Vanished, VanishedObject{Bucket: bucket, Key: key})
+}
+
 func (s *exportState) addPostgres(summary PostgresSummary) {
 	s.manifest.Postgres = append(s.manifest.Postgres, summary)
 }

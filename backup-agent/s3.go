@@ -10,6 +10,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // S3API is the slice of the S3 client the exporter needs. Tests inject a
@@ -49,6 +50,26 @@ func newS3Client(ctx context.Context, source S3Source) (S3API, error) {
 	}), nil
 }
 
+// isMissingObject reports a GET for a key that no longer exists. A missing
+// bucket is not a missing object.
+func isMissingObject(err error) bool {
+	var noSuchKey *types.NoSuchKey
+	if errors.As(err, &noSuchKey) {
+		return true
+	}
+	var coded interface{ ErrorCode() string }
+	if errors.As(err, &coded) && coded.ErrorCode() != "" {
+		switch coded.ErrorCode() {
+		case "NoSuchKey", "NotFound":
+			return true
+		default:
+			return false
+		}
+	}
+	var status interface{ HTTPStatusCode() int }
+	return errors.As(err, &status) && status.HTTPStatusCode() == 404
+}
+
 // exportBucketInto lists the bucket with explicit pagination and GETs every
 // object. Keys are copied verbatim into generated archive files; no key is
 // ever used as a filesystem path.
@@ -78,6 +99,12 @@ func exportBucketInto(ctx context.Context, source S3Source, spool *Spool, state 
 
 			output, err := client.GetObject(ctx, input)
 			if err != nil {
+				if isMissingObject(err) {
+					// Deleted after listing: record it and keep going. A
+					// changed object (412) still fails explicitly.
+					state.addVanished(source.Bucket, key)
+					continue
+				}
 				return fmt.Errorf("read object in bucket %q failed", source.Bucket)
 			}
 

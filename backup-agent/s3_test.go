@@ -212,14 +212,16 @@ func TestBucketChangesFailExplicitly(t *testing.T) {
 		return err
 	}
 
-	t.Run("get 404", func(t *testing.T) {
+	t.Run("unclassified get error", func(t *testing.T) {
+		// Only a typed NoSuchKey counts as deleted-after-listing (see
+		// TestBucketToleratesObjectsDeletedAfterListing).
 		fake := &fakeS3{
 			objects: []fakeObject{object("k", `"etag"`)},
 			getErr:  map[string]error{"k": errors.New("404 secret-key")},
 		}
 		err := run(t, fake, context.Background())
 		if err == nil {
-			t.Fatal("a missing object must fail the export")
+			t.Fatal("an unclassified read error must fail the export")
 		}
 		if strings.Contains(err.Error(), "secret") {
 			t.Fatalf("error leaked details: %v", err)
@@ -292,4 +294,66 @@ func TestBucketChangesFailExplicitly(t *testing.T) {
 			t.Fatalf("stalled read left bytes: %d", spool.Used())
 		}
 	})
+}
+
+// Review M5: the export failed as a whole when an object was deleted
+// between listing and reading. Deletions are recorded in the manifest.
+func TestBucketToleratesObjectsDeletedAfterListing(t *testing.T) {
+	fake := &fakeS3{
+		objects: []fakeObject{
+			{key: "kept", body: []byte("kept"), contentType: "text/plain"},
+			{key: "gone", body: []byte("gone"), contentType: "text/plain"},
+			{key: "also-kept", body: []byte("also"), contentType: "text/plain"},
+		},
+		getErr: map[string]error{"gone": &types.NoSuchKey{Message: aws.String("secret detail")}},
+	}
+	spool, err := NewSpool(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := newExportState(Config{Name: "meks"}, "run-1", nowUTC())
+	source := S3Source{Endpoint: "http://127.0.0.1:3900", Region: "garage", Bucket: "media"}
+	if err := exportBucketInto(context.Background(), source, spool, state, fake); err != nil {
+		t.Fatalf("a deleted object must not fail the export: %v", err)
+	}
+	if len(state.files) != 2 {
+		t.Fatalf("files = %+v", state.files)
+	}
+	vanished := state.manifest.Vanished
+	if len(vanished) != 1 || vanished[0].Bucket != "media" || vanished[0].Key != "gone" {
+		t.Fatalf("vanished = %+v", vanished)
+	}
+
+	// A missing bucket is not a missing object.
+	fake.getErr = map[string]error{"kept": &types.NoSuchBucket{}}
+	state = newExportState(Config{Name: "meks"}, "run-2", nowUTC())
+	spool, _ = NewSpool(t.TempDir(), 1<<20)
+	if err := exportBucketInto(context.Background(), source, spool, state, fake); err == nil {
+		t.Fatal("a missing bucket must fail the export")
+	}
+}
+
+func TestManifestVanishedObjectsAreValidated(t *testing.T) {
+	base := Manifest{
+		FormatVersion: 1, ClientRunID: "run-1", AgentName: "meks",
+		ExportStartedAt: "2026-01-01T00:00:00Z", ExportFinishedAt: "2026-01-01T01:00:00Z",
+		Entries: []Entry{{Path: "objects/000001", Kind: kindObject, Size: 1, SHA256: strings.Repeat("a", 64),
+			Bucket: "media", Key: "kept"}},
+	}
+	valid := base
+	valid.Vanished = []VanishedObject{{Bucket: "media", Key: "gone"}}
+	if err := validateManifest(&valid); err != nil {
+		t.Fatalf("valid vanished list rejected: %v", err)
+	}
+	for name, vanished := range map[string][]VanishedObject{
+		"duplicate of an archived object": {{Bucket: "media", Key: "kept"}},
+		"empty key":                       {{Bucket: "media"}},
+		"repeated":                        {{Bucket: "media", Key: "x"}, {Bucket: "media", Key: "x"}},
+	} {
+		manifest := base
+		manifest.Vanished = vanished
+		if err := validateManifest(&manifest); err == nil {
+			t.Fatalf("%s must be rejected", name)
+		}
+	}
 }

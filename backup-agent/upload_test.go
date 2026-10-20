@@ -894,3 +894,52 @@ func TestUploadFailuresAreReported(t *testing.T) {
 		})
 	}
 }
+
+// Review M5: a repeatedly failing export was retried every 30 minutes all
+// day. Fresh exports are capped per UTC day, the cap is reported once, and
+// it resets the next day.
+func TestExportAttemptsAreCappedPerDay(t *testing.T) {
+	fixture := newFixture(t)
+	cfg := runnerConfig(t, fixture, "meks")
+	now := time.Date(2026, 10, 21, 2, 0, 0, 0, time.UTC)
+	var codes []string
+	exports := 0
+	runner := DefaultRunner()
+	runner.Now = func() time.Time { return now }
+	runner.ReportFailure = func(_ context.Context, _ Config, clientRunID, _ string, code string) error {
+		codes = append(codes, clientRunID+"/"+code)
+		return nil
+	}
+	runner.Export = func(context.Context, Config, *Spool, string) (Export, error) {
+		exports++
+		return Export{}, errors.New("bucket changed")
+	}
+	for attempt := 0; attempt < maxExportAttemptsPerDay+3; attempt++ {
+		now = now.Add(30 * time.Minute)
+		err := runner.Run(context.Background(), cfg)
+		if attempt >= maxExportAttemptsPerDay && !errors.Is(err, errExportAttemptsExhausted) {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+	}
+	if exports != maxExportAttemptsPerDay {
+		t.Fatalf("exports = %d", exports)
+	}
+	exhausted := 0
+	for _, code := range codes {
+		if strings.HasSuffix(code, "/export_attempts_exhausted") {
+			exhausted++
+			if code != "attempts-20261021/export_attempts_exhausted" {
+				t.Fatalf("cap report must be one id per day: %s", code)
+			}
+		}
+	}
+	if exhausted == 0 {
+		t.Fatal("the cap was not reported")
+	}
+
+	now = now.Add(24 * time.Hour)
+	_ = runner.Run(context.Background(), cfg)
+	if exports != maxExportAttemptsPerDay+1 {
+		t.Fatalf("the cap must reset the next day: exports=%d", exports)
+	}
+}

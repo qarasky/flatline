@@ -90,6 +90,27 @@ randomized delay and `Persistent=true`. A successful oneshot is not restarted;
 a failed source export or upload retries after 30 minutes and reuses any
 pending encrypted bundle first.
 
+## Consistency of one bundle
+
+A bundle is not a single point-in-time snapshot of the whole application:
+
+- Each PostgreSQL database is dumped from one exported snapshot, and its
+  recorded table counts come from the same snapshot. Different databases,
+  globals and the bucket are captured at different moments.
+- The S3 bucket is read object by object while the application keeps
+  writing. An object listed but deleted before it could be read is recorded
+  under `vanished` in the manifest and is not restored; an object that
+  changed after listing (ETag/size/412) still fails the export.
+- A database row can therefore reference an object that is missing from the
+  bundle (deleted during the export) or miss an object uploaded after the
+  dump. Restore checks report `vanished` counts; reconcile references in the
+  application if that matters.
+
+Fresh exports are capped at four per UTC day (the scheduled run plus
+retries after failures); the cap is reported once as
+`export_attempts_exhausted` and resets after a successful delivery or at the
+next UTC day. Retrying a pending bundle does not count.
+
 ## Limits
 
 At most one pending encrypted bundle exists per instance. Local spool and

@@ -108,11 +108,27 @@ func (r Runner) Run(ctx context.Context, cfg Config) error {
 			}
 			exists = false
 		} else {
-			return clearPending(cfg, spool)
+			if err := clearPending(cfg, spool); err != nil {
+				return err
+			}
+			_ = os.Remove(attemptsPath(cfg))
+			return nil
 		}
 	}
 	if err := cleanSpool(spool, ""); err != nil {
 		return err
+	}
+
+	// A live bucket or database that keeps failing the export must not be
+	// re-read every 30 minutes all day long: cap fresh exports per UTC day.
+	attempts, err := recordExportAttempt(cfg, r.Now())
+	if err != nil {
+		return fmt.Errorf("record export attempt: %w", err)
+	}
+	if attempts > maxExportAttemptsPerDay {
+		day := r.Now().UTC().Format("20060102")
+		r.report(ctx, cfg, "attempts-"+day, r.Now().UTC().Format(time.RFC3339), "export_attempts_exhausted")
+		return errExportAttemptsExhausted
 	}
 
 	clientRunID := r.NewRunID()
@@ -143,7 +159,52 @@ func (r Runner) Run(ctx context.Context, cfg Config) error {
 		r.reportUploadFailure(ctx, cfg, bundle, err)
 		return fmt.Errorf("upload bundle: %w", err)
 	}
-	return clearPending(cfg, spool)
+	if err := clearPending(cfg, spool); err != nil {
+		return err
+	}
+	_ = os.Remove(attemptsPath(cfg))
+	return nil
+}
+
+// maxExportAttemptsPerDay bounds fresh exports (scheduled run plus
+// failure retries) per UTC day. A successful delivery resets the count.
+const maxExportAttemptsPerDay = 4
+
+var errExportAttemptsExhausted = errors.New("daily export attempt limit reached; next attempt tomorrow (UTC)")
+
+type attemptRecord struct {
+	Day   string `json:"day"`
+	Count int    `json:"count"`
+}
+
+func attemptsPath(cfg Config) string { return filepath.Join(cfg.StateDir, "attempts.json") }
+
+// recordExportAttempt counts one export attempt for today and returns the
+// count including it. Attempts past the cap are not recorded, so the file
+// stays small and the cap is stable.
+func recordExportAttempt(cfg Config, now time.Time) (int, error) {
+	day := now.UTC().Format("2006-01-02")
+	record := attemptRecord{Day: day}
+	if data, err := os.ReadFile(attemptsPath(cfg)); err == nil {
+		var stored attemptRecord
+		if json.Unmarshal(data, &stored) == nil && stored.Day == day && stored.Count >= 0 {
+			record = stored
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return 0, err
+	}
+	if record.Count >= maxExportAttemptsPerDay {
+		return record.Count + 1, nil
+	}
+	record.Count++
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return 0, err
+	}
+	if err := atomicWrite(attemptsPath(cfg), encoded); err != nil {
+		return 0, err
+	}
+	return record.Count, nil
 }
 
 func (r Runner) reportExportFailure(ctx context.Context, cfg Config, clientRunID string, started time.Time, code string) {

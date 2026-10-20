@@ -60,6 +60,16 @@ type Manifest struct {
 	ExportFinishedAt string            `json:"exportFinishedAt"`
 	Postgres         []PostgresSummary `json:"postgres"`
 	Entries          []Entry           `json:"entries"`
+	// Vanished lists objects that were listed but deleted before they could
+	// be read. The bucket is live while it is exported; a deletion is a
+	// normal change, not a reason to fail the whole export.
+	Vanished []VanishedObject `json:"vanished,omitempty"`
+}
+
+// VanishedObject is a listed object that no longer existed when read.
+type VanishedObject struct {
+	Bucket string `json:"bucket"`
+	Key    string `json:"key"`
 }
 
 // ExportFile is one generated body file waiting to be archived. The manifest
@@ -178,6 +188,20 @@ func validateManifest(manifest *Manifest) error {
 		default:
 			return fmt.Errorf("entry %q has unsupported kind %q", entry.Path, entry.Kind)
 		}
+	}
+
+	if len(manifest.Entries)+len(manifest.Vanished) > maxManifestEntries {
+		return fmt.Errorf("manifest has more than %d entries", maxManifestEntries)
+	}
+	for _, vanished := range manifest.Vanished {
+		if vanished.Bucket == "" || vanished.Key == "" {
+			return errors.New("vanished objects need bucket and key")
+		}
+		mapping := vanished.Bucket + "\x00" + vanished.Key
+		if _, exists := objects[mapping]; exists {
+			return fmt.Errorf("object %q/%q is both archived and vanished", vanished.Bucket, vanished.Key)
+		}
+		objects[mapping] = struct{}{}
 	}
 
 	for _, database := range manifest.Postgres {
