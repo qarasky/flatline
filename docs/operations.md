@@ -6,14 +6,15 @@ own semantics live in [superboard](superboard.md).
 
 ## Health checks
 
-| Check         | Command / endpoint                                                  | Healthy means                                               |
-| ------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Container     | `sudo docker compose -f /home/office/flatline/compose.rust.yaml ps` | `healthy`, low restart count.                               |
-| Backend up    | `GET /api/v1/auth/setup` (no token)                                 | 200. Also the container healthcheck.                        |
-| Fleet summary | `GET /api/v1/health` (token)                                        | `total` matches the expected count, `down` matches reality. |
-| Public origin | `curl -o /dev/null -w '%{http_code}' https://<origin>/`             | 200 through the tunnel.                                     |
-| Agents        | newest telemetry per push monitor                                   | seconds old, not minutes.                                   |
-| Local dev     | `./dev.sh status`                                                   | backend 200, dashboard 200.                                 |
+| Check         | Command / endpoint                                                  | Healthy means                                                                                                                         |
+| ------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Container     | `sudo docker compose -f /home/office/flatline/compose.rust.yaml ps` | `healthy`, low restart count.                                                                                                         |
+| Backend up    | `GET /api/v1/auth/setup` (no token)                                 | 200. Also the container healthcheck.                                                                                                  |
+| Liveness      | `GET /healthz` (no token)                                           | 200 `{"status":"ok"}`: database answers within 2 s and the check engine's watchdog ticked within 30 s. 503 with a `reason` otherwise. |
+| Fleet summary | `GET /api/v1/health` (token)                                        | `total` matches the expected count, `down` matches reality; 503 when the database fails.                                              |
+| Public origin | `curl -o /dev/null -w '%{http_code}' https://<origin>/`             | 200 through the tunnel.                                                                                                               |
+| Agents        | newest telemetry per push monitor                                   | seconds old, not minutes.                                                                                                             |
+| Local dev     | `./dev.sh status`                                                   | backend 200, dashboard 200.                                                                                                           |
 
 The dashboard itself is the best health signal: a fleet-wide problem shows as a
 wall of stale cards, and `Agent: …` lines surface the host-side cause.
@@ -93,6 +94,9 @@ curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
 | Public origin down, container up         | The tunnel, then the published port (`127.0.0.1:3001`).                                                                                                                                                           |
 | Cards show agent warnings                | The tooltip has the per-collector detail and the last push error; right-click → Clear agent warnings once seen. A collector failing forever usually means a host-side tool (driver mismatch, missing `smartctl`). |
 | Database growing                         | Expected: 30 days of 30-second samples plus two years of hourly rollups. Monitor `du -sh data-rust/`; a sudden jump usually means a monitor was added, not a leak.                                                |
+| `/healthz` answers 503                   | The `reason` field: `database error` / `database probe timed out` (lock contention or a full disk), `engine watchdog stalled` (the runtime is wedged; the logs say which loop).                                   |
+| Alerts arrive as one summary             | Expected under pressure: when four or more alerts wait for one chat, they are coalesced into a single message listing each in order. `notify:` log lines show rate limiting (`429`) and drops.                    |
+| `engine: … panicked` in the logs         | A check loop crashed and was respawned with backoff; the monitor keeps being checked. Report the message — it is a bug.                                                                                           |
 | Backend will not start after a downgrade | The database has newer migrations than the binary. Restore the matching backup.                                                                                                                                   |
 
 ## Logs
