@@ -31,39 +31,65 @@ pub struct Config {
 impl Config {
     /// Read configuration from the environment, with the same names the
     /// Node backend used where they exist.
-    pub fn from_env() -> Self {
-        let data_dir = std::env::var("DATA_DIR")
+    ///
+    /// A set but unparseable value is a startup error naming the variable:
+    /// silently listening on the default port, or keeping heartbeats for
+    /// the default 90 days when the operator asked for 7, is worse than
+    /// refusing to boot. Unset (or empty) values take the defaults.
+    pub fn from_env() -> anyhow::Result<Self> {
+        Self::from_lookup(|name| std::env::var(name).ok())
+    }
+
+    /// [`Config::from_env`] over any variable source (tests pass a map).
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> anyhow::Result<Self> {
+        let set = |name: &str| {
+            lookup(name)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        };
+
+        let data_dir = set("DATA_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("./data"));
+            .unwrap_or_else(|| PathBuf::from("./data"));
 
-        let port = std::env::var("PORT")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(3001);
+        let port = match set("PORT") {
+            Some(raw) => raw
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port > 0)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("PORT must be a port number between 1 and 65535, got {raw:?}")
+                })?,
+            None => 3001,
+        };
 
-        let host = std::env::var("UPTIME_KUMA_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+        let host = set("UPTIME_KUMA_HOST").unwrap_or_else(|| "0.0.0.0".to_string());
 
-        let web_dist = std::env::var("FLATLINE_WEB_DIST")
+        let web_dist = set("FLATLINE_WEB_DIST")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/app/dashboard"));
+            .unwrap_or_else(|| PathBuf::from("/app/dashboard"));
 
-        let public_url = std::env::var("FLATLINE_PUBLIC_URL")
-            .ok()
-            .map(|url| url.trim().to_string())
-            .filter(|url| !url.is_empty());
+        let public_url = set("FLATLINE_PUBLIC_URL");
 
-        let agent_dir = std::env::var("FLATLINE_AGENT_DIR")
+        let agent_dir = set("FLATLINE_AGENT_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/app/agent"));
+            .unwrap_or_else(|| PathBuf::from("/app/agent"));
 
-        // Negative values are meaningless; treat them as the default.
-        let heartbeat_retention_days = std::env::var("FLATLINE_HEARTBEAT_RETENTION_DAYS")
-            .ok()
-            .and_then(|value| value.trim().parse::<i64>().ok())
-            .filter(|days| *days >= 0)
-            .unwrap_or(crate::heartbeats::DEFAULT_RETENTION_DAYS);
+        let heartbeat_retention_days = match set("FLATLINE_HEARTBEAT_RETENTION_DAYS") {
+            Some(raw) => raw
+                .parse::<i64>()
+                .ok()
+                .filter(|days| *days >= 0)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "FLATLINE_HEARTBEAT_RETENTION_DAYS must be a whole number of days \
+                     (0 keeps heartbeats forever), got {raw:?}"
+                    )
+                })?,
+            None => crate::heartbeats::DEFAULT_RETENTION_DAYS,
+        };
 
-        Self {
+        Ok(Self {
             data_dir,
             port,
             host,
@@ -71,6 +97,61 @@ impl Config {
             public_url,
             agent_dir,
             heartbeat_retention_days,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    fn config(vars: &[(&str, &str)]) -> anyhow::Result<Config> {
+        let vars: HashMap<String, String> = vars
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect();
+        Config::from_lookup(|name| vars.get(name).cloned())
+    }
+
+    #[test]
+    fn defaults_apply_when_unset_or_empty() {
+        let config = config(&[("PORT", ""), ("FLATLINE_HEARTBEAT_RETENTION_DAYS", " ")]).unwrap();
+        assert_eq!(config.port, 3001);
+        assert_eq!(
+            config.heartbeat_retention_days,
+            crate::heartbeats::DEFAULT_RETENTION_DAYS
+        );
+        assert!(config.public_url.is_none());
+    }
+
+    #[test]
+    fn valid_values_are_used() {
+        let config = config(&[
+            ("PORT", "8080"),
+            ("FLATLINE_HEARTBEAT_RETENTION_DAYS", "0"),
+            ("FLATLINE_PUBLIC_URL", " https://uptime.example "),
+        ])
+        .unwrap();
+        assert_eq!(config.port, 8080);
+        assert_eq!(config.heartbeat_retention_days, 0);
+        assert_eq!(config.public_url.as_deref(), Some("https://uptime.example"));
+    }
+
+    #[test]
+    fn unparseable_values_fail_with_the_variable_name() {
+        for (name, value) in [
+            ("PORT", "30o1"),
+            ("PORT", "70000"),
+            ("PORT", "0"),
+            ("FLATLINE_HEARTBEAT_RETENTION_DAYS", "seven"),
+            ("FLATLINE_HEARTBEAT_RETENTION_DAYS", "-1"),
+        ] {
+            let error = config(&[(name, value)]).expect_err(&format!("{name}={value} must fail"));
+            let message = error.to_string();
+            assert!(message.contains(name), "{message}");
+            assert!(message.contains(value), "{message}");
         }
     }
 }

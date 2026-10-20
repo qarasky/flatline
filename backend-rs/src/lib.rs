@@ -70,7 +70,7 @@ pub fn router(state: AppState) -> Router {
 
 /// Boot the server: config, database, HTTP listener, graceful shutdown.
 pub async fn run() -> anyhow::Result<()> {
-    let config = config::Config::from_env();
+    let config = config::Config::from_env()?;
     let address = format!("{}:{}", config.host, config.port);
 
     let state = build_state(config).await?;
