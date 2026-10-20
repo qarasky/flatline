@@ -890,3 +890,78 @@ async fn shutdown_aborts_pending_body_reads() {
         Err(flatline_backend::backups::Error::Unavailable(_))
     ));
 }
+
+/// Review H1: every 409 from POST /runs looked "terminal" to the agent,
+/// including "another run is uploading", so the agent quarantined and
+/// re-exported in a loop. Conflicts now carry distinct codes, and an agent
+/// can abandon its own active run when it no longer holds the bundle.
+#[tokio::test]
+async fn start_conflicts_are_distinguishable_and_abandonable() {
+    let free = FakeFreeSpace::new(RESERVE_BYTES + 256 * 1024 * 1024);
+    let h = harness_with_backups(free, ScriptedFaults::new()).await;
+    let (_, meks) = register(&h, "meks").await;
+    let (_, zhkh) = register(&h, "zhkhteam").await;
+    let first = vec![1u8; 4096];
+    let second = vec![2u8; 4096];
+
+    let (status, started) = start_run(&h, &meks, "bundle-a", 4096, &digest(&first)).await;
+    assert_eq!(status, 200, "{started}");
+    let run_a = started["run"]["id"].as_str().unwrap().to_string();
+
+    // A second bundle while the first is still uploading: active_run, with
+    // the identity the agent needs to decide between resume and abandon.
+    let (status, conflict) = start_run(&h, &meks, "bundle-b", 4096, &digest(&second)).await;
+    assert_eq!(status, 409);
+    assert_eq!(conflict["error"], "active_run", "{conflict}");
+    assert_eq!(conflict["activeRunId"], run_a.as_str());
+    assert_eq!(conflict["activeClientRunId"], "bundle-a");
+
+    // The same clientRunId with other parameters is a different code.
+    let (status, conflict) = start_run(&h, &meks, "bundle-a", 4096, &digest(&second)).await;
+    assert_eq!(status, 409);
+    assert_eq!(conflict["error"], "params_conflict", "{conflict}");
+
+    // Resuming with identical parameters still returns the run.
+    let (status, resumed) = start_run(&h, &meks, "bundle-a", 4096, &digest(&first)).await;
+    assert_eq!(status, 200);
+    assert_eq!(resumed["run"]["id"], run_a.as_str());
+
+    // Another agent cannot abandon it.
+    let abandon = |token: &str, id: &str| {
+        request(
+            "POST",
+            &format!("/api/backup/v1/runs/{id}/abandon"),
+            Some(token),
+            None,
+        )
+    };
+    let (status, _) = send(&h.app, abandon(&zhkh, &run_a)).await;
+    assert_eq!(status, 404);
+
+    let (status, abandoned) = send(&h.app, abandon(&meks, &run_a)).await;
+    assert_eq!(status, 200, "{abandoned}");
+    assert_eq!(abandoned["run"]["status"], "failed");
+    assert_eq!(abandoned["run"]["errorCode"], "upload_abandoned");
+    let (status, again) = send(&h.app, abandon(&meks, &run_a)).await;
+    assert_eq!(status, 200, "abandon is idempotent: {again}");
+
+    // The abandoned run is terminal; the new bundle can now start.
+    let (status, terminal) = start_run(&h, &meks, "bundle-a", 4096, &digest(&first)).await;
+    assert_eq!(status, 409);
+    assert_eq!(terminal["error"], "run_terminal", "{terminal}");
+    let (status, terminal) = complete(&h, &meks, &run_a).await;
+    assert_eq!(status, 409);
+    assert_eq!(terminal["error"], "run_terminal");
+    let (status, started) = start_run(&h, &meks, "bundle-b", 4096, &digest(&second)).await;
+    assert_eq!(status, 200, "{started}");
+    let run_b = started["run"]["id"].as_str().unwrap().to_string();
+    let (status, _) = put(&h, &meks, &run_b, 0, 0, second.clone()).await;
+    assert_eq!(status, 200);
+    let (status, _) = complete(&h, &meks, &run_b).await;
+    assert_eq!(status, 200);
+
+    // A completed run cannot be abandoned.
+    let (status, terminal) = send(&h.app, abandon(&meks, &run_b)).await;
+    assert_eq!(status, 409);
+    assert_eq!(terminal["error"], "run_terminal");
+}

@@ -19,7 +19,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post, put};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router, middleware};
 use serde_json::{Value, json};
 
@@ -147,24 +147,11 @@ pub fn router(state: AppState) -> Router {
         .layer(DefaultBodyLimit::max(256 * 1024));
 
     // Backup agents authenticate with their own credential, never an operator
-    // token or a monitor push token. The middleware resolves the token to an
-    // agent UUID; every handler is scoped to that UUID.
-    let backup_agent = Router::new()
-        .route("/api/backup/v1/runs", post(backups::agent_start_run))
-        .route("/api/backup/v1/runs/{id}", get(backups::agent_run))
-        .route(
-            "/api/backup/v1/runs/{id}/chunks/{index}",
-            put(backups::agent_put_chunk),
-        )
-        .route(
-            "/api/backup/v1/runs/{id}/complete",
-            post(backups::agent_complete),
-        )
-        .route("/api/backup/v1/failures", post(backups::agent_failure))
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            backups::require_agent,
-        ));
+    // token or a monitor push token; each handler is scoped to the agent
+    // UUID. Transfers (chunks, completion, download) are a separate group so
+    // they can be exempt from request-wide timeouts.
+    let backup_agent = backups::agent_routes(state.clone());
+    let backup_transfers = backups::transfer_routes(state.clone());
 
     let authed = Router::new()
         .route("/api/v1/health", get(health))
@@ -242,10 +229,6 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/backup-runs/{id}/verification",
             post(backups::verify_run),
         )
-        .route(
-            "/api/v1/backup-runs/{id}/download",
-            get(backups::download_run),
-        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_token,
@@ -254,6 +237,7 @@ pub fn router(state: AppState) -> Router {
     public
         .merge(agent)
         .merge(backup_agent)
+        .merge(backup_transfers)
         .merge(authed)
         .fallback(web::fallback)
         .with_state(state)

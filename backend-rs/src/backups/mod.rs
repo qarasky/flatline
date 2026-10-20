@@ -43,7 +43,19 @@ pub use runs::{RunSummary, StartRun};
 pub enum Error {
     BadRequest(String),
     NotFound(String),
+    /// A generic, retryable conflict (chunk ledger, offset, race).
     Conflict(String),
+    /// Another run of this agent is uploading or finalizing. Carries its
+    /// identity so the agent can resume it (same clientRunId) or abandon it.
+    ActiveRun {
+        run_id: String,
+        client_run_id: String,
+    },
+    /// The clientRunId exists with different start parameters; this bundle
+    /// can never be delivered under that id.
+    ParamsConflict(String),
+    /// The run is in a terminal state and cannot be reopened or completed.
+    Terminal(String),
     Unauthorized,
     Unavailable(String),
     Insufficient(String),
@@ -62,6 +74,8 @@ impl std::fmt::Display for Error {
             Error::BadRequest(message)
             | Error::NotFound(message)
             | Error::Conflict(message)
+            | Error::ParamsConflict(message)
+            | Error::Terminal(message)
             | Error::Unavailable(message)
             | Error::Insufficient(message)
             | Error::TooLarge(message)
@@ -70,6 +84,9 @@ impl std::fmt::Display for Error {
             | Error::Timeout(message)
             | Error::Internal(message) => formatter.write_str(message),
             Error::Unauthorized => formatter.write_str("Missing or invalid token."),
+            Error::ActiveRun { run_id, .. } => {
+                write!(formatter, "run {run_id} of this agent is still uploading")
+            }
         }
     }
 }
@@ -749,25 +766,14 @@ impl Backups {
             .await?
         {
             if !same_start(&existing, &validated) {
-                return Err(Error::Conflict(
+                return Err(Error::ParamsConflict(
                     "clientRunId was already used with different parameters".to_string(),
                 ));
             }
             return Ok(existing);
         }
 
-        let active: Option<(String,)> = sqlx::query_as(
-            "SELECT id FROM backup_runs
-              WHERE agent_id = ? AND status IN ('uploading', 'finalizing') LIMIT 1",
-        )
-        .bind(agent_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        if active.is_some() {
-            return Err(Error::Conflict(
-                "another run is currently uploading".to_string(),
-            ));
-        }
+        self.refuse_active_run(agent_id).await?;
 
         let id = uuid::Uuid::new_v4().to_string();
         insert_run(&self.pool, &id, agent_id, &validated, now).await?;
@@ -800,7 +806,7 @@ impl Backups {
             .await?
         {
             if !same_start(&existing, &validated) {
-                return Err(Error::Conflict(
+                return Err(Error::ParamsConflict(
                     "clientRunId was already used with different parameters".to_string(),
                 ));
             }
@@ -839,25 +845,14 @@ impl Backups {
                     return self.run_by_id(&existing.id).await;
                 }
                 _ => {
-                    return Err(Error::Conflict(
-                        "this run can no longer be reopened".to_string(),
-                    ));
+                    return Err(Error::Terminal(format!(
+                        "this run is {status} and can no longer be reopened"
+                    )));
                 }
             }
         }
 
-        let active: Option<(String,)> = sqlx::query_as(
-            "SELECT id FROM backup_runs
-              WHERE agent_id = ? AND status IN ('uploading', 'finalizing') LIMIT 1",
-        )
-        .bind(agent_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        if active.is_some() {
-            return Err(Error::Conflict(
-                "another run is currently uploading".to_string(),
-            ));
-        }
+        self.refuse_active_run(agent_id).await?;
 
         self.reserve_capacity(&storage, validated.total_bytes)
             .await?;
@@ -949,8 +944,14 @@ impl Backups {
             };
         }
 
+        if run.status == runs::STATUS_FINALIZING {
+            return Err(Error::Conflict("run is finalizing".to_string()));
+        }
         if run.status != runs::STATUS_UPLOADING {
-            return Err(Error::Conflict("run is not accepting chunks".to_string()));
+            return Err(Error::Terminal(format!(
+                "run is {} and does not accept chunks",
+                run.status
+            )));
         }
         if offset != committed {
             return Err(Error::Conflict(format!(
@@ -1033,7 +1034,10 @@ impl Backups {
             return Ok(run);
         }
         if run.status != runs::STATUS_UPLOADING && run.status != runs::STATUS_FINALIZING {
-            return Err(Error::Conflict("run cannot be completed".to_string()));
+            return Err(Error::Terminal(format!(
+                "run is {} and cannot be completed",
+                run.status
+            )));
         }
 
         let total = run
@@ -1085,6 +1089,62 @@ impl Backups {
 
         self.events.invalidate();
         self.run_by_id(run_id).await
+    }
+
+    /// Abandon this agent's own uploading run, typically one whose local
+    /// bundle no longer exists (quarantined or lost). The run becomes
+    /// `failed` with `upload_abandoned`, its reservation is released at once
+    /// and maintenance removes its bytes. A run with a request in flight,
+    /// or already finalizing, is not abandoned.
+    pub async fn abandon_run(&self, agent_id: &str, run_id: &str) -> Result<RunSummary, Error> {
+        let owned = self.run_for_agent(agent_id, run_id).await?;
+        let _run = self.lock_run(&owned.id, Duration::ZERO).await?;
+        let run = self.run_for_agent(agent_id, run_id).await?;
+        match run.status.as_str() {
+            runs::STATUS_UPLOADING => {}
+            runs::STATUS_FAILED if run.error_code.as_deref() == Some(runs::CODE_ABANDONED) => {
+                return Ok(run);
+            }
+            runs::STATUS_FINALIZING => {
+                return Err(Error::Conflict(
+                    "run is finalizing; retry completion instead".to_string(),
+                ));
+            }
+            other => {
+                return Err(Error::Terminal(format!(
+                    "run is {other} and cannot be abandoned"
+                )));
+            }
+        }
+        sqlx::query(
+            "UPDATE backup_runs SET status = 'failed', error_code = ?, last_activity_at = ?
+              WHERE id = ? AND status = 'uploading'",
+        )
+        .bind(runs::CODE_ABANDONED)
+        .bind(canonical(Utc::now()))
+        .bind(run_id)
+        .execute(&self.pool)
+        .await?;
+        self.events.invalidate();
+        self.run_by_id(run_id).await
+    }
+
+    async fn refuse_active_run(&self, agent_id: &str) -> Result<(), Error> {
+        let active: Option<(String, String)> = sqlx::query_as(
+            "SELECT id, client_run_id FROM backup_runs
+              WHERE agent_id = ? AND status IN ('uploading', 'finalizing')
+              ORDER BY created_at, id LIMIT 1",
+        )
+        .bind(agent_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        match active {
+            Some((run_id, client_run_id)) => Err(Error::ActiveRun {
+                run_id,
+                client_run_id,
+            }),
+            None => Ok(()),
+        }
     }
 
     /// Finish interrupted uploads and finalizations. Runs before maintenance

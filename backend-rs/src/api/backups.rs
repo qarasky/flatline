@@ -5,8 +5,9 @@
 //! `/api/backup/v1` use a dedicated backup credential and are scoped to the
 //! authenticated agent UUID.
 
-use axum::Json;
 use axum::body::Body;
+use axum::routing::{get, post, put};
+use axum::{Json, Router, middleware};
 use axum::extract::{Path, Query, State};
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, Request, StatusCode, header};
@@ -19,6 +20,39 @@ use crate::api::ApiError;
 use crate::backups::{
     self, AgentPatch, Error as BackupError, FailureReport, NewAgent, RunSummary, StartRun,
 };
+
+/// Agent metadata routes: start, status, abandon and failure reports.
+/// Short requests; the global request timeout may apply to this group.
+pub fn agent_routes(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/api/backup/v1/runs", post(agent_start_run))
+        .route("/api/backup/v1/runs/{id}", get(agent_run))
+        .route("/api/backup/v1/runs/{id}/abandon", post(agent_abandon))
+        .route("/api/backup/v1/failures", post(agent_failure))
+        .route_layer(middleware::from_fn_with_state(state, require_agent))
+}
+
+/// Long-running transfer routes: chunk upload, finalization (hashes up to
+/// 8 GiB) and bundle download. They carry their own read deadlines and
+/// must be exempt from a global request timeout, or be given a budget of
+/// several minutes. Each route keeps its own authentication.
+pub fn transfer_routes(state: AppState) -> Router<AppState> {
+    let agent = || middleware::from_fn_with_state(state.clone(), require_agent);
+    let operator = || middleware::from_fn_with_state(state.clone(), crate::auth::require_token);
+    Router::new()
+        .route(
+            "/api/backup/v1/runs/{id}/chunks/{index}",
+            put(agent_put_chunk).route_layer(agent()),
+        )
+        .route(
+            "/api/backup/v1/runs/{id}/complete",
+            post(agent_complete).route_layer(agent()),
+        )
+        .route(
+            "/api/v1/backup-runs/{id}/download",
+            get(download_run).route_layer(operator()),
+        )
+}
 
 /// Authenticated agent id, inserted by [`require_agent`].
 #[derive(Debug, Clone)]
@@ -75,6 +109,27 @@ fn api_error(error: BackupError) -> BackupApiError {
         BackupError::BadRequest(message) => ApiError::bad(message).into(),
         BackupError::NotFound(message) => ApiError::not_found(message).into(),
         BackupError::Conflict(message) => coded(StatusCode::CONFLICT, "conflict", message),
+        BackupError::ActiveRun {
+            run_id,
+            client_run_id,
+        } => {
+            let mut error = coded(
+                StatusCode::CONFLICT,
+                "active_run",
+                "another run of this agent is still uploading".to_string(),
+            );
+            error
+                .details
+                .insert("activeRunId".to_string(), run_id.into());
+            error
+                .details
+                .insert("activeClientRunId".to_string(), client_run_id.into());
+            error
+        }
+        BackupError::ParamsConflict(message) => {
+            coded(StatusCode::CONFLICT, "params_conflict", message)
+        }
+        BackupError::Terminal(message) => coded(StatusCode::CONFLICT, "run_terminal", message),
         BackupError::Unauthorized => coded(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
@@ -331,6 +386,20 @@ pub async fn agent_put_chunk(
     Ok(Json(
         serde_json::json!({ "ok": true, "run": run, "offset": offset }),
     ))
+}
+
+/// POST /api/backup/v1/runs/{id}/abandon (agent-scoped)
+pub async fn agent_abandon(
+    State(state): State<AppState>,
+    axum::Extension(AgentId(agent_id)): axum::Extension<AgentId>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, BackupApiError> {
+    let run = state
+        .backups
+        .abandon_run(&agent_id, &id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(serde_json::json!({ "ok": true, "run": run })))
 }
 
 /// POST /api/backup/v1/runs/{id}/complete (agent-scoped)

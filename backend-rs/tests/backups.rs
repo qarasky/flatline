@@ -323,7 +323,7 @@ async fn run_metadata_validates_time_and_limits() {
             .backups
             .insert_run_metadata_at(&agent_id, conflicting, now)
             .await,
-        Err(BackupError::Conflict(_))
+        Err(BackupError::ParamsConflict(_))
     ));
 
     // Names are restricted; duplicates on one monitor are rejected.

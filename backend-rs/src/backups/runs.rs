@@ -32,6 +32,9 @@ pub const STATUS_EXPIRED: &str = "expired";
 pub const STATUS_DELETING: &str = "deleting";
 pub const STATUS_PRUNED: &str = "pruned";
 
+/// Error code of a run its agent abandoned (its local bundle is gone).
+pub const CODE_ABANDONED: &str = "upload_abandoned";
+
 /// An operator-recorded archive or restore verification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
