@@ -17,6 +17,7 @@ pub mod links;
 pub mod metrics;
 pub mod monitors;
 pub mod notify;
+pub mod shutdown;
 pub mod status_pages;
 
 use std::sync::Arc;
