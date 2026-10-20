@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -140,7 +143,7 @@ func TestApplyAndVerifySwapsAndRollsBack(t *testing.T) {
 	write(target, "old")
 	write(newPath, "new")
 	restarts := 0
-	if err := applyAndVerify(newPath, target, backup, func() error { restarts++; return nil }, func() bool { return true }, time.Second); err != nil {
+	if err := applyAndVerify(newPath, target, backup, func() error { restarts++; return nil }, func() error { return nil }); err != nil {
 		t.Fatalf("healthy apply failed: %v", err)
 	}
 	if got, _ := os.ReadFile(target); string(got) != "new" {
@@ -149,17 +152,204 @@ func TestApplyAndVerifySwapsAndRollsBack(t *testing.T) {
 	if got, _ := os.ReadFile(backup); string(got) != "old" {
 		t.Fatalf("backup = %q, want the previous build", got)
 	}
-	if restarts == 0 {
-		t.Fatal("the service must be restarted")
+	if restarts != 1 {
+		t.Fatalf("restarts = %d, want 1", restarts)
 	}
 
-	// Unhealthy restart: roll back and report failure.
+	// Unhealthy restart: roll back, restart again, and report failure.
 	write(target, "old2")
 	write(newPath, "new2")
-	if err := applyAndVerify(newPath, target, backup, func() error { return nil }, func() bool { return false }, 50*time.Millisecond); err == nil {
+	restarts = 0
+	if err := applyAndVerify(newPath, target, backup, func() error { restarts++; return nil }, func() error { return errors.New("crash loop") }); err == nil {
 		t.Fatal("an unhealthy build must report an error")
 	}
 	if got, _ := os.ReadFile(target); string(got) != "old2" {
 		t.Fatalf("target after rollback = %q, want the previous build", got)
+	}
+	if restarts != 2 {
+		t.Fatalf("restarts = %d, want the update restart plus the rollback restart", restarts)
+	}
+}
+
+// Rollback replaces the live binary by rename: a process still executing
+// the bad build keeps its inode (no ETXTBSY, no truncation under it) and
+// the path flips atomically to the complete previous build.
+func TestRollbackRenamesOverTheTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "superboard")
+	backup := filepath.Join(dir, "superboard.bak")
+	if err := os.WriteFile(target, []byte("bad build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backup, []byte("good build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	running, err := os.Open(target) // stands in for the executing image
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer running.Close()
+	before, _ := os.Stat(target)
+
+	if err := rollback(backup, target, func() error { return nil }); err == nil {
+		t.Fatal("rollback must still report the failed update")
+	}
+
+	if got, _ := os.ReadFile(target); string(got) != "good build" {
+		t.Fatalf("target = %q, want the backup", got)
+	}
+	after, _ := os.Stat(target)
+	if os.SameFile(before, after) {
+		t.Fatal("rollback wrote into the live inode; it must rename a new file over it")
+	}
+	old, _ := io.ReadAll(running)
+	if string(old) != "bad build" {
+		t.Fatalf("the running image was modified under it: %q", old)
+	}
+	if _, err := os.Stat(target + ".new"); !os.IsNotExist(err) {
+		t.Fatal("the .new staging file must be gone")
+	}
+}
+
+// fakeService scripts systemctl show answers, one per poll.
+func fakeService(states ...serviceState) func() (serviceState, error) {
+	i := 0
+	return func() (serviceState, error) {
+		st := states[min(i, len(states)-1)]
+		i++
+		return st, nil
+	}
+}
+
+func TestHealthCheck(t *testing.T) {
+	up := serviceState{Active: true, MainPID: 100, NRestarts: 0, HasRestarts: true}
+	down := serviceState{Active: false}
+	check := func(probe func() (serviceState, error), marker func() (int, bool)) error {
+		return healthCheck{probe: probe, marker: marker, startTimeout: 40 * time.Millisecond, window: 30 * time.Millisecond, poll: time.Millisecond}.wait()
+	}
+	markerFor := func(pid int) func() (int, bool) { return func() (int, bool) { return pid, true } }
+	noMarker := func() (int, bool) { return 0, false }
+
+	if err := check(fakeService(down, down, up), markerFor(100)); err != nil {
+		t.Fatalf("stable build with marker: %v", err)
+	}
+	if err := check(fakeService(up), nil); err != nil {
+		t.Fatalf("stable build, marker not required: %v", err)
+	}
+	if err := check(fakeService(down), nil); err == nil {
+		t.Fatal("never active must fail")
+	}
+	// Crash loop: active, then Restart=always brings up a new process.
+	crashed := up
+	crashed.MainPID, crashed.NRestarts = 200, 1
+	if err := check(fakeService(up, up, crashed), nil); err == nil || !strings.Contains(err.Error(), "PID") {
+		t.Fatalf("PID change must fail, got %v", err)
+	}
+	restarted := up
+	restarted.NRestarts = 1
+	if err := check(fakeService(up, restarted), nil); err == nil || !strings.Contains(err.Error(), "NRestarts") {
+		t.Fatalf("NRestarts change must fail, got %v", err)
+	}
+	if err := check(fakeService(up, up, down), nil); err == nil {
+		t.Fatal("leaving active during the window must fail")
+	}
+	if err := check(fakeService(up), noMarker); err == nil || !strings.Contains(err.Error(), "push") {
+		t.Fatalf("missing first-push marker must fail, got %v", err)
+	}
+	if err := check(fakeService(up), markerFor(99)); err == nil {
+		t.Fatal("a marker from another process must not count")
+	}
+	// systemd < 235 has no NRestarts: PID stability alone decides.
+	old := serviceState{Active: true, MainPID: 5}
+	if err := check(fakeService(old), nil); err != nil {
+		t.Fatalf("no NRestarts property: %v", err)
+	}
+}
+
+func TestParseServiceState(t *testing.T) {
+	st := parseServiceState("ActiveState=active\nMainPID=4242\nNRestarts=3\n")
+	if !st.Active || st.MainPID != 4242 || st.NRestarts != 3 || !st.HasRestarts {
+		t.Fatalf("parsed %+v", st)
+	}
+	st = parseServiceState("MainPID=0\nActiveState=activating\n")
+	if st.Active || st.HasRestarts {
+		t.Fatalf("parsed %+v", st)
+	}
+}
+
+func TestFirstPushMarkerRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), selfUpdateMarker)
+	if err := writeMarker(path, "1.8.0", 321); err != nil {
+		t.Fatal(err)
+	}
+	ver, pid, ok := readMarker(path)
+	if !ok || ver != "1.8.0" || pid != 321 {
+		t.Fatalf("marker = %q %d %v", ver, pid, ok)
+	}
+	os.WriteFile(path, []byte("junk"), 0o600)
+	if _, _, ok := readMarker(path); ok {
+		t.Fatal("a malformed marker must not count")
+	}
+}
+
+func TestHelperRunsOutsideTheServiceCgroup(t *testing.T) {
+	unit := helperUnitName(time.Unix(1700000000, 0))
+	if unit != "superboard-update-1700000000" {
+		t.Fatalf("unit = %q", unit)
+	}
+	args := systemdRunArgs(unit, true, "/var/lib/superboard/update/superboard-helper", []string{"apply-update", "--new", "x"})
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--unit=superboard-update-1700000000", "--collect", "-- /var/lib/superboard/update/superboard-helper apply-update --new x"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("systemd-run args %q lack %q", joined, want)
+		}
+	}
+	if strings.Contains(strings.Join(systemdRunArgs(unit, false, "h", nil), " "), "--collect") {
+		t.Fatal("the old-systemd retry must drop --collect")
+	}
+}
+
+func TestSelfUpdateScheduleIsJittered(t *testing.T) {
+	for i := 0; i < 500; i++ {
+		if d := selfUpdateStartDelay(); d < 0 || d > selfUpdateStartupSpread {
+			t.Fatalf("start delay %s outside [0, %s]", d, selfUpdateStartupSpread)
+		}
+		if d := jitterInterval(24 * time.Hour); d < 24*time.Hour*9/10 || d > 24*time.Hour*11/10 {
+			t.Fatalf("interval %s outside 24h ±10%%", d)
+		}
+	}
+	withJitter(t, func(n int64) int64 { return 0 })
+	if d := jitterInterval(10 * time.Hour); d != 9*time.Hour {
+		t.Fatalf("minimum interval = %s, want 9h", d)
+	}
+}
+
+func TestUnitKillModeAndRefresh(t *testing.T) {
+	fresh := unitFile("/usr/local/bin/superboard", "/etc/superboard/config.json")
+	if !strings.Contains(fresh, "KillMode=process") {
+		t.Fatal("the unit must keep the update helper alive across restarts")
+	}
+
+	// A unit written by 1.7.0 (no KillMode) is upgraded in place, keeping
+	// the host's own ExecStart.
+	legacy := strings.Replace(renderUnit("/opt/sb/superboard run --config /srv/sb.json"), "KillMode=process\n", "", 1)
+	path := filepath.Join(t.TempDir(), "superboard.service")
+	os.WriteFile(path, []byte(legacy), 0o644)
+	changed, err := refreshUnitFile(path)
+	if err != nil || !changed {
+		t.Fatalf("refresh = %v, %v; want a rewrite", changed, err)
+	}
+	got, _ := os.ReadFile(path)
+	if !strings.Contains(string(got), "KillMode=process") || !strings.Contains(string(got), "ExecStart=/opt/sb/superboard run --config /srv/sb.json") {
+		t.Fatalf("refreshed unit:\n%s", got)
+	}
+	if changed, err := refreshUnitFile(path); err != nil || changed {
+		t.Fatalf("second refresh = %v, %v; want a no-op", changed, err)
+	}
+
+	foreign := filepath.Join(t.TempDir(), "other.service")
+	os.WriteFile(foreign, []byte("[Service]\nExecStart=/bin/true\n"), 0o644)
+	if _, err := refreshUnitFile(foreign); err == nil {
+		t.Fatal("a unit this tool did not write must be left alone")
 	}
 }

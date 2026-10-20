@@ -95,7 +95,13 @@ func runLoop(cfg *Config) error {
 		log.Printf("superboard: buffer %s (cap %.0f MiB, %d pending from a previous run)", buffer.dir, float64(buffer.maxBytes)/(1<<20), buffer.pending())
 	}
 
+	// A unit file written by an older release is brought up to date the
+	// first time a newer agent runs under systemd: an old update helper
+	// cannot do it, because it is a copy of the old binary.
+	refreshUnitIfManaged()
+
 	d := newDelivery(newPushClient(cfg), buffer, interval)
+	d.onDelivered = markFirstPush
 
 	var sampler sync.WaitGroup
 	sampler.Add(1)
