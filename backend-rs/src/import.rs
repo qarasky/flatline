@@ -9,13 +9,20 @@
 //! heartbeats, metrics (raw and hourly), notifications, API keys and the
 //! status-page configuration. Anything else is reported and skipped — a
 //! silent drop would be a monitoring outage nobody notices.
+//!
+//! The whole import — including the `--force` wipe — is one transaction on
+//! the new database: a failure part-way leaves it exactly as it was, never
+//! half-imported. The large old tables (heartbeats, metrics) are read in
+//! id-ordered pages instead of being loaded whole.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use sqlx::Row;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
+use sqlx::sqlite::{
+    SqliteConnection, SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow,
+};
 
 use crate::auth;
 use crate::db;
@@ -23,6 +30,8 @@ use crate::db;
 /// Monitor types this backend understands; anything else is reported and
 /// skipped (the locked scope plus ping, added after the import validation).
 const SUPPORTED_TYPES: [&str; 5] = ["http", "https", "push", "ping", "group"];
+/// Rows read from a large old table per query.
+const IMPORT_PAGE: i64 = 5000;
 
 #[derive(Debug, Default)]
 pub struct ImportReport {
@@ -32,6 +41,9 @@ pub struct ImportReport {
     pub orphan_heartbeats: usize,
     pub metrics_raw: usize,
     pub metrics_hourly: usize,
+    /// Metric rows skipped because their `time` was missing or unparseable:
+    /// such a row can never be folded, read or pruned by time.
+    pub bad_time_metrics: usize,
     pub tokens: usize,
     pub notifications: usize,
     pub monitor_notifications: usize,
@@ -75,40 +87,51 @@ pub async fn run(old_path: &Path, data_dir: &Path, force: bool) -> anyhow::Resul
             data_dir.join("flatline.db").display()
         );
     }
-    if force {
-        clear(&new).await?;
-    }
 
     let mut report = ImportReport::default();
 
-    import_notifications(&old, &new, &mut report)
+    // One transaction for the wipe and every table: all or nothing.
+    let mut tx = new.begin().await?;
+    if force {
+        clear(&mut tx).await?;
+    }
+
+    import_notifications(&old, &mut tx, &mut report)
         .await
         .context("import notifications")?;
-    import_monitors(&old, &new, &mut report)
+    import_monitors(&old, &mut tx, &mut report)
         .await
         .context("import monitors")?;
-    import_monitor_notifications(&old, &new, &mut report)
+    import_monitor_notifications(&old, &mut tx, &mut report)
         .await
         .context("import notification links")?;
-    import_tokens(&old, &new, &mut report)
+    import_tokens(&old, &mut tx, &mut report)
         .await
         .context("import api keys")?;
 
     let imported_ids: HashSet<i64> = sqlx::query_scalar("SELECT id FROM monitors")
-        .fetch_all(&new)
+        .fetch_all(&mut *tx)
         .await?
         .into_iter()
         .collect();
 
-    import_heartbeats(&old, &new, &imported_ids, &mut report)
+    import_heartbeats(&old, &mut tx, &imported_ids, &mut report)
         .await
         .context("import heartbeats")?;
-    import_metrics(&old, &new, &imported_ids, &mut report)
+    import_metrics(&old, &mut tx, &imported_ids, &mut report)
         .await
         .context("import metrics")?;
-    import_status_pages(&old, &new, &imported_ids, &mut report)
+    import_status_pages(&old, &mut tx, &imported_ids, &mut report)
         .await
         .context("import status pages")?;
+
+    tx.commit().await.context("commit import")?;
+    if report.bad_time_metrics > 0 {
+        report.warnings.push(format!(
+            "{} metric rows had a missing or unparseable time and were skipped",
+            report.bad_time_metrics
+        ));
+    }
 
     // Guarantee the operator can sign in even when every imported key's
     // plaintext is lost.
@@ -118,15 +141,23 @@ pub async fn run(old_path: &Path, data_dir: &Path, force: bool) -> anyhow::Resul
 }
 
 /// Wipe the new database's tables in dependency order.
-async fn clear(pool: &SqlitePool) -> anyhow::Result<()> {
+///
+/// Includes the rollup bookkeeping: a repair cursor left over from the
+/// wiped data would make the first rollup after the import a bounded run
+/// instead of the full reconciliation a fresh database gets, leaving the
+/// imported history's long tier incomplete for up to a month.
+async fn clear(new: &mut SqliteConnection) -> anyhow::Result<()> {
     for table in [
         "status_page_cnames",
         "status_page_monitors",
         "status_page_groups",
         "status_page_incidents",
         "status_pages",
+        "monitor_links",
         "monitor_notifications",
         "notifications",
+        "metrics_rollup_dirty",
+        "metrics_rollup_state",
         "metrics_hourly",
         "metrics_raw",
         "heartbeats",
@@ -135,10 +166,46 @@ async fn clear(pool: &SqlitePool) -> anyhow::Result<()> {
     ] {
         // Dynamic only in an internal constant table name; never user input.
         sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
-            .execute(pool)
+            .execute(&mut *new)
             .await?;
     }
     Ok(())
+}
+
+/// One page of a large old table, in id order after `after_id`. Tables
+/// without an `id` column are small; they come back whole as one page.
+async fn old_page(
+    old: &SqlitePool,
+    table: &str,
+    cols: &HashSet<String>,
+    after_id: Option<i64>,
+) -> anyhow::Result<Vec<SqliteRow>> {
+    if !cols.contains("id") {
+        if after_id.is_some() {
+            return Ok(Vec::new());
+        }
+        // Dynamic only in an internal constant table name; never user input.
+        return Ok(
+            sqlx::query(sqlx::AssertSqlSafe(format!("SELECT * FROM \"{table}\"")))
+                .fetch_all(old)
+                .await?,
+        );
+    }
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT * FROM \"{table}\" WHERE id > ? ORDER BY id LIMIT ?"
+    )))
+    .bind(after_id.unwrap_or(i64::MIN))
+    .bind(IMPORT_PAGE)
+    .fetch_all(old)
+    .await?)
+}
+
+/// The id of a page's last row, or `None` when there is no next page.
+fn next_page_after(rows: &[SqliteRow], cols: &HashSet<String>) -> Option<i64> {
+    if !cols.contains("id") || (rows.len() as i64) < IMPORT_PAGE {
+        return None;
+    }
+    rows.last().and_then(|row| int(row, cols, "id"))
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +289,7 @@ fn int_or(row: &SqliteRow, cols: &HashSet<String>, name: &str, default: i64) -> 
 
 async fn import_notifications(
     old: &SqlitePool,
-    new: &SqlitePool,
+    new: &mut SqliteConnection,
     report: &mut ImportReport,
 ) -> anyhow::Result<()> {
     if !table_exists(old, "notification").await {
@@ -236,7 +303,6 @@ async fn import_notifications(
         .fetch_all(old)
         .await?;
 
-    let mut tx = new.begin().await?;
     for row in &rows {
         // Older rows keep the provider type only inside the config JSON.
         let kind = text(row, &cols, "type").unwrap_or_else(|| {
@@ -261,17 +327,16 @@ async fn import_notifications(
         .bind(int_or(row, &cols, "active", 1))
         .bind(int_or(row, &cols, "is_default", 0))
         .bind(text_or(row, &cols, "config", "{}"))
-        .execute(&mut *tx)
+        .execute(&mut *new)
         .await?;
         report.notifications += 1;
     }
-    tx.commit().await?;
     Ok(())
 }
 
 async fn import_monitors(
     old: &SqlitePool,
-    new: &SqlitePool,
+    new: &mut SqliteConnection,
     report: &mut ImportReport,
 ) -> anyhow::Result<()> {
     if !table_exists(old, "monitor").await {
@@ -282,7 +347,6 @@ async fn import_monitors(
         .fetch_all(old)
         .await?;
 
-    let mut tx = new.begin().await?;
     let mut inserted: HashSet<i64> = HashSet::new();
     let mut parents: Vec<(i64, i64)> = Vec::new();
 
@@ -361,7 +425,7 @@ async fn import_monitors(
         .bind(int(row, &cols, "metric_ram_threshold"))
         .bind(int(row, &cols, "metric_disk_threshold"))
         .bind(created_at)
-        .execute(&mut *tx)
+        .execute(&mut *new)
         .await?;
 
         inserted.insert(id);
@@ -381,17 +445,16 @@ async fn import_monitors(
         sqlx::query("UPDATE monitors SET parent = ? WHERE id = ?")
             .bind(parent)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(&mut *new)
             .await?;
     }
 
-    tx.commit().await?;
     Ok(())
 }
 
 async fn import_monitor_notifications(
     old: &SqlitePool,
-    new: &SqlitePool,
+    new: &mut SqliteConnection,
     report: &mut ImportReport,
 ) -> anyhow::Result<()> {
     if !table_exists(old, "monitor_notification").await {
@@ -405,7 +468,6 @@ async fn import_monitor_notifications(
         .fetch_all(old)
         .await?;
 
-    let mut tx = new.begin().await?;
     for row in &rows {
         // Skip links to monitors or notifications that were not imported.
         let result = sqlx::query(
@@ -417,17 +479,16 @@ async fn import_monitor_notifications(
         .bind(int(row, &cols, "notification_id").unwrap_or(0))
         .bind(int(row, &cols, "monitor_id").unwrap_or(0))
         .bind(int(row, &cols, "notification_id").unwrap_or(0))
-        .execute(&mut *tx)
+        .execute(&mut *new)
         .await?;
         report.monitor_notifications += result.rows_affected() as usize;
     }
-    tx.commit().await?;
     Ok(())
 }
 
 async fn import_tokens(
     old: &SqlitePool,
-    new: &SqlitePool,
+    new: &mut SqliteConnection,
     report: &mut ImportReport,
 ) -> anyhow::Result<()> {
     if !table_exists(old, "api_key").await {
@@ -441,7 +502,6 @@ async fn import_tokens(
         .fetch_all(old)
         .await?;
 
-    let mut tx = new.begin().await?;
     for row in &rows {
         let hash = text_or(row, &cols, "key", "");
         if hash.is_empty() {
@@ -457,17 +517,16 @@ async fn import_tokens(
         .bind(int_or(row, &cols, "active", 1))
         .bind(text(row, &cols, "expires"))
         .bind(text(row, &cols, "created_date"))
-        .execute(&mut *tx)
+        .execute(&mut *new)
         .await?;
         report.tokens += 1;
     }
-    tx.commit().await?;
     Ok(())
 }
 
 async fn import_heartbeats(
     old: &SqlitePool,
-    new: &SqlitePool,
+    new: &mut SqliteConnection,
     imported_ids: &HashSet<i64>,
     report: &mut ImportReport,
 ) -> anyhow::Result<()> {
@@ -478,65 +537,84 @@ async fn import_heartbeats(
         return Ok(());
     }
     let cols = columns(old, "heartbeat").await;
-    let rows = sqlx::query("SELECT * FROM heartbeat ORDER BY id")
-        .fetch_all(old)
-        .await?;
 
-    let mut tx = new.begin().await?;
-    for row in &rows {
-        let monitor_id = int(row, &cols, "monitor_id").unwrap_or(0);
-        if !imported_ids.contains(&monitor_id) {
-            report.orphan_heartbeats += 1;
-            continue;
+    let mut after = None;
+    loop {
+        let rows = old_page(old, "heartbeat", &cols, after).await?;
+        for row in &rows {
+            let monitor_id = int(row, &cols, "monitor_id").unwrap_or(0);
+            if !imported_ids.contains(&monitor_id) {
+                report.orphan_heartbeats += 1;
+                continue;
+            }
+            sqlx::query(
+                "INSERT INTO heartbeats
+                     (monitor_id, time, status, ping, msg, important, retries, down_count, duration)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(monitor_id)
+            .bind(text_or(row, &cols, "time", ""))
+            .bind(int_or(row, &cols, "status", 2))
+            .bind(real(row, &cols, "ping"))
+            .bind(text(row, &cols, "msg"))
+            .bind(int_or(row, &cols, "important", 0))
+            .bind(int_or(row, &cols, "retries", 0))
+            .bind(int_or(row, &cols, "down_count", 0))
+            .bind(int_or(row, &cols, "duration", 0))
+            .execute(&mut *new)
+            .await?;
+            report.heartbeats += 1;
         }
-        sqlx::query(
-            "INSERT INTO heartbeats
-                 (monitor_id, time, status, ping, msg, important, retries, down_count, duration)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(monitor_id)
-        .bind(text_or(row, &cols, "time", ""))
-        .bind(int_or(row, &cols, "status", 2))
-        .bind(real(row, &cols, "ping"))
-        .bind(text(row, &cols, "msg"))
-        .bind(int_or(row, &cols, "important", 0))
-        .bind(int_or(row, &cols, "retries", 0))
-        .bind(int_or(row, &cols, "down_count", 0))
-        .bind(int_or(row, &cols, "duration", 0))
-        .execute(&mut *tx)
-        .await?;
-        report.heartbeats += 1;
+        match next_page_after(&rows, &cols) {
+            Some(id) => after = Some(id),
+            None => break,
+        }
     }
-    tx.commit().await?;
     Ok(())
+}
+
+/// A metric row's time, if it parses. The old default of `""` for a missing
+/// time produced rows that sort below every real time, can never be folded
+/// or pruned, and used to stop the rollup job entirely.
+fn metric_row_time(row: &SqliteRow, cols: &HashSet<String>) -> Option<String> {
+    text(row, cols, "time").filter(|time| crate::metrics::metric_time(time).is_some())
 }
 
 async fn import_metrics(
     old: &SqlitePool,
-    new: &SqlitePool,
+    new: &mut SqliteConnection,
     imported_ids: &HashSet<i64>,
     report: &mut ImportReport,
 ) -> anyhow::Result<()> {
     if table_exists(old, "monitor_metric").await {
         let cols = columns(old, "monitor_metric").await;
-        let rows = sqlx::query("SELECT * FROM monitor_metric ORDER BY id")
-            .fetch_all(old)
-            .await?;
-        let mut tx = new.begin().await?;
-        for row in &rows {
-            let monitor_id = int(row, &cols, "monitor_id").unwrap_or(0);
-            if !imported_ids.contains(&monitor_id) {
-                continue;
-            }
-            sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
+        let mut after = None;
+        loop {
+            let rows = old_page(old, "monitor_metric", &cols, after).await?;
+            for row in &rows {
+                let monitor_id = int(row, &cols, "monitor_id").unwrap_or(0);
+                if !imported_ids.contains(&monitor_id) {
+                    continue;
+                }
+                let Some(time) = metric_row_time(row, &cols) else {
+                    report.bad_time_metrics += 1;
+                    continue;
+                };
+                sqlx::query(
+                    "INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)",
+                )
                 .bind(monitor_id)
-                .bind(text_or(row, &cols, "time", ""))
+                .bind(time)
                 .bind(text_or(row, &cols, "payload", "{}"))
-                .execute(&mut *tx)
+                .execute(&mut *new)
                 .await?;
-            report.metrics_raw += 1;
+                report.metrics_raw += 1;
+            }
+            match next_page_after(&rows, &cols) {
+                Some(id) => after = Some(id),
+                None => break,
+            }
         }
-        tx.commit().await?;
     } else {
         report
             .warnings
@@ -545,53 +623,60 @@ async fn import_metrics(
 
     if table_exists(old, "monitor_metric_hourly").await {
         let cols = columns(old, "monitor_metric_hourly").await;
-        let rows = sqlx::query("SELECT * FROM monitor_metric_hourly ORDER BY id")
-            .fetch_all(old)
-            .await?;
-        let mut tx = new.begin().await?;
-        for row in &rows {
-            let monitor_id = int(row, &cols, "monitor_id").unwrap_or(0);
-            if !imported_ids.contains(&monitor_id) {
-                continue;
+        let mut after = None;
+        loop {
+            let rows = old_page(old, "monitor_metric_hourly", &cols, after).await?;
+            for row in &rows {
+                let monitor_id = int(row, &cols, "monitor_id").unwrap_or(0);
+                if !imported_ids.contains(&monitor_id) {
+                    continue;
+                }
+                let Some(time) = metric_row_time(row, &cols) else {
+                    report.bad_time_metrics += 1;
+                    continue;
+                };
+                sqlx::query(
+                    "INSERT INTO metrics_hourly (
+                         monitor_id, time,
+                         cpu_min, cpu_max, cpu_avg,
+                         ram_min, ram_max, ram_avg,
+                         gpu_min, gpu_max, gpu_avg,
+                         vram_min, vram_max, vram_avg,
+                         samples
+                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     ON CONFLICT (monitor_id, time) DO NOTHING",
+                )
+                .bind(monitor_id)
+                .bind(time)
+                .bind(real(row, &cols, "cpu_min"))
+                .bind(real(row, &cols, "cpu_max"))
+                .bind(real(row, &cols, "cpu_avg"))
+                .bind(real(row, &cols, "ram_min"))
+                .bind(real(row, &cols, "ram_max"))
+                .bind(real(row, &cols, "ram_avg"))
+                .bind(real(row, &cols, "gpu_min"))
+                .bind(real(row, &cols, "gpu_max"))
+                .bind(real(row, &cols, "gpu_avg"))
+                .bind(real(row, &cols, "vram_min"))
+                .bind(real(row, &cols, "vram_max"))
+                .bind(real(row, &cols, "vram_avg"))
+                .bind(int_or(row, &cols, "samples", 0))
+                .execute(&mut *new)
+                .await?;
+                report.metrics_hourly += 1;
             }
-            sqlx::query(
-                "INSERT INTO metrics_hourly (
-                     monitor_id, time,
-                     cpu_min, cpu_max, cpu_avg,
-                     ram_min, ram_max, ram_avg,
-                     gpu_min, gpu_max, gpu_avg,
-                     vram_min, vram_max, vram_avg,
-                     samples
-                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                 ON CONFLICT (monitor_id, time) DO NOTHING",
-            )
-            .bind(monitor_id)
-            .bind(text_or(row, &cols, "time", ""))
-            .bind(real(row, &cols, "cpu_min"))
-            .bind(real(row, &cols, "cpu_max"))
-            .bind(real(row, &cols, "cpu_avg"))
-            .bind(real(row, &cols, "ram_min"))
-            .bind(real(row, &cols, "ram_max"))
-            .bind(real(row, &cols, "ram_avg"))
-            .bind(real(row, &cols, "gpu_min"))
-            .bind(real(row, &cols, "gpu_max"))
-            .bind(real(row, &cols, "gpu_avg"))
-            .bind(real(row, &cols, "vram_min"))
-            .bind(real(row, &cols, "vram_max"))
-            .bind(real(row, &cols, "vram_avg"))
-            .bind(int_or(row, &cols, "samples", 0))
-            .execute(&mut *tx)
-            .await?;
-            report.metrics_hourly += 1;
+            match next_page_after(&rows, &cols) {
+                Some(id) => after = Some(id),
+                None => break,
+            }
         }
-        tx.commit().await?;
     }
     Ok(())
 }
 
 async fn import_status_pages(
     old: &SqlitePool,
-    new: &SqlitePool,
+    new: &mut SqliteConnection,
     imported_ids: &HashSet<i64>,
     report: &mut ImportReport,
 ) -> anyhow::Result<()> {
@@ -606,7 +691,6 @@ async fn import_status_pages(
         .fetch_all(old)
         .await?;
 
-    let mut tx = new.begin().await?;
     for row in &rows {
         sqlx::query(
             "INSERT INTO status_pages (
@@ -639,11 +723,10 @@ async fn import_status_pages(
         .bind(text(row, &cols, "created_date").unwrap_or_else(|| {
             crate::metrics::sql_time_millis(chrono::Utc::now().timestamp_millis())
         }))
-        .execute(&mut *tx)
+        .execute(&mut *new)
         .await?;
         report.status_pages += 1;
     }
-    tx.commit().await?;
 
     // Status-page groups (`group` is a reserved word in SQL).
     if table_exists(old, "group").await {
@@ -651,7 +734,6 @@ async fn import_status_pages(
         let rows = sqlx::query("SELECT * FROM `group` ORDER BY id")
             .fetch_all(old)
             .await?;
-        let mut tx = new.begin().await?;
         for row in &rows {
             sqlx::query(
                 "INSERT INTO status_page_groups (id, status_page_id, name, weight, public)
@@ -662,12 +744,11 @@ async fn import_status_pages(
             .bind(text_or(row, &cols, "name", ""))
             .bind(int_or(row, &cols, "weight", 0))
             .bind(int_or(row, &cols, "public", 1))
-            .execute(&mut *tx)
+            .execute(&mut *new)
             .await
             .with_context(|| format!("insert group {}", int(row, &cols, "id").unwrap_or(0)))?;
             report.status_page_groups += 1;
         }
-        tx.commit().await?;
     }
 
     if table_exists(old, "monitor_group").await {
@@ -675,7 +756,6 @@ async fn import_status_pages(
         let rows = sqlx::query("SELECT * FROM monitor_group")
             .fetch_all(old)
             .await?;
-        let mut tx = new.begin().await?;
         for row in &rows {
             let monitor_id = int(row, &cols, "monitor_id").unwrap_or(0);
             if !imported_ids.contains(&monitor_id) {
@@ -694,11 +774,10 @@ async fn import_status_pages(
             .bind(int_or(row, &cols, "send_url", 1))
             .bind(text(row, &cols, "custom_url"))
             .bind(int_or(row, &cols, "weight", 0))
-            .execute(&mut *tx)
+            .execute(&mut *new)
             .await?;
             report.status_page_monitors += 1;
         }
-        tx.commit().await?;
     }
 
     if table_exists(old, "incident").await {
@@ -706,7 +785,6 @@ async fn import_status_pages(
         let rows = sqlx::query("SELECT * FROM incident ORDER BY id")
             .fetch_all(old)
             .await?;
-        let mut tx = new.begin().await?;
         for row in &rows {
             sqlx::query(
                 "INSERT INTO status_page_incidents (
@@ -723,11 +801,10 @@ async fn import_status_pages(
             .bind(int_or(row, &cols, "active", 1))
             .bind(text_or(row, &cols, "created_date", ""))
             .bind(text(row, &cols, "last_updated_date"))
-            .execute(&mut *tx)
+            .execute(&mut *new)
             .await?;
             report.status_page_incidents += 1;
         }
-        tx.commit().await?;
     }
 
     if table_exists(old, "status_page_cname").await {
@@ -735,7 +812,6 @@ async fn import_status_pages(
         let rows = sqlx::query("SELECT * FROM status_page_cname")
             .fetch_all(old)
             .await?;
-        let mut tx = new.begin().await?;
         for row in &rows {
             let domain = text_or(row, &cols, "domain", "");
             if domain.is_empty() {
@@ -746,11 +822,10 @@ async fn import_status_pages(
             )
             .bind(int(row, &cols, "status_page_id").unwrap_or(0))
             .bind(domain)
-            .execute(&mut *tx)
+            .execute(&mut *new)
             .await?;
             report.status_page_cnames += 1;
         }
-        tx.commit().await?;
     }
 
     Ok(())
