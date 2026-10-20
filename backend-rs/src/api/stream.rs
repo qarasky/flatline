@@ -47,6 +47,9 @@ pub async fn events(
 
     let mut receiver = state.events.subscribe();
     let pool = state.pool.clone();
+    // A5: streams end at once on shutdown instead of holding the graceful
+    // drain open for their 15-minute lifetime.
+    let shutting_down = state.engine.shutdown_token().wait();
     let stream = async_stream::stream! {
         // Hold the slot for the stream's lifetime.
         let _guard = guard;
@@ -59,10 +62,12 @@ pub async fn events(
         );
         let lifetime = tokio::time::sleep(Duration::from_secs(LIFETIME_SECS));
         tokio::pin!(lifetime);
+        tokio::pin!(shutting_down);
 
         loop {
             tokio::select! {
                 _ = &mut lifetime => break,
+                _ = &mut shutting_down => break,
                 _ = keepalive.tick() => {
                     if !auth::verify_token(&pool, &token).await {
                         yield Ok(Event::default().data(json!({"type": "unauthorized"}).to_string()));
