@@ -157,6 +157,7 @@ write:
 ```json
 {
   "version": 1,
+  "tempDir": "/srv/restore-scratch",
   "postgres": [
     {
       "container": "scratch-postgres",
@@ -175,6 +176,12 @@ write:
   ]
 }
 ```
+
+`tempDir` (optional, absolute, an existing real directory) holds each
+decrypted entry, up to 8 GiB, while it is verified and restored; put it on the
+target's disk, not on a tmpfs. Without it a private `.flatline-restore-*`
+directory next to the bundle is used. Either way it is mode 0700 and removed
+afterwards.
 
 Objects are PUT to the exact original keys with recorded content types. A
 partial failure leaves scratch data for inspection and reports `restoreStatus:

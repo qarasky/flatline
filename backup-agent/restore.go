@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -31,6 +32,11 @@ type RestoreTargetConfig struct {
 	Postgres []RestorePostgresTarget `json:"postgres"`
 	S3       []RestoreS3Target       `json:"s3"`
 	Globals  *RestoreGlobalsTarget   `json:"globals,omitempty"`
+	// TempDir holds decrypted entries (up to 8 GiB each) while they are
+	// verified and restored. It must be an absolute, existing, real
+	// directory on a disk-backed filesystem; os.TempDir may be a small
+	// tmpfs. Defaults to the bundle's directory.
+	TempDir string `json:"tempDir,omitempty"`
 }
 
 type RestorePostgresTarget struct {
@@ -110,6 +116,11 @@ func LoadRestoreTarget(path string) (RestoreTargetConfig, error) {
 	}
 	if target.Version != 1 {
 		return RestoreTargetConfig{}, fmt.Errorf("unsupported target config version %d", target.Version)
+	}
+	if target.TempDir != "" {
+		if err := requireRealDirectory(target.TempDir); err != nil {
+			return RestoreTargetConfig{}, fmt.Errorf("tempDir: %w", err)
+		}
 	}
 
 	databases := make(map[string]struct{})
@@ -220,7 +231,14 @@ func restoreBundleWith(ctx context.Context, bundlePath, identityFile string, tar
 		return report, err
 	}
 
-	if err := restoreEntries(ctx, bundlePath, identityFile, verified.Manifest, target, executor, &report); err != nil {
+	work, err := restoreWorkDir(target, bundlePath)
+	if err != nil {
+		report.Error = "restore temp directory unavailable"
+		return report, err
+	}
+	defer os.RemoveAll(work)
+
+	if err := restoreEntries(ctx, bundlePath, identityFile, work, verified.Manifest, target, executor, &report); err != nil {
 		report.Error = "restore failed; scratch targets were left for inspection"
 		return report, err
 	}
@@ -455,7 +473,43 @@ func checkTargetsEmpty(ctx context.Context, manifest Manifest, target RestoreTar
 	return nil
 }
 
-func restoreEntries(ctx context.Context, bundlePath, identityFile string, manifest Manifest, target RestoreTargetConfig, executor RestoreExecutor, report *RestoreReport) error {
+func requireRealDirectory(path string) error {
+	if !filepath.IsAbs(path) {
+		return errors.New("must be an absolute path")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("must be a real directory")
+	}
+	return nil
+}
+
+// restoreWorkDir creates a private (0700) directory for decrypted entries
+// under the configured tempDir, or next to the bundle. The caller removes it.
+func restoreWorkDir(target RestoreTargetConfig, bundlePath string) (string, error) {
+	root := target.TempDir
+	if root == "" {
+		absolute, err := filepath.Abs(bundlePath)
+		if err != nil {
+			return "", err
+		}
+		root = filepath.Dir(absolute)
+	}
+	work, err := os.MkdirTemp(root, ".flatline-restore-")
+	if err != nil {
+		return "", err
+	}
+	if err := os.Chmod(work, 0o700); err != nil {
+		_ = os.RemoveAll(work)
+		return "", err
+	}
+	return work, nil
+}
+
+func restoreEntries(ctx context.Context, bundlePath, identityFile, work string, manifest Manifest, target RestoreTargetConfig, executor RestoreExecutor, report *RestoreReport) error {
 	identities, err := readIdentities(identityFile)
 	if err != nil {
 		return err
@@ -501,7 +555,7 @@ func restoreEntries(ctx context.Context, bundlePath, identityFile string, manife
 		switch entry.Kind {
 		case kindPostgres:
 			targetDatabase, postgresTarget := targetForDatabase(target, entry.Database)
-			temporary, err := spillVerifiedEntry(archive, entry)
+			temporary, err := spillVerifiedEntry(archive, entry, work)
 			if err != nil {
 				return err
 			}
@@ -514,7 +568,7 @@ func restoreEntries(ctx context.Context, bundlePath, identityFile string, manife
 			report.Databases = append(report.Databases, targetDatabase)
 		case kindObject:
 			targetSource := targetForBucket(target, entry.Bucket)
-			if err := restoreObject(ctx, archive, entry, targetSource, executor); err != nil {
+			if err := restoreObject(ctx, archive, entry, work, targetSource, executor); err != nil {
 				return err
 			}
 			report.Objects++
@@ -542,8 +596,8 @@ func restoreEntries(ctx context.Context, bundlePath, identityFile string, manife
 	return nil
 }
 
-func restoreObject(ctx context.Context, archive *tar.Reader, entry Entry, target RestoreS3Target, executor RestoreExecutor) error {
-	temporary, err := spillVerifiedEntry(archive, entry)
+func restoreObject(ctx context.Context, archive *tar.Reader, entry Entry, work string, target RestoreS3Target, executor RestoreExecutor) error {
+	temporary, err := spillVerifiedEntry(archive, entry, work)
 	if err != nil {
 		return err
 	}
@@ -564,8 +618,8 @@ func restoreObject(ctx context.Context, archive *tar.Reader, entry Entry, target
 // spillVerifiedEntry writes one archive entry to a private temporary file and
 // verifies its size and SHA-256 before any target write. Database dumps and
 // objects share this guard.
-func spillVerifiedEntry(archive *tar.Reader, entry Entry) (*os.File, error) {
-	temporary, err := os.CreateTemp("", "flatline-restore-*")
+func spillVerifiedEntry(archive *tar.Reader, entry Entry, work string) (*os.File, error) {
+	temporary, err := os.CreateTemp(work, "entry-*")
 	if err != nil {
 		return nil, err
 	}
@@ -870,8 +924,7 @@ func (d dockerRestoreExecutor) TableCounts(ctx context.Context, target RestorePo
 }
 
 func (d dockerRestoreExecutor) RestoreDatabase(ctx context.Context, target RestorePostgresTarget, database string, dump io.Reader) error {
-	command := exec.CommandContext(ctx, d.docker(), "exec", "-i", target.Container,
-		"pg_restore", "--no-owner", "--no-privileges", "--dbname="+database, "-U", target.User)
+	command := exec.CommandContext(ctx, d.docker(), restoreDatabaseArgs(target, database)...)
 	command.Stdin = dump
 	command.Stderr = &limitedBuffer{limit: 4096}
 	if err := command.Run(); err != nil {
@@ -881,8 +934,7 @@ func (d dockerRestoreExecutor) RestoreDatabase(ctx context.Context, target Resto
 }
 
 func (d dockerRestoreExecutor) RestoreGlobals(ctx context.Context, target RestoreGlobalsTarget, sql io.Reader) error {
-	command := exec.CommandContext(ctx, d.docker(), "exec", "-i", target.Container,
-		"psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", target.User, "--dbname=postgres", "-f", "-")
+	command := exec.CommandContext(ctx, d.docker(), restoreGlobalsArgs(target)...)
 	command.Stdin = sql
 	command.Stderr = &limitedBuffer{limit: 4096}
 	if err := command.Run(); err != nil {
@@ -892,15 +944,31 @@ func (d dockerRestoreExecutor) RestoreGlobals(ctx context.Context, target Restor
 }
 
 func (d dockerRestoreExecutor) psql(ctx context.Context, target RestorePostgresTarget, database, sql string) ([]string, error) {
-	command := exec.CommandContext(ctx, d.docker(), "exec", target.Container,
-		"psql", "-X", "-q", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1",
-		"-U", target.User, "--dbname="+database, "-c", sql)
+	command := exec.CommandContext(ctx, d.docker(), restorePsqlArgs(target, database, sql)...)
 	output, err := command.Output()
 	if err != nil {
 		return nil, err
 	}
 	raw := strings.Split(string(output), "\n")
 	return nonEmpty(raw), nil
+}
+
+// Docker argument vectors. `--` ends docker's own option parsing, so a
+// container name beginning with "-" can never be read as a docker flag.
+func restoreDatabaseArgs(target RestorePostgresTarget, database string) []string {
+	return []string{"exec", "-i", "--", target.Container,
+		"pg_restore", "--no-owner", "--no-privileges", "--dbname=" + database, "-U", target.User}
+}
+
+func restoreGlobalsArgs(target RestoreGlobalsTarget) []string {
+	return []string{"exec", "-i", "--", target.Container,
+		"psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", target.User, "--dbname=postgres", "-f", "-"}
+}
+
+func restorePsqlArgs(target RestorePostgresTarget, database, sql string) []string {
+	return []string{"exec", "--", target.Container,
+		"psql", "-X", "-q", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1",
+		"-U", target.User, "--dbname=" + database, "-c", sql}
 }
 
 // validateGlobalsSQL rejects psql meta-commands in bundle-provided SQL. The

@@ -423,3 +423,84 @@ func TestKeygenRefusesOverwrite(t *testing.T) {
 		t.Fatal("refused keygen changed the identity file")
 	}
 }
+
+// recordingTempExecutor records where decrypted entries were spilled.
+type recordingTempExecutor struct {
+	fakeRestoreExecutor
+	spilled []string
+}
+
+func (r *recordingTempExecutor) PutObject(ctx context.Context, target RestoreS3Target, key, contentType string, body *os.File, size int64) error {
+	r.spilled = append(r.spilled, body.Name())
+	return r.fakeRestoreExecutor.PutObject(ctx, target, key, contentType, body, size)
+}
+
+// Review L4: decrypted entries of up to 8 GiB went to os.TempDir, which may
+// be a small tmpfs. They now go to a private directory under the configured
+// tempDir (default: next to the bundle) that is removed afterwards.
+func TestRestoreSpillsIntoConfiguredTempDir(t *testing.T) {
+	identity, identityFile := testIdentity(t)
+	fixture := newFixture(t)
+	bundle := makeRestoreBundle(t, identity, map[string][]byte{"a": []byte("one"), "b": []byte("two")}, false, false)
+	target := mustLoadTarget(t, writeRestoreTarget(t, fixture, "meks-media", "restore-media", "", "", false))
+	target.TempDir = t.TempDir()
+	executor := &recordingTempExecutor{}
+
+	report, err := restoreBundleWith(context.Background(), bundle, identityFile, target, executor)
+	if err != nil || report.RestoreStatus != "passed" {
+		t.Fatalf("report=%+v err=%v", report, err)
+	}
+	if len(executor.spilled) != 2 {
+		t.Fatalf("spilled = %v", executor.spilled)
+	}
+	for _, path := range executor.spilled {
+		if !strings.HasPrefix(path, target.TempDir+string(os.PathSeparator)) {
+			t.Fatalf("entry spilled outside tempDir: %s", path)
+		}
+	}
+	left, _ := os.ReadDir(target.TempDir)
+	if len(left) != 0 {
+		t.Fatalf("restore left %d items in tempDir", len(left))
+	}
+
+	// Without tempDir the bundle's own directory is used, not os.TempDir.
+	target.TempDir = ""
+	work, err := restoreWorkDir(target, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	if filepath.Dir(work) != filepath.Dir(bundle) {
+		t.Fatalf("default work dir %s is not beside the bundle", work)
+	}
+	if info, _ := os.Stat(work); info.Mode().Perm() != 0o700 {
+		t.Fatalf("work dir mode = %v", info.Mode().Perm())
+	}
+	for _, bad := range []string{"relative/dir", filepath.Join(t.TempDir(), "missing")} {
+		if err := requireRealDirectory(bad); err == nil {
+			t.Fatalf("tempDir %q must be rejected", bad)
+		}
+	}
+}
+
+// Review L4: docker exec argument vectors end docker's option parsing with
+// "--" before the container name.
+func TestRestoreDockerArgsSeparateContainer(t *testing.T) {
+	postgres := RestorePostgresTarget{Container: "--privileged", User: "postgres"}
+	for name, args := range map[string][]string{
+		"pg_restore": restoreDatabaseArgs(postgres, "restore_check"),
+		"psql":       restorePsqlArgs(postgres, "restore_check", "SELECT 1"),
+		"globals":    restoreGlobalsArgs(RestoreGlobalsTarget{Container: "--privileged", User: "postgres"}),
+	} {
+		separator := -1
+		for index, arg := range args {
+			if arg == "--" {
+				separator = index
+				break
+			}
+		}
+		if separator < 0 || args[0] != "exec" || args[separator+1] != "--privileged" {
+			t.Fatalf("%s: container is not after --: %q", name, args)
+		}
+	}
+}
