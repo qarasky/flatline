@@ -1,7 +1,7 @@
 # Build context for the Flatline image (docker/rust.dockerfile).
 #
 # The stages copy: packages/shared, apps/dashboard, superboard, backend-rs,
-# docs/provisioning.md and agent-install.sh. Everything below is local state,
+# docs/provisioning.md, agent-install.sh and docker/entrypoint.sh. Everything below is local state,
 # dependency trees or build output the image never needs.
 
 # Version control and local state

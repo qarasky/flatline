@@ -1,5 +1,9 @@
 import type { MetricsPayload, MonitorSummary } from "./api";
 
+// Route parsing lives in ./routes so the entry chunk does not pull in the
+// board presentation code; re-exported for existing callers.
+export { boardRouteFrom, statusSlugFromPath, type BoardRoute } from "./routes";
+
 /**
  * Parse a stored timestamp (SQL or ISO) into epoch millis.
  * @param value Timestamp
@@ -534,67 +538,22 @@ export function groupSlug(name: string): string {
         .replace(/^-+|-+$/g, "");
 }
 
-export interface BoardRoute {
-    kiosk: boolean;
-    /** Raw group filter segment, e.g. "work" or "work,personal". Null for the whole fleet. */
-    filter: string | null;
-}
-
 /**
- * Resolve a path to a board route, if it is one.
- *
- * /superboard and /superboard/kiosk show the whole fleet; appending a
- * group segment scopes the board, e.g. /superboard/kiosk/work. Anything
- * else (the table, invites) is not a board route.
+ * Whether a server's latest sample is older than its freshness window:
+ * three agent sample intervals (at least 5 s) when the agent reports one,
+ * otherwise the monitor interval (at least 60 s).
  */
-export function boardRouteFrom(path: string): BoardRoute | null {
-    const clean = path.replace(/\/+$/, "") || "/";
-    if (clean === "/superboard") {
-        return { kiosk: false, filter: null };
-    }
-    if (clean === "/superboard/kiosk") {
-        return { kiosk: true, filter: null };
-    }
-    let match = /^\/superboard\/kiosk\/(.+)$/.exec(clean);
-    if (match) {
-        return { kiosk: true, filter: decodeSegment(match[1]) };
-    }
-    match = /^\/superboard\/([^/]+)$/.exec(clean);
-    if (match) {
-        // /superboard/kiosk is handled above; anything else here is a scope.
-        // (So do not name a group "kiosk": the desk URL would lose to it.)
-        return { kiosk: false, filter: decodeSegment(match[1]) };
-    }
-    return null;
+export function isSampleStale(metrics: MetricsPayload, time: string, interval: number, now = Date.now()): boolean {
+    const freshnessWindow =
+        metrics.sampleInterval && Number.isFinite(metrics.sampleInterval) && metrics.sampleInterval > 0
+            ? Math.max(5, metrics.sampleInterval * 3)
+            : Math.max(60, interval);
+    return sampleAgeMs(time, now) > freshnessWindow * 1000;
 }
 
-function decodeSegment(segment: string): string {
-    try {
-        return decodeURIComponent(segment);
-    } catch {
-        return segment;
-    }
-}
-
-/**
- * Pull a status page slug out of `/status/:slug`.
- *
- * Public route: no operator token is involved, and the API decides what the
- * caller may see (password-gated pages show the unlock form).
- * @param path Current path
- * @returns Decoded slug, or null when this is not a status route
- */
-export function statusSlugFromPath(path: string): string | null {
-    const clean = path.replace(/\/+$/, "") || "/";
-    const match = /^\/status\/([^/]+)$/.exec(clean);
-    if (!match) {
-        return null;
-    }
-    try {
-        return decodeURIComponent(match[1]);
-    } catch {
-        return match[1];
-    }
+/** Whether a 10-minute CPU peak is still inside its window. */
+export function isPeakFresh(at: string | null | undefined, now = Date.now()): boolean {
+    return Boolean(at) && sampleAgeMs(at as string, now) <= 10 * 60_000;
 }
 
 /**
@@ -629,11 +588,7 @@ export function matchGroups(monitors: MonitorSummary[], filter: string): Monitor
 }
 
 export function fleetAttention(metrics: MetricsPayload, time: string, interval: number, now = Date.now()) {
-    const freshnessWindow =
-        metrics.sampleInterval && Number.isFinite(metrics.sampleInterval) && metrics.sampleInterval > 0
-            ? Math.max(5, metrics.sampleInterval * 3)
-            : Math.max(60, interval);
-    const stale = sampleAgeMs(time, now) > freshnessWindow * 1000;
+    const stale = isSampleStale(metrics, time, interval, now);
     const containers = [...(metrics.docker ?? [])].sort(
         (a, b) => Number(containerIssue(b)) - Number(containerIssue(a)) || (a.name ?? "").localeCompare(b.name ?? "")
     );

@@ -5,7 +5,7 @@
  * The API stores a group as a monitor with `type: "group"` and children
  * pointing at it through `parent`. These helpers turn that flat list into
  * paths, subtree sets and picker options without duplicating the tree logic
- * that lives in App.tsx.
+ * that lives in components/Dashboard.tsx.
  */
 
 import type { MonitorSummary } from "./api";

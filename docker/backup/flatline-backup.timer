@@ -1,0 +1,12 @@
+# Runs flatline-backup.service every night; a run missed while the host was
+# off happens at the next boot (Persistent).
+[Unit]
+Description=Nightly Flatline database backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

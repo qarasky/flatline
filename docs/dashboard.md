@@ -14,7 +14,24 @@ serves the built output, so in production there is no separate frontend origin.
 | `/status/:slug`                      | A public status page ([status pages](status-pages.md)). |
 | any other path                       | The dashboard, so a deep link never 404s.               |
 
-The router is ~40 lines in `src/lib/router.ts`; there is no routing dependency.
+The router is ~40 lines in `src/lib/router.ts` (path parsing in
+`src/lib/routes.ts`); there is no routing dependency.
+
+- **Code splitting.** `App.tsx` is only the router: the dashboard, the Superboard
+  and the status page are separate chunks loaded with `React.lazy`, so a status
+  page visitor never downloads the operator UI.
+- **Error boundaries.** Each route has its own (`RouteErrorBoundary`). On the
+  kiosk board and public status pages — screens nobody is sitting at — an
+  error is shown and the page reloads itself after 30 s. Operator routes show
+  the error with _Try again_ and _Reload page_. A route chunk that fails to load
+  (an old tab after a deploy) lands in the same place.
+- **New deploys.** Every 5 minutes, when the tab becomes visible, and whenever
+  the live stream reconnects, the app fetches `/index.html` uncached and
+  compares its hashed entry script and stylesheet with the ones it is running.
+  On a change the kiosk, status pages and an unauthenticated `/` reload
+  themselves (waiting while someone is typing); operator routes show a "new
+  version — Reload" prompt. Nothing on the backend is involved, and the dev
+  server (unhashed assets) never triggers it.
 
 ## Signing in
 
@@ -47,6 +64,13 @@ revocable credential.
 Status updates arrive over the SSE stream, so the table re-renders as checks
 finish rather than polling.
 
+A tab holds **one** live stream however many views want it (`src/lib/live-hub.ts`):
+the table, the monitor detail view and the Superboard subscribe to the shared
+connection rather than opening their own (the backend allows 8 per token). On
+connect, reconnect and `invalidate` every subscriber resnapshots; between those
+the detail view appends each live beat to its recent-checks list instead of
+refetching the monitor and 120 heartbeats.
+
 ## The monitor form
 
 One form for every type. `Type` is `http`, `https`, `push`, `ping` or `group` —
@@ -77,6 +101,24 @@ named token, disable one, re-enable it or delete it. A newly minted token is
 displayed exactly once — there is no endpoint that returns it again. Prefer a
 named token per integration so a leak can be revoked without disturbing the
 others.
+
+## Public status pages
+
+The status page (`/status/:slug`, or a client's own domain at `/`) refreshes
+every 30 s. Failure handling is deliberately conservative
+(`src/lib/status-snapshot.ts`):
+
+- Once a page has rendered, a failed refresh keeps it on screen with a
+  **"Stale since HH:MM:SS"** banner and retries with backoff (2 s doubling to
+  60 s, jittered); a recovered refresh clears the banner. A failed heartbeat
+  request inside an otherwise good refresh keeps the previous bars rather than
+  blanking them, and also shows the banner.
+- On a client domain, the host is resolved with `resolve-host`. Only a
+  successful answer of `slug: null` means "not a status domain" and shows the
+  operator dashboard; a network error or 5xx is retried ("Could not reach the
+  status server. Retrying…") and never shows the token gate.
+- `404` (no such page) and `401` (password) are authoritative and replace the
+  page.
 
 ## Look and feel
 

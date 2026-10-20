@@ -6,6 +6,8 @@
  * token shape an agent uses, which keeps one auth model instead of two.
  */
 
+import type { HeartbeatEntry } from "./heartbeat-log";
+
 const BASE = (import.meta.env?.VITE_FLATLINE_URL as string | undefined) ?? "";
 
 const TOKEN_KEY = "flatline.token";
@@ -474,6 +476,25 @@ export function fetchMonitor(
     signal?: AbortSignal
 ): Promise<{ ok: true; monitor: MonitorSummary & Record<string, unknown> }> {
     return request(`/api/v1/monitors/${id}`, { signal });
+}
+
+/**
+ * Fetch recent heartbeats for a monitor.
+ * @param id Monitor id
+ * @param limit How many to take
+ * @param signal Cancels the request when the caller's deadline fires
+ * @returns Heartbeats newest first, plus the total
+ */
+export async function fetchHeartbeats(
+    id: number,
+    limit = 120,
+    signal?: AbortSignal
+): Promise<{ heartbeats: HeartbeatEntry[]; total: number }> {
+    const body = await request<{ heartbeats?: HeartbeatEntry[]; total?: number }>(
+        `/api/v1/monitors/${id}/heartbeats?limit=${limit}`,
+        { signal }
+    );
+    return { heartbeats: body.heartbeats ?? [], total: body.total ?? 0 };
 }
 
 /**

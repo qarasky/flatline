@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchMetricsHistory, type HistoryMetric, type MetricsHistorySummary, type MonitorSummary } from "@/lib/api";
-import { historyPath } from "@/lib/history-chart";
+import { historyPath, historyRefreshMs, historyTimeoutMs } from "@/lib/history-chart";
 import { percentage } from "@/lib/fleet-presentation";
 import { Button } from "@/components/ui/button";
 
@@ -197,6 +197,8 @@ export const ServerHistory = memo(function ServerHistory({
     useEffect(() => {
         let alive = true,
             busy = false;
+        // Aborts whatever is in flight when the range changes or the dialog
+        // closes; each request also gets its own deadline below.
         const controller = new AbortController();
         setData(null);
         setLoading(true);
@@ -206,17 +208,29 @@ export const ServerHistory = memo(function ServerHistory({
                 return;
             }
             busy = true;
+            const request = new AbortController();
+            const abort = () => request.abort();
+            controller.signal.addEventListener("abort", abort, { once: true });
+            const deadline = window.setTimeout(abort, historyTimeoutMs(hours));
             try {
-                const result = await fetchMetricsHistory(monitor.id, hours, controller.signal);
+                const result = await fetchMetricsHistory(monitor.id, hours, request.signal);
                 if (alive) {
                     setData(result);
                     setError(null);
                 }
             } catch (e) {
                 if (alive) {
-                    setError(e instanceof Error ? e.message : "Could not load history");
+                    setError(
+                        request.signal.aborted
+                            ? "History request timed out; retrying on the next refresh."
+                            : e instanceof Error
+                              ? e.message
+                              : "Could not load history"
+                    );
                 }
             } finally {
+                window.clearTimeout(deadline);
+                controller.signal.removeEventListener("abort", abort);
                 busy = false;
                 if (alive) {
                     setLoading(false);
@@ -228,7 +242,7 @@ export const ServerHistory = memo(function ServerHistory({
             if (!document.hidden) {
                 void load();
             }
-        }, 30_000);
+        }, historyRefreshMs(hours));
         return () => {
             alive = false;
             controller.abort();

@@ -28,3 +28,33 @@ export function historyPath(
     }
     return commands.join(" ");
 }
+
+/**
+ * How often the history dialog refreshes a range. Short ranges move every
+ * few seconds and are cheap; a 30-day or 1-year range barely changes in a
+ * minute but costs a scan over hourly rollups, so it refreshes rarely.
+ * @param hours Range length
+ * @returns Refresh interval in milliseconds
+ */
+export function historyRefreshMs(hours: number): number {
+    if (hours <= 1) {
+        return 30_000;
+    }
+    if (hours <= 24) {
+        return 60_000;
+    }
+    if (hours <= 168) {
+        return 5 * 60_000;
+    }
+    return 15 * 60_000;
+}
+
+/**
+ * Deadline for one history request, so a hung request cannot stop the
+ * refreshes (the next one only starts after the previous settles).
+ * @param hours Range length
+ * @returns Timeout in milliseconds
+ */
+export function historyTimeoutMs(hours: number): number {
+    return hours <= 24 ? 15_000 : 45_000;
+}
