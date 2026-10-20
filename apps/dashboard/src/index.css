@@ -487,6 +487,16 @@ body {
     max-width: 60ch;
 }
 
+.status-page .stale-banner {
+    border: 1px solid var(--warn);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    color: var(--warn);
+    font-size: 14px;
+    background: var(--surface);
+}
+
 .status-page .hero {
     border: 1px solid var(--line);
     border-radius: var(--radius);

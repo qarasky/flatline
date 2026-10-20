@@ -102,10 +102,13 @@ export function StatusPageView({
     data,
     heartbeats,
     history = [],
+    notice = null,
 }: {
     data: StatusPageData;
     heartbeats: Record<string, Heartbeat[]>;
     history?: Incident[];
+    /** Shown under the header, e.g. the "stale since" banner. */
+    notice?: React.ReactNode;
 }) {
     // Status lives in the heartbeat feed, not the config payload, so pair the
     // two before deciding anything about overall health.
@@ -139,6 +142,8 @@ export function StatusPageView({
                         {data.config.description ? <p className="site-description">{data.config.description}</p> : null}
                     </div>
                 </header>
+
+                {notice}
 
                 <section className={`hero ${severity}`}>
                     <div className="hero-row">
