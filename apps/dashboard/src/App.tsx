@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from "react";
 import { getToken } from "@/lib/api";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
+import { UpdateWatcher } from "@/components/UpdateWatcher";
 import { usePath } from "@/lib/router";
 import { boardRouteFrom, statusSlugFromPath } from "@/lib/routes";
 
@@ -53,37 +54,51 @@ function RootRoute() {
  *
  * Every route sits in its own error boundary: the kiosk and status pages
  * show the error and reload themselves, operator routes offer "try again".
+ * The same split decides what happens when a new deploy is detected.
  */
 export default function App() {
     const path = usePath();
     const board = boardRouteFrom(path);
+    const statusSlug = board ? null : statusSlugFromPath(path);
 
+    let content: React.ReactNode;
+    // Unattended screens reload themselves on a new deploy; operator
+    // routes get a prompt. An unauthenticated "/" is either a client's
+    // status domain or the token gate — nothing to lose either way.
+    let updates: "reload" | "prompt";
     if (board) {
-        return (
+        updates = board.kiosk ? "reload" : "prompt";
+        content = (
             <RouteErrorBoundary resetKey={path} autoReload={board.kiosk}>
                 <Suspense fallback={<RouteLoading />}>
                     <SuperboardApp kiosk={board.kiosk} filter={board.filter} />
                 </Suspense>
             </RouteErrorBoundary>
         );
-    }
-
-    const statusSlug = statusSlugFromPath(path);
-    if (statusSlug) {
+    } else if (statusSlug) {
+        updates = "reload";
         // Status pages are often left on a screen too; nobody is there to
         // click "try again", so they recover like the kiosk.
-        return (
+        content = (
             <RouteErrorBoundary resetKey={path} autoReload>
                 <Suspense fallback={<RouteLoading label="Loading status…" />}>
                     <StatusPageApp slug={statusSlug} />
                 </Suspense>
             </RouteErrorBoundary>
         );
+    } else {
+        updates = path === "/" && !getToken() ? "reload" : "prompt";
+        content = (
+            <RouteErrorBoundary resetKey={path}>
+                <Suspense fallback={<RouteLoading />}>{path === "/" ? <RootRoute /> : <Dashboard />}</Suspense>
+            </RouteErrorBoundary>
+        );
     }
 
     return (
-        <RouteErrorBoundary resetKey={path}>
-            <Suspense fallback={<RouteLoading />}>{path === "/" ? <RootRoute /> : <Dashboard />}</Suspense>
-        </RouteErrorBoundary>
+        <>
+            {content}
+            <UpdateWatcher mode={updates} />
+        </>
     );
 }
