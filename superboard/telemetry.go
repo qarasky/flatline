@@ -39,6 +39,8 @@ type telemetry struct {
 	netErrors      atomic.Uint64
 	diskioErrors   atomic.Uint64
 	smartErrors    atomic.Uint64
+	sampleErrors   atomic.Uint64
+	pushErrors     atomic.Uint64
 	lastError      atomic.Pointer[string]
 
 	// collectorFailing tracks which collectors are in a failing episode, so
@@ -125,6 +127,10 @@ func (t *telemetry) recordCollectorError(name string) {
 		t.diskioErrors.Add(1)
 	case "smart":
 		t.smartErrors.Add(1)
+	case "sample":
+		t.sampleErrors.Add(1)
+	case "push":
+		t.pushErrors.Add(1)
 	}
 }
 
@@ -139,7 +145,7 @@ func (t *telemetry) recordCollectorRecovered(name string) {
 }
 
 // collectorErrorNames is the stable, sorted order of collector keys.
-var collectorErrorNames = []string{"cpu", "disk", "diskio", "docker", "gpu", "load", "net", "smart", "updates"}
+var collectorErrorNames = []string{"cpu", "disk", "diskio", "docker", "gpu", "load", "net", "push", "sample", "smart", "updates"}
 
 // agentInfoSnapshot assembles the self-report that rides every payload.
 // Only nonzero collector counters are included, so a healthy agent's block
@@ -154,6 +160,7 @@ func agentInfoSnapshot() *AgentInfo {
 	if p := stats.lastError.Load(); p != nil {
 		info.LastError = *p
 	}
+	info.ClockSkewSeconds = clock.reportSeconds()
 
 	counters := map[string]uint64{
 		"cpu":     stats.cpuErrors.Load(),
@@ -163,6 +170,8 @@ func agentInfoSnapshot() *AgentInfo {
 		"gpu":     stats.gpuErrors.Load(),
 		"load":    stats.loadErrors.Load(),
 		"net":     stats.netErrors.Load(),
+		"push":    stats.pushErrors.Load(),
+		"sample":  stats.sampleErrors.Load(),
 		"smart":   stats.smartErrors.Load(),
 		"updates": stats.updatesErrors.Load(),
 	}

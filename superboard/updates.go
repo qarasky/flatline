@@ -69,7 +69,7 @@ func rebootRequired() bool {
 		ctx, cancel := context.WithTimeout(context.Background(), updatesTimeout)
 		defer cancel()
 		// Exit 0 = no restart needed, 1 = restart needed.
-		if err := exec.CommandContext(ctx, path, "-r").Run(); err != nil {
+		if err := boundedCommand(ctx, path, "-r").Run(); err != nil {
 			if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
 				return true
 			}
@@ -97,7 +97,7 @@ func runQuery(ctx context.Context, accept100 bool, name string, args ...string) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, updatesTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, args...).Output()
+	out, err := boundedCommand(ctx, path, args...).Output()
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok && accept100 && exit.ExitCode() == 100 {
 			return string(out), true

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 )
 
 // version is a var, not a const, so release builds can stamp it with
@@ -69,10 +70,11 @@ func main() {
 		backup := apply.String("backup", "", "where to keep the previous binary")
 		service := apply.String("service", systemdUnitName, "systemd unit to restart")
 		expect := apply.String("expect", "", "version the staged binary must report")
+		logPath := apply.String("log", "", "append the helper's log to this file")
 		if err := apply.Parse(rest); err != nil {
 			os.Exit(2)
 		}
-		if err := cmdApplyUpdate(*newPath, *target, *backup, *service, *expect); err != nil {
+		if err := cmdApplyUpdate(*newPath, *target, *backup, *service, *expect, *logPath); err != nil {
 			log.Fatalf("superboard: %v", err)
 		}
 		return
@@ -148,6 +150,15 @@ func main() {
 		}
 	case "version":
 		fmt.Printf("superboard %s\n", version)
+	case "features":
+		// Hidden: capabilities an update helper may rely on.
+		fmt.Println(strings.Join(agentFeatures, " "))
+	case "refresh-unit":
+		// Hidden: rewrite an existing systemd unit to this build's template
+		// (used by install.sh --update and the update helper).
+		if err := cmdRefreshUnit(); err != nil {
+			log.Fatalf("superboard: %v", err)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "superboard: unknown command %q\n\n", command)
 		usage()

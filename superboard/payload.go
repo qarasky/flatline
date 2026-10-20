@@ -180,6 +180,11 @@ type AgentInfo struct {
 	// failures also travel as dockerError; the board suppresses the generic
 	// warning for those to avoid printing the same problem twice.
 	CollectorErrors map[string]uint64 `json:"collectorErrors,omitempty"`
+	// ClockSkewSeconds is the local clock minus the server's, measured from
+	// push responses' Date header. Omitted while within ±2s. A large value
+	// explains backfilled history landing at receive time instead of
+	// sampledAt (the server ignores sample times >5 min in the future).
+	ClockSkewSeconds int64 `json:"clockSkewSeconds,omitempty"`
 }
 
 // Mem holds bytes for totals and percent 0–100. Temp is the same deal as
@@ -274,16 +279,38 @@ type Payload struct {
 	// DockerAt is when the container list was last collected completely
 	// (RFC3339, omitted when never). The board compares it with the sample
 	// timestamp so a list a stalling daemon left behind is visibly old.
-	DockerAt time.Time      `json:"dockerAt,omitzero"`
-	Updates  *Updates       `json:"updates,omitempty"`
-	Agent    *AgentInfo     `json:"agent,omitempty"`
-	Load     *Load          `json:"load,omitempty"`
-	Net      []NetInterface `json:"net,omitempty"`
-	DiskIO   []DiskIO       `json:"diskIo,omitempty"`
-	Smart    *SMART         `json:"smart,omitempty"`
+	DockerAt time.Time `json:"dockerAt,omitzero"`
+	// CollectedAt is when each slow collector last produced a good reading
+	// (live agents only). Their values are cached between refreshes and
+	// kept when a refresh fails, so without this a stale disk list or a
+	// SMART reading from a disk that has since gone to sleep would look as
+	// fresh as the sample around it.
+	CollectedAt *CollectedAt   `json:"collectedAt,omitempty"`
+	Updates     *Updates       `json:"updates,omitempty"`
+	Agent       *AgentInfo     `json:"agent,omitempty"`
+	Load        *Load          `json:"load,omitempty"`
+	Net         []NetInterface `json:"net,omitempty"`
+	DiskIO      []DiskIO       `json:"diskIo,omitempty"`
+	Smart       *SMART         `json:"smart,omitempty"`
 	// Server-derived rates (live samples only; absent from agent payloads).
 	NetRate    *NetRate    `json:"netRate,omitempty"`
 	DiskIoRate *DiskIoRate `json:"diskIoRate,omitempty"`
+
+	// seq is the sample's reserved position in the disk queue (never
+	// serialized). Reserved when the sample is taken, so a sample that
+	// spills to disk late still sorts in order.
+	seq    uint64
+	seqSet bool
+}
+
+// CollectedAt carries the last successful refresh time per slow collector
+// (RFC3339, UTC, seconds). A zero time is omitted: never collected yet.
+// Docker has its own dockerAt for compatibility.
+type CollectedAt struct {
+	Disk    time.Time `json:"disk,omitzero"`
+	GPU     time.Time `json:"gpu,omitzero"`
+	Updates time.Time `json:"updates,omitzero"`
+	Smart   time.Time `json:"smart,omitzero"`
 }
 
 // sampleTimeFormat is RFC3339 with milliseconds in UTC, matching the server's
