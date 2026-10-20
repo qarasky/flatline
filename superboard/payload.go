@@ -180,6 +180,11 @@ type AgentInfo struct {
 	// failures also travel as dockerError; the board suppresses the generic
 	// warning for those to avoid printing the same problem twice.
 	CollectorErrors map[string]uint64 `json:"collectorErrors,omitempty"`
+	// ClockSkewSeconds is the local clock minus the server's, measured from
+	// push responses' Date header. Omitted while within ±2s. A large value
+	// explains backfilled history landing at receive time instead of
+	// sampledAt (the server ignores sample times >5 min in the future).
+	ClockSkewSeconds int64 `json:"clockSkewSeconds,omitempty"`
 }
 
 // Mem holds bytes for totals and percent 0–100. Temp is the same deal as
@@ -290,6 +295,12 @@ type Payload struct {
 	// Server-derived rates (live samples only; absent from agent payloads).
 	NetRate    *NetRate    `json:"netRate,omitempty"`
 	DiskIoRate *DiskIoRate `json:"diskIoRate,omitempty"`
+
+	// seq is the sample's reserved position in the disk queue (never
+	// serialized). Reserved when the sample is taken, so a sample that
+	// spills to disk late still sorts in order.
+	seq    uint64
+	seqSet bool
 }
 
 // CollectedAt carries the last successful refresh time per slow collector

@@ -5,15 +5,16 @@ import (
 	"time"
 )
 
-func TestOfferLatestNeverBuildsBacklog(t *testing.T) {
-	samples := make(chan *Payload, 1)
+// Without a disk buffer the live queue is one newest-wins slot.
+func TestMemoryOnlyDeliveryNeverBuildsBacklog(t *testing.T) {
+	d := newDelivery(nil, nil, time.Second)
 	for i := 0; i < 10000; i++ {
-		offerLatest(samples, &Payload{CPU: CPU{Percent: float64(i)}})
+		d.offer(&Payload{CPU: CPU{Percent: float64(i)}})
 	}
-	if len(samples) != 1 {
-		t.Fatalf("pending=%d", len(samples))
+	if d.pendingLive() != 1 {
+		t.Fatalf("pending=%d", d.pendingLive())
 	}
-	if got := (<-samples).CPU.Percent; got != 9999 {
+	if got := d.popLive().CPU.Percent; got != 9999 {
 		t.Fatalf("latest=%v", got)
 	}
 }
