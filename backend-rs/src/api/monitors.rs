@@ -163,7 +163,10 @@ async fn uptime_windows_for(
             .iter()
             .map(|&id| {
                 let engine = std::sync::Arc::clone(engine);
-                (id, tokio::spawn(async move { engine.uptime_windows(id).await }))
+                (
+                    id,
+                    tokio::spawn(async move { engine.uptime_windows(id).await }),
+                )
             })
             .collect();
         for (id, handle) in handles {
