@@ -4,7 +4,9 @@
 //! bytes and chunk ledger, then mark it `pruned` (retention) or `expired`
 //! (abandoned upload). A crash between the phases is finished by
 //! [`Backups::reconcile`], never by leaving orphaned bytes or a stuck row.
-//! Run metadata survives pruning; only the bytes disappear.
+//! Run metadata survives pruning; only the bytes disappear. Retention keeps
+//! the newest `retentionCount` completed runs plus the latest restore-tested
+//! and the latest archive-verified run.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 
@@ -86,6 +88,7 @@ impl Backups {
                 .await?;
 
         for (agent_id, retention) in &agents {
+            let protected = self.protected_runs(agent_id).await?;
             let excess: Vec<(String,)> = sqlx::query_as(
                 "SELECT id FROM backup_runs
                   WHERE agent_id = ? AND status = 'completed'
@@ -97,6 +100,9 @@ impl Backups {
             .fetch_all(&self.pool)
             .await?;
             for (id,) in &excess {
+                if protected.contains(id) {
+                    continue;
+                }
                 self.mark_deleting(id, "retention").await?;
                 changed = true;
             }
@@ -106,6 +112,29 @@ impl Backups {
             self.resume_deletions().await?;
         }
         Ok(())
+    }
+
+    /// Recovery points retention never removes, on top of the newest
+    /// `retentionCount`: the latest run with a passed restore test and the
+    /// latest run with a passed archive verification. Count-only retention
+    /// would otherwise delete the only proven-restorable bundle once enough
+    /// untested backups arrive.
+    async fn protected_runs(&self, agent_id: &str) -> Result<Vec<String>, Error> {
+        let mut protected = Vec::new();
+        for column in ["restore_verification", "archive_verification"] {
+            let latest: Option<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT id FROM backup_runs
+                  WHERE agent_id = ? AND status = 'completed'
+                    AND json_extract({column}, '$.status') = 'passed'
+                  ORDER BY COALESCE(export_finished_at, completed_at, created_at) DESC, id DESC
+                  LIMIT 1"
+            )))
+            .bind(agent_id)
+            .fetch_optional(&self.pool)
+            .await?;
+            protected.extend(latest.map(|(id,)| id));
+        }
+        Ok(protected)
     }
 
     /// Finish every `deleting` row. Rows whose storage is unavailable stay

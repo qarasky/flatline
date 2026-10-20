@@ -975,3 +975,66 @@ async fn failure_reports_only_fail_uploading_runs() {
     let (code, _) = send(&h.app, report("x".repeat(128))).await;
     assert_eq!(code, 200);
 }
+
+/// Review L5: retention was count-only, so enough untested backups pruned
+/// the only restore-verified (and archive-verified) recovery point.
+#[tokio::test]
+async fn retention_keeps_latest_verified_recovery_points() {
+    let h = harness_with_backups(free_space(), Arc::new(NoFaults)).await;
+    let t0 = chrono::Utc::now();
+    let (agent_id, _) = register_at(&h, "meks", None, t0 - chrono::Duration::days(30)).await;
+    sqlx::query("UPDATE backup_agents SET retention_count = 2 WHERE id = ?")
+        .bind(&agent_id)
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    let at = |days: i64| {
+        (t0 - chrono::Duration::days(days)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    };
+    let restore_tested = seed_completed(&h.pool, &agent_id, &at(10)).await;
+    let older_restore_tested = seed_completed(&h.pool, &agent_id, &at(11)).await;
+    let archive_verified = seed_completed(&h.pool, &agent_id, &at(9)).await;
+    let failed_restore = seed_completed(&h.pool, &agent_id, &at(8)).await;
+    let untested: Vec<String> = {
+        let mut ids = Vec::new();
+        for days in [7, 6, 2, 1] {
+            ids.push(seed_completed(&h.pool, &agent_id, &at(days)).await);
+        }
+        ids
+    };
+    let checked = at(0);
+    for (id, kind, status) in [
+        (&older_restore_tested, "restore", "passed"),
+        (&restore_tested, "restore", "passed"),
+        (&archive_verified, "archive", "passed"),
+        (&failed_restore, "restore", "failed"),
+    ] {
+        h.state
+            .backups
+            .verify_run(id, kind, status, &checked, "scratch restore")
+            .await
+            .unwrap();
+    }
+
+    h.state
+        .backups
+        .maintain(t0.timestamp_millis())
+        .await
+        .unwrap();
+
+    assert_eq!(status_of(&h.pool, &untested[3]).await, "completed");
+    assert_eq!(status_of(&h.pool, &untested[2]).await, "completed");
+    assert_eq!(
+        status_of(&h.pool, &restore_tested).await,
+        "completed",
+        "the latest restore-tested run survives retention"
+    );
+    assert_eq!(
+        status_of(&h.pool, &archive_verified).await,
+        "completed",
+        "the latest archive-verified run survives retention"
+    );
+    for id in [&untested[0], &untested[1], &failed_restore, &older_restore_tested] {
+        assert_eq!(status_of(&h.pool, id).await, "pruned", "{id}");
+    }
+}
