@@ -2914,7 +2914,7 @@
         "/api/backup/v1/failures": {
             "post": {
                 "summary": "Report a failed export",
-                "description": "Agent credential only. Accepts a bounded safe code even when no bytes were produced. Same clientRunId is idempotent; a completed run cannot be overwritten.",
+                "description": "Agent credential only. Accepts a bounded safe code even when no bytes were produced; clientRunId is 1-128 characters. Same clientRunId and code is idempotent. An uploading run can be failed; no other state is rewritten.",
                 "security": [
                     {
                         "bearerAuth": []
@@ -2956,7 +2956,7 @@
                         "description": "Invalid backup credential."
                     },
                     "409": {
-                        "description": "Completed run or conflicting clientRunId."
+                        "description": "`run_terminal` when the run is finalizing, completed, deleting, pruned or expired (only an uploading run can be failed); `conflict` when the clientRunId was already reported with another code."
                     }
                 }
             }

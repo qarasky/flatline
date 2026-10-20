@@ -1239,6 +1239,11 @@ impl Backups {
         input: FailureReport,
     ) -> Result<RunSummary, Error> {
         self.agent_row(agent_id).await?;
+        if input.client_run_id.is_empty() || input.client_run_id.len() > 128 {
+            return Err(Error::BadRequest(
+                "clientRunId must be 1-128 characters".to_string(),
+            ));
+        }
         if !runs::valid_failure_code(&input.code) {
             return Err(Error::BadRequest("unknown failure code".to_string()));
         }
@@ -1255,25 +1260,40 @@ impl Backups {
             .run_by_client_id(agent_id, &input.client_run_id)
             .await?
         {
-            if existing.status == runs::STATUS_COMPLETED {
-                return Err(Error::Conflict(
-                    "a completed run cannot be failed".to_string(),
-                ));
-            }
-            if existing.status == runs::STATUS_FAILED {
-                if existing.error_code.as_deref() == Some(input.code.as_str()) {
-                    return Ok(existing);
+            // Serialize with chunk appends and finalization of this run.
+            let _run = self
+                .lock_run(&existing.id, self.upload_limits().lock_wait)
+                .await?;
+            let existing = self.run_by_id(&existing.id).await?;
+            match existing.status.as_str() {
+                runs::STATUS_FAILED => {
+                    if existing.error_code.as_deref() == Some(input.code.as_str()) {
+                        return Ok(existing);
+                    }
+                    return Err(Error::Conflict(
+                        "clientRunId was already reported with a different code".to_string(),
+                    ));
                 }
-                return Err(Error::Conflict(
-                    "clientRunId was already reported with a different code".to_string(),
-                ));
+                // Only an upload in progress can still turn into a failure.
+                // Completed, finalizing, deleting, pruned and expired runs
+                // keep their state: retention and expiry bookkeeping must
+                // not be rewritten by an agent report.
+                runs::STATUS_UPLOADING => {}
+                other => {
+                    return Err(Error::Terminal(format!(
+                        "a {other} run cannot be reported as failed"
+                    )));
+                }
             }
 
-            sqlx::query("UPDATE backup_runs SET status = 'failed', error_code = ? WHERE id = ?")
-                .bind(&input.code)
-                .bind(&existing.id)
-                .execute(&self.pool)
-                .await?;
+            sqlx::query(
+                "UPDATE backup_runs SET status = 'failed', error_code = ?
+                  WHERE id = ? AND status = 'uploading'",
+            )
+            .bind(&input.code)
+            .bind(&existing.id)
+            .execute(&self.pool)
+            .await?;
             self.events.invalidate();
             return self.run_by_id(&existing.id).await;
         }

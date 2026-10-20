@@ -924,3 +924,54 @@ async fn unlinked_agents_and_upload_failures_still_alert() {
     assert_eq!(texts.len(), 3, "{texts:?}");
     assert!(texts[2].contains("meks") && texts[2].contains("recovery"));
 }
+
+/// Review L3: a failure report turned deleting/pruned/expired (and
+/// finalizing) runs into failed, rewriting retention and expiry state, and
+/// accepted unbounded clientRunIds.
+#[tokio::test]
+async fn failure_reports_only_fail_uploading_runs() {
+    let h = harness().await;
+    let t0 = chrono::Utc::now();
+    let (agent_id, token) = register_at(&h, "meks", None, t0).await;
+    let report = |client_run_id: String| {
+        request(
+            "POST",
+            "/api/backup/v1/failures",
+            Some(&token),
+            Some(json!({
+                "clientRunId": client_run_id,
+                "exportStartedAt": t0.to_rfc3339(),
+                "code": "export_failed",
+            })),
+        )
+    };
+
+    for status in ["finalizing", "completed", "deleting", "pruned", "expired"] {
+        let mut seed = RunSeed::new(&agent_id);
+        seed.status = status.to_string();
+        if status == "deleting" {
+            seed.delete_reason = Some("retention".to_string());
+        }
+        insert_seed(&h.pool, &seed).await;
+        let (code, body) = send(&h.app, report(seed.client_run_id.clone())).await;
+        assert_eq!(code, 409, "{status}: {body}");
+        assert_eq!(body["error"], "run_terminal", "{status}");
+        assert_eq!(status_of(&h.pool, &seed.id).await, status, "{status} kept");
+    }
+
+    // An uploading run can still fail, idempotently.
+    let seed = RunSeed::new(&agent_id);
+    insert_seed(&h.pool, &seed).await;
+    let (code, body) = send(&h.app, report(seed.client_run_id.clone())).await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(status_of(&h.pool, &seed.id).await, "failed");
+    let (code, _) = send(&h.app, report(seed.client_run_id.clone())).await;
+    assert_eq!(code, 200);
+
+    let (code, _) = send(&h.app, report("x".repeat(129))).await;
+    assert_eq!(code, 400, "clientRunId is bounded");
+    let (code, _) = send(&h.app, report(String::new())).await;
+    assert_eq!(code, 400);
+    let (code, _) = send(&h.app, report("x".repeat(128))).await;
+    assert_eq!(code, 200);
+}
