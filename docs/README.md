@@ -19,6 +19,7 @@ for the shape of the system, then go to whichever document matches your task.
 | [development.md](development.md)               | Running the stack locally, tests, builds, repository layout.                                  |
 | [provisioning.md](provisioning.md)             | Adding hosts and monitors. Also served at `/add-push-server.md`.                              |
 | [roadmap.md](roadmap.md)                       | Checking what is deliberately not implemented.                                                |
+| [audit-2026-10.md](audit-2026-10.md)           | Reviewing the October 2026 performance and reliability audit and its fix status.              |
 | [history.md](history.md)                       | Understanding what changed from upstream Uptime Kuma.                                         |
 | [screenshots/README.md](screenshots/README.md) | The sample screenshots and how they were produced.                                            |
 
