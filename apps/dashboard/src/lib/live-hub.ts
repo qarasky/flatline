@@ -19,6 +19,10 @@ export interface LiveSubscriber {
     /** Whether this subscriber needs `metrics` events (default true). */
     metrics?: boolean;
     snapshot: (signal?: AbortSignal) => Promise<void>;
+    /** The stream (re)connected and its snapshot is current. */
+    ready?: () => void;
+    /** Backup agents or runs changed (a `backups` event). */
+    backups?: () => void;
     event: (event: LiveEvent) => void;
     error: (error: Error) => void;
 }
@@ -54,6 +58,16 @@ function open(): void {
             const failed = results.find((result) => result.status === "rejected");
             if (failed) {
                 throw failed.reason;
+            }
+        },
+        ready: () => {
+            for (const subscriber of [...subscribers]) {
+                subscriber.ready?.();
+            }
+        },
+        backups: () => {
+            for (const subscriber of [...subscribers]) {
+                subscriber.backups?.();
             }
         },
         event: (event) => {

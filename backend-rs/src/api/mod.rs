@@ -2,6 +2,7 @@
 
 pub mod api_keys;
 pub mod auth;
+pub mod backups;
 pub mod badges;
 pub mod limits;
 pub mod links;
@@ -162,6 +163,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/push/{pushToken}", get(push::push).post(push::push))
         .layer(DefaultBodyLimit::max(256 * 1024));
 
+    // Backup agents authenticate with their own credential, never an operator
+    // token or a monitor push token; each handler is scoped to the agent
+    // UUID. Transfers (chunks, completion, download) are a separate group so
+    // they can be exempt from request-wide timeouts.
+    let backup_agent = backups::agent_routes(state.clone());
+    let backup_transfers = backups::transfer_routes(state.clone());
+
     let authed = Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/auth/me", get(auth::me))
@@ -219,6 +227,24 @@ pub fn router(state: AppState) -> Router {
             patch(api_keys::patch).delete(api_keys::delete),
         )
         .route("/api/v1/monitor-types", get(monitor_types))
+        .route(
+            "/api/v1/backup-agents",
+            get(backups::list_agents).post(backups::create_agent),
+        )
+        .route("/api/v1/backup-agents/{id}", patch(backups::patch_agent))
+        .route(
+            "/api/v1/backup-agents/{id}/rotate-token",
+            post(backups::rotate_token),
+        )
+        .route(
+            "/api/v1/backup-agents/{id}/revoke-token",
+            post(backups::revoke_token),
+        )
+        .route("/api/v1/backup-agents/{id}/runs", get(backups::list_runs))
+        .route(
+            "/api/v1/backup-runs/{id}/verification",
+            post(backups::verify_run),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_token,
@@ -264,6 +290,11 @@ pub fn router(state: AppState) -> Router {
         .merge(standard(agent))
         .merge(standard(authed))
         .merge(untimed(stream))
+        // Backup agents: control calls take the normal budget; chunk uploads,
+        // finalization (hashes up to 8 GiB) and downloads enforce their own
+        // body deadlines instead of the request timeout.
+        .merge(standard(backup_agent))
+        .merge(untimed(backup_transfers))
         .fallback(web::fallback)
         .with_state(state)
 }

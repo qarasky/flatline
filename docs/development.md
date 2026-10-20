@@ -67,6 +67,8 @@ cd superboard && go run . check --server http://127.0.0.1:3001 --token <push tok
 | Dashboard build   | `npm run build:dashboard`                                                                                            |
 | Agent build + vet | `cd superboard && go build ./... && go vet ./...`                                                                    |
 | Agent tests       | `cd superboard && go test ./...`                                                                                     |
+| Backup agent      | `cd backup-agent && go test ./... && go vet ./...` (add `-race`)                                                     |
+| Restore fixture   | `FLATLINE_BACKUP_INTEGRATION=1 go -C backup-agent test ./integration -v` (Docker + postgres:16)                      |
 | Image             | `docker build --platform linux/amd64 -f docker/rust.dockerfile -t artchsh/flatline-rust:dev .`                       |
 
 Run the formatter check, the backend tests, the dashboard tests, the typecheck
@@ -83,6 +85,7 @@ have been verified with.
 | `backend-rs/migrations/`         | Ordered SQL migrations.                                                       |
 | `backend-rs/tests/`              | Integration tests against a real in-memory SQLite.                            |
 | `superboard/`                    | The Go agent (`mockagent/` is the dev fleet).                                 |
+| `backup-agent/`                  | The separate encrypted backup agent and its offline/restore tests.            |
 | `apps/dashboard/src/components/` | UI components; `lib/` holds the pure presentation logic that the tests cover. |
 | `packages/shared/`               | Types shared with the dashboard.                                              |
 | `docs/`                          | These documents.                                                              |

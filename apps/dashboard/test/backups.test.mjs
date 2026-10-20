@@ -1,0 +1,139 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { backupHealth, restoreLabel, verificationLabel } from "../src/lib/backup-presentation.ts";
+
+function run(overrides = {}) {
+    return {
+        id: "run-1",
+        agentId: "agent-1",
+        clientRunId: "client-1",
+        status: "completed",
+        exportStartedAt: "2026-10-19T00:00:00Z",
+        exportFinishedAt: "2026-10-19T00:30:00Z",
+        createdAt: "2026-10-19T00:31:00Z",
+        completedAt: "2026-10-19T00:32:00Z",
+        totalBytes: 2048,
+        receivedBytes: 2048,
+        sha256: "a".repeat(64),
+        sourceSummary: { databaseCount: 1, objectCount: 2, sourceBytes: 1024 },
+        errorCode: null,
+        archiveVerification: null,
+        restoreVerification: null,
+        ...overrides,
+    };
+}
+
+function agent(name, health, extra = {}) {
+    return {
+        id: `id-${name}`,
+        name,
+        monitorId: 5,
+        enabled: health !== "disabled",
+        credentialActive: true,
+        intervalSeconds: 86400,
+        retentionCount: 7,
+        createdAt: "2026-10-01T00:00:00Z",
+        health,
+        lastErrorCode: null,
+        latestRun: run(),
+        lastCompletedRun: run(),
+        latestArchiveVerification: null,
+        latestRestoreVerification: null,
+        ...extra,
+    };
+}
+
+test("each named agent has its own health label", () => {
+    assert.deepEqual(backupHealth(agent("meks", "healthy")), { label: "Healthy", tone: "up" });
+    assert.deepEqual(backupHealth(agent("zhkhteam", "pending")), { label: "Pending", tone: "degraded" });
+    assert.deepEqual(backupHealth(agent("meks", "failed")), { label: "Failed", tone: "down" });
+    assert.deepEqual(backupHealth(agent("meks", "overdue")), { label: "Overdue", tone: "down" });
+    assert.deepEqual(backupHealth(agent("meks", "disabled")), { label: "Disabled", tone: "neutral" });
+});
+
+test("transfer verification is never called a restore test", () => {
+    assert.equal(verificationLabel(run()), "Transfer verified");
+    assert.equal(
+        verificationLabel(
+            run({ archiveVerification: { runId: "run-1", status: "passed", checkedAt: "x", summary: "ok" } })
+        ),
+        "Transfer verified"
+    );
+    assert.equal(
+        verificationLabel(
+            run({ restoreVerification: { runId: "run-1", status: "passed", checkedAt: "x", summary: "ok" } })
+        ),
+        "Restore tested"
+    );
+    assert.equal(
+        verificationLabel(
+            run({ restoreVerification: { runId: "run-1", status: "failed", checkedAt: "x", summary: "no" } })
+        ),
+        "Restore failed"
+    );
+    assert.equal(verificationLabel(run({ status: "uploading", exportFinishedAt: null })), "Not completed");
+});
+
+test("the agent-level restore result points at the tested run", () => {
+    const tested = agent("meks", "healthy", {
+        latestRestoreVerification: { runId: "older-run", status: "passed", checkedAt: "x", summary: "ok" },
+    });
+    assert.equal(restoreLabel(tested), "Restore tested");
+    const failed = agent("meks", "healthy", {
+        latestRestoreVerification: { runId: "older-run", status: "failed", checkedAt: "x", summary: "no" },
+    });
+    assert.equal(restoreLabel(failed), "Restore failed");
+    assert.equal(restoreLabel(agent("meks", "healthy")), "Not restore-tested");
+});
+
+test("API reads send Authorization and keep agents separate", async () => {
+    const calls = [];
+    globalThis.window = { localStorage: { getItem: () => "test-token" } };
+    globalThis.fetch = async (url, init) => {
+        calls.push({ url: String(url), headers: init.headers });
+        return new Response(
+            JSON.stringify({
+                ok: true,
+                agents: [agent("meks", "healthy"), agent("zhkhteam", "failed")],
+                runs: [run()],
+                nextCursor: null,
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+    };
+    const { fetchBackupAgents, fetchBackupRuns } = await import("../src/lib/api.ts");
+    const agents = await fetchBackupAgents(5);
+    assert.equal(agents.agents.length, 2);
+    assert.equal(agents.agents[0].name, "meks");
+    assert.equal(agents.agents[1].name, "zhkhteam");
+    assert.match(calls[0].url, /\/api\/v1\/backup-agents\?monitorId=5$/);
+    assert.equal(calls[0].headers.Authorization, "Bearer test-token");
+
+    await fetchBackupRuns("agent-1");
+    assert.match(calls[1].url, /\/api\/v1\/backup-agents\/agent-1\/runs$/);
+    assert.equal(calls[1].headers.Authorization, "Bearer test-token");
+});
+
+test("downloads use a single-use ticket URL, never a buffered blob", async () => {
+    globalThis.window = { localStorage: { getItem: () => "test-token" } };
+    let seen = null;
+    globalThis.fetch = async (url, init) => {
+        seen = { url: String(url), method: init.method, headers: init.headers };
+        return new Response(
+            JSON.stringify({
+                ok: true,
+                runId: "run-1",
+                url: "/api/v1/backup-downloads/fbd_once",
+                expiresAt: "2026-10-21T00:02:00.000Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+    };
+    const { backupDownloadUrl } = await import("../src/lib/api.ts");
+    const url = await backupDownloadUrl("run-1");
+    assert.match(seen.url, /\/api\/v1\/backup-runs\/run-1\/download-ticket$/);
+    assert.equal(seen.method, "POST");
+    assert.equal(seen.headers.Authorization, "Bearer test-token");
+    assert.match(url, /\/api\/v1\/backup-downloads\/fbd_once$/);
+    assert.ok(!url.includes("test-token"), "the operator token never enters the URL");
+});

@@ -473,6 +473,12 @@ pub fn install_global(notifier: Option<Arc<Notifier>>) {
     *GLOBAL.lock().unwrap() = notifier;
 }
 
+/// The installed process-wide notifier, if any (none in most tests and
+/// after shutdown). Callers fall back to direct delivery without one.
+pub(crate) fn global() -> Option<Arc<Notifier>> {
+    GLOBAL.lock().unwrap().clone()
+}
+
 /// Per-chat delivery limits.
 ///
 /// Telegram allows about one message per second per chat and 20 per minute

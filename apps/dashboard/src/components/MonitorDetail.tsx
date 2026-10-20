@@ -1,7 +1,17 @@
-import { useEffect, useState } from "react";
-import { fetchHeartbeats, fetchMonitor, type MonitorSummary } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import {
+    backupDownloadUrl,
+    fetchBackupAgents,
+    fetchBackupRuns,
+    fetchHeartbeats,
+    fetchMonitor,
+    type BackupAgentSummary,
+    type BackupRunSummary,
+    type MonitorSummary,
+} from "@/lib/api";
 import { prependBeat, type HeartbeatEntry } from "@/lib/heartbeat-log";
 import { subscribeLive } from "@/lib/live-hub";
+import { BackupAgents } from "@/components/BackupAgents";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -151,31 +161,107 @@ export function MonitorDetail({
     const [log, setLog] = useState<{ beats: HeartbeatEntry[]; total: number }>({ beats: [], total: 0 });
     const { beats, total } = log;
     const [error, setError] = useState<string | null>(null);
+    const [backups, setBackups] = useState<BackupAgentSummary[]>([]);
+    const [backupRuns, setBackupRuns] = useState<Record<string, BackupRunSummary[]>>({});
+    const [backupError, setBackupError] = useState<string | null>(null);
+    const currentMonitor = useRef(id);
+    currentMonitor.current = id;
+    const loadGeneration = useRef(0);
 
     useEffect(() => {
         let cancelled = false;
+        // A monitor switch must not show the previous monitor's backup rows
+        // while the new snapshot is still loading.
+        setBackups([]);
+        setBackupRuns({});
+        setBackupError(null);
 
         // Full reload only on (re)connect and invalidate: the shared stream's
         // snapshot. Individual beats are appended locally below.
         async function load(signal?: AbortSignal) {
+            const generation = ++loadGeneration.current;
+            const stale = () => cancelled || currentMonitor.current !== id || loadGeneration.current !== generation;
             try {
                 const [m, h] = await Promise.all([fetchMonitor(id, signal), fetchHeartbeats(id, BEAT_LIMIT, signal)]);
-                if (cancelled) {
+                if (stale()) {
                     return;
                 }
                 setMonitor(m.monitor);
                 setLog({ beats: h.heartbeats, total: h.total });
                 setError(null);
             } catch (e) {
-                if (!cancelled) {
+                if (!stale()) {
                     setError(e instanceof Error ? e.message : "Could not load monitor.");
                 }
             }
         }
 
+        // Backup rows cost 1 + N requests, so they load on mount, on a
+        // backup-specific event and after a reconnect only, never on
+        // heartbeats or generic invalidations. One load runs at a time; an
+        // event during a load schedules exactly one follow-up.
+        let backupController: AbortController | null = null;
+        let backupLoading = false;
+        let backupDirty = false;
+        async function loadBackups() {
+            if (cancelled) {
+                return;
+            }
+            if (backupLoading) {
+                backupDirty = true;
+                return;
+            }
+            backupLoading = true;
+            backupController = new AbortController();
+            const signal = backupController.signal;
+            const stale = () => cancelled || currentMonitor.current !== id || signal.aborted;
+            // Backup health is a separate read: a failure here must keep the
+            // monitor details visible and report only the backup problem.
+            try {
+                const result = await fetchBackupAgents(id, signal);
+                // Bounded history: the receiver returns newest-first and the
+                // UI keeps at most five rows per agent.
+                const histories = await Promise.all(
+                    result.agents.map((agent) =>
+                        fetchBackupRuns(agent.id, signal)
+                            .then((runs) => runs.runs.slice(0, 5))
+                            .catch(() => [])
+                    )
+                );
+                if (!stale()) {
+                    setBackups(result.agents);
+                    setBackupRuns(
+                        Object.fromEntries(result.agents.map((agent, index) => [agent.id, histories[index]]))
+                    );
+                    setBackupError(null);
+                }
+            } catch (e) {
+                if (!stale()) {
+                    setBackupError(e instanceof Error ? `Backups unavailable: ${e.message}` : "Backups unavailable.");
+                }
+            } finally {
+                backupLoading = false;
+                if (backupDirty && !cancelled) {
+                    backupDirty = false;
+                    void loadBackups();
+                }
+            }
+        }
+
+        void loadBackups();
+        let connectedOnce = false;
         const stop = subscribeLive({
             metrics: false,
             snapshot: load,
+            ready: () => {
+                // The first connect follows the mount load; later ones may
+                // have missed backup events while disconnected.
+                if (connectedOnce) {
+                    void loadBackups();
+                }
+                connectedOnce = true;
+            },
+            backups: () => void loadBackups(),
             event: (event) => {
                 if (cancelled || event.type !== "heartbeat" || event.monitorId !== id) {
                     return;
@@ -194,6 +280,7 @@ export function MonitorDetail({
         });
         return () => {
             cancelled = true;
+            backupController?.abort();
             stop();
         };
     }, [id]);
@@ -211,6 +298,23 @@ export function MonitorDetail({
 
     if (!monitor) {
         return <p className="px-4 py-10 text-sm text-quiet">Loading…</p>;
+    }
+
+    async function handleDownload(runId: string) {
+        try {
+            // A single-use ticket URL: the browser streams the bundle to disk
+            // itself instead of holding up to 8 GiB in memory.
+            const url = await backupDownloadUrl(runId);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = `flatline-backup-${runId}.age`;
+            anchor.rel = "noreferrer";
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+        } catch (e) {
+            setBackupError(e instanceof Error ? `Download failed: ${e.message}` : "Download failed.");
+        }
     }
 
     const status = statusOf(monitor.status);
@@ -296,6 +400,8 @@ export function MonitorDetail({
                     ) : null}
                 </div>
             ) : null}
+
+            <BackupAgents agents={backups} runs={backupRuns} error={backupError} onDownload={handleDownload} />
 
             <h2 className="mb-2 text-[11px] uppercase tracking-wide text-quiet">
                 Events {downs.length > 0 ? <span className="tnum">({downs.length} outages in view)</span> : null}

@@ -18,6 +18,10 @@ pub struct Config {
     /// Directory holding the agent binaries, `VERSION` and `sha256sums`
     /// served under `/agent/*`.
     pub agent_dir: PathBuf,
+    /// Root of dedicated backup bundle storage (office mirror mount). None
+    /// keeps backup storage disabled; the API reports 503 rather than
+    /// falling back to the application data directory.
+    pub backup_dir: Option<PathBuf>,
     /// How long heartbeats are kept, in days. 0 keeps them forever.
     ///
     /// Every check writes a heartbeat row, so without retention a monitor's
@@ -75,6 +79,8 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/app/agent"));
 
+        let backup_dir = set("FLATLINE_BACKUP_DIR").map(PathBuf::from);
+
         let heartbeat_retention_days = match set("FLATLINE_HEARTBEAT_RETENTION_DAYS") {
             Some(raw) => raw
                 .parse::<i64>()
@@ -96,6 +102,7 @@ impl Config {
             web_dist,
             public_url,
             agent_dir,
+            backup_dir,
             heartbeat_retention_days,
         })
     }

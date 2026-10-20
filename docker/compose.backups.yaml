@@ -1,0 +1,19 @@
+# Opt-in backup storage for either the root compose.yaml or the office
+# compose.rust.yaml:
+#
+#   docker compose -f compose.yaml -f docker/compose.backups.yaml up -d
+#   docker compose -f docker/compose.rust.yaml -f docker/compose.backups.yaml up -d
+#
+# The host directory must already exist and be on the office mirror. Compose
+# must never create it on the root filesystem. Enable this only after the host
+# preflight confirms /mnt/mirror is the RAID1 mount and its marker exists.
+services:
+  flatline:
+    environment:
+      FLATLINE_BACKUP_DIR: /app/backups
+    volumes:
+      - type: bind
+        source: ${FLATLINE_BACKUP_HOST_DIR:-/mnt/mirror/flatline-backups}
+        target: /app/backups
+        bind:
+          create_host_path: false

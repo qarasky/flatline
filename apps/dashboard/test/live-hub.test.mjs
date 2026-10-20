@@ -31,11 +31,15 @@ test("views share one stream; metrics upgrade reopens it; last leaver closes it"
 
     const log = { a: [], b: [], c: [] };
     const snapshots = { a: 0, b: 0, c: 0 };
+    const readies = { a: 0, b: 0, c: 0 };
+    const backups = { a: 0, b: 0, c: 0 };
     const make = (name, metrics) => ({
         metrics,
         snapshot: async () => {
             snapshots[name]++;
         },
+        ready: () => readies[name]++,
+        backups: () => backups[name]++,
         event: (e) => log[name].push(e),
         error: () => {},
     });
@@ -73,6 +77,11 @@ test("views share one stream; metrics upgrade reopens it; last leaver closes it"
         opened[1].send('data: {"type":"ready"}\n\n');
         await tick();
         assert.deepEqual(snapshots, { a: 2, b: 2, c: 1 });
+        // `ready` and `backups` fan out to every subscriber.
+        assert.deepEqual(readies, { a: 2, b: 1, c: 1 });
+        opened[1].send('data: {"type":"backups"}\n\n');
+        await tick();
+        assert.deepEqual(backups, { a: 1, b: 1, c: 1 });
 
         // Metrics events reach only the subscriber that asked for them.
         opened[1].send('data: {"type":"metrics","monitorId":7,"time":"t","metrics":{}}\n\n');

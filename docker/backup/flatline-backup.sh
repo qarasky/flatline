@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Nightly Flatline database backup (the interim, simple backup; see
-# docs/operations.md#backups).
+# Nightly backup of Flatline's own database (see docs/operations.md#backups;
+# client application data is the backup agent's job, docs/backup-agent.md).
 #
 # 1. Copies the live SQLite database through the SQLite backup API over a
 #    read-only connection, so the running container keeps writing (WAL

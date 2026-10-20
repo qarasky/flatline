@@ -37,6 +37,22 @@ DASH_PORT="${FLATLINE_DASHBOARD_PORT:-3003}"
 
 mkdir -p "$LOGS" "$DATA_DIR" "$AGENT_DIR"
 
+# Disposable local backup storage. The backend refuses a root without a
+# provisioned marker, so this can never silently write under the app data
+# directory. Never point this at the office mirror in development.
+BACKUP_DIR="$DATA_DIR/backend-backups"
+mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+if [ ! -f "$BACKUP_DIR/.flatline-backup-storage" ]; then
+    if command -v uuidgen >/dev/null 2>&1; then
+        uuidgen | tr 'A-Z' 'a-z' >"$BACKUP_DIR/.flatline-backup-storage"
+    elif [ -r /proc/sys/kernel/random/uuid ]; then
+        cat /proc/sys/kernel/random/uuid >"$BACKUP_DIR/.flatline-backup-storage"
+    else
+        openssl rand -hex 16 >"$BACKUP_DIR/.flatline-backup-storage"
+    fi
+fi
+
 # Node is only needed for Vite here. Prefer a modern Node from nvm if the
 # caller's PATH is still on an older one.
 if [ -d "$HOME/.nvm/versions/node" ]; then
@@ -126,6 +142,7 @@ fi
     PORT="$BACKEND_PORT" \
     UPTIME_KUMA_HOST=0.0.0.0 \
     FLATLINE_AGENT_DIR="$AGENT_DIR" \
+    FLATLINE_BACKUP_DIR="$BACKUP_DIR" \
     start_one "backend" "$BACKEND_BIN"
 )
 
