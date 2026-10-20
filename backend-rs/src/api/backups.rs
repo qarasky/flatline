@@ -52,6 +52,12 @@ pub fn transfer_routes(state: AppState) -> Router<AppState> {
             "/api/v1/backup-runs/{id}/download",
             get(download_run).route_layer(operator()),
         )
+        .route(
+            "/api/v1/backup-runs/{id}/download-ticket",
+            post(download_ticket).route_layer(operator()),
+        )
+        // The ticket is the credential: one run, minutes, one use.
+        .route("/api/v1/backup-downloads/{ticket}", get(download_by_ticket))
 }
 
 /// Authenticated agent id, inserted by [`require_agent`].
@@ -430,7 +436,45 @@ pub async fn download_run(
     Path(id): Path<String>,
 ) -> Result<Response, BackupApiError> {
     let bundle = state.backups.open_bundle(&id).await.map_err(api_error)?;
+    stream_bundle(bundle)
+}
 
+/// POST /api/v1/backup-runs/{id}/download-ticket
+///
+/// Operator only. Returns a single-use URL valid for about two minutes so a
+/// browser can save the bundle with a plain streamed GET.
+pub async fn download_ticket(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, BackupApiError> {
+    let ticket = state
+        .backups
+        .issue_download_ticket(&id)
+        .await
+        .map_err(api_error)?;
+    let body = serde_json::json!({
+        "ok": true,
+        "runId": ticket.run_id,
+        "url": format!("/api/v1/backup-downloads/{}", ticket.ticket),
+        "expiresAt": ticket.expires_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+    });
+    Ok(([(CACHE_CONTROL, "no-store")], Json(body)).into_response())
+}
+
+/// GET /api/v1/backup-downloads/{ticket}
+pub async fn download_by_ticket(
+    State(state): State<AppState>,
+    Path(ticket): Path<String>,
+) -> Result<Response, BackupApiError> {
+    let bundle = state
+        .backups
+        .redeem_download_ticket(&ticket)
+        .await
+        .map_err(api_error)?;
+    stream_bundle(bundle)
+}
+
+fn stream_bundle(bundle: backups::BundleDownload) -> Result<Response, BackupApiError> {
     let stream = ReaderStream::new(bundle.file);
     Response::builder()
         .status(StatusCode::OK)
@@ -441,6 +485,7 @@ pub async fn download_run(
             format!("attachment; filename=\"{}\"", bundle.filename),
         )
         .header(CACHE_CONTROL, "no-store")
+        .header(header::REFERRER_POLICY, "no-referrer")
         .body(Body::from_stream(stream))
         .map_err(|_| ApiError::server().into())
 }

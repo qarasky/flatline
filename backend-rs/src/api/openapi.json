@@ -2961,6 +2961,65 @@
                 }
             }
         },
+        "/api/v1/backup-runs/{id}/download-ticket": {
+            "post": {
+                "summary": "Issue a single-use download URL",
+                "description": "Operator only. Returns `{ok, runId, url, expiresAt}`. The URL is bound to this completed run, expires after about two minutes and is consumed by the first GET, so a browser can stream the bundle to disk with a plain navigation; no long-lived credential enters a URL.",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Ticket URL"
+                    },
+                    "401": {
+                        "description": "Missing or invalid operator token."
+                    },
+                    "404": {
+                        "description": "Run is not a retained completed run."
+                    },
+                    "503": {
+                        "description": "`busy`: too many outstanding tickets."
+                    }
+                }
+            }
+        },
+        "/api/v1/backup-downloads/{ticket}": {
+            "get": {
+                "summary": "Download a bundle with a ticket",
+                "description": "No Authorization header: the ticket from `download-ticket` is the credential. Streams the bundle like the operator download route, with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. Unknown, used and expired tickets answer 404.",
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "ticket",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Encrypted bundle",
+                        "content": {
+                            "application/octet-stream": {}
+                        }
+                    },
+                    "404": {
+                        "description": "Ticket is unknown, used or expired."
+                    }
+                }
+            }
+        },
         "/api/v1/backup-runs/{id}/download": {
             "get": {
                 "summary": "Download a completed bundle",

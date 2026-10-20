@@ -921,22 +921,17 @@ export function fetchBackupRuns(
 }
 
 /**
- * Download a completed encrypted bundle. Binary bodies are never decoded as
- * JSON, and the operator bearer token is the only credential.
+ * A single-use URL for one completed bundle. The server binds the ticket to
+ * the run, expires it within minutes and consumes it on first use, so the
+ * browser can stream the bundle to disk with a plain navigation: nothing is
+ * buffered in JavaScript and no long-lived token ever appears in a URL.
  * @param runId Run UUID
- * @param signal Cancels the request
+ * @param signal Cancels the ticket request
  */
-export async function downloadBackup(runId: string, signal?: AbortSignal): Promise<Blob> {
-    const token = getToken();
-    const response = await fetch(`${BASE}/api/v1/backup-runs/${encodeURIComponent(runId)}/download`, {
-        headers: {
-            Accept: "application/octet-stream",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        signal,
-    });
-    if (!response.ok) {
-        throw new ApiError(response.status, "download", response.statusText);
-    }
-    return response.blob();
+export async function backupDownloadUrl(runId: string, signal?: AbortSignal): Promise<string> {
+    const result = await request<{ ok: true; runId: string; url: string; expiresAt: string }>(
+        `/api/v1/backup-runs/${encodeURIComponent(runId)}/download-ticket`,
+        { method: "POST", signal }
+    );
+    return `${BASE}${result.url}`;
 }

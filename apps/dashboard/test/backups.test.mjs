@@ -114,19 +114,26 @@ test("API reads send Authorization and keep agents separate", async () => {
     assert.equal(calls[1].headers.Authorization, "Bearer test-token");
 });
 
-test("binary downloads are blobs, not JSON", async () => {
+test("downloads use a single-use ticket URL, never a buffered blob", async () => {
     globalThis.window = { localStorage: { getItem: () => "test-token" } };
-    const bytes = new Uint8Array([0x61, 0x67, 0x65, 0x00, 0xff]);
     let seen = null;
     globalThis.fetch = async (url, init) => {
-        seen = { url: String(url), headers: init.headers };
-        return new Response(bytes, { status: 200, headers: { "Content-Type": "application/octet-stream" } });
+        seen = { url: String(url), method: init.method, headers: init.headers };
+        return new Response(
+            JSON.stringify({
+                ok: true,
+                runId: "run-1",
+                url: "/api/v1/backup-downloads/fbd_once",
+                expiresAt: "2026-10-21T00:02:00.000Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+        );
     };
-    const { downloadBackup } = await import("../src/lib/api.ts");
-    const blob = await downloadBackup("run-1");
-    assert.ok(blob instanceof Blob);
-    assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), bytes);
-    assert.match(seen.url, /\/api\/v1\/backup-runs\/run-1\/download$/);
+    const { backupDownloadUrl } = await import("../src/lib/api.ts");
+    const url = await backupDownloadUrl("run-1");
+    assert.match(seen.url, /\/api\/v1\/backup-runs\/run-1\/download-ticket$/);
+    assert.equal(seen.method, "POST");
     assert.equal(seen.headers.Authorization, "Bearer test-token");
-    assert.equal(seen.headers.Accept, "application/octet-stream");
+    assert.match(url, /\/api\/v1\/backup-downloads\/fbd_once$/);
+    assert.ok(!url.includes("test-token"), "the operator token never enters the URL");
 });

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-    downloadBackup,
+    backupDownloadUrl,
     fetchBackupAgents,
     fetchBackupRuns,
     fetchMonitor,
@@ -290,15 +290,16 @@ export function MonitorDetail({
 
     async function handleDownload(runId: string) {
         try {
-            const blob = await downloadBackup(runId);
-            const url = URL.createObjectURL(blob);
+            // A single-use ticket URL: the browser streams the bundle to disk
+            // itself instead of holding up to 8 GiB in memory.
+            const url = await backupDownloadUrl(runId);
             const anchor = document.createElement("a");
             anchor.href = url;
             anchor.download = `flatline-backup-${runId}.age`;
+            anchor.rel = "noreferrer";
             document.body.appendChild(anchor);
             anchor.click();
             anchor.remove();
-            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch (e) {
             setBackupError(e instanceof Error ? `Download failed: ${e.message}` : "Download failed.");
         }

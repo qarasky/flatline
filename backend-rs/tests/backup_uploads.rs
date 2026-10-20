@@ -965,3 +965,82 @@ async fn start_conflicts_are_distinguishable_and_abandonable() {
     assert_eq!(status, 409);
     assert_eq!(terminal["error"], "run_terminal");
 }
+
+async fn get_raw(h: &common::Harness, uri: &str) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let response = h
+        .app
+        .clone()
+        .oneshot(request("GET", uri, None, None))
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, body.to_vec())
+}
+
+/// Review M3: the dashboard buffered whole bundles with response.blob().
+/// A short-lived, single-use ticket lets the browser stream a plain GET
+/// without putting a long-lived credential in a URL.
+#[tokio::test]
+async fn download_tickets_are_short_lived_single_use_and_bound() {
+    let free = FakeFreeSpace::new(RESERVE_BYTES + 256 * 1024 * 1024);
+    let h = harness_with_backups(free, ScriptedFaults::new()).await;
+    let (_, token) = register(&h, "meks").await;
+    let data: Vec<u8> = (0..5000u32).map(|i| (i % 253) as u8).collect();
+    let (_, started) = start_run(&h, &token, "ticketed", data.len() as u64, &digest(&data)).await;
+    let run_id = started["run"]["id"].as_str().unwrap().to_string();
+    let ticket_uri = format!("/api/v1/backup-runs/{run_id}/download-ticket");
+
+    // Not completed yet: no ticket.
+    let (status, _) = send(&h.app, request("POST", &ticket_uri, Some(&h.token), None)).await;
+    assert_eq!(status, 404);
+    let (status, _) = put(&h, &token, &run_id, 0, 0, data.clone()).await;
+    assert_eq!(status, 200);
+    let (status, _) = complete(&h, &token, &run_id).await;
+    assert_eq!(status, 200);
+
+    // Operator only: neither anonymous nor the agent credential.
+    let (status, _) = send(&h.app, request("POST", &ticket_uri, None, None)).await;
+    assert_eq!(status, 401);
+    let (status, _) = send(&h.app, request("POST", &ticket_uri, Some(&token), None)).await;
+    assert_eq!(status, 401);
+
+    let (status, issued) = send(&h.app, request("POST", &ticket_uri, Some(&h.token), None)).await;
+    assert_eq!(status, 200, "{issued}");
+    assert_eq!(issued["runId"], run_id.as_str());
+    let url = issued["url"].as_str().unwrap().to_string();
+    assert!(url.starts_with("/api/v1/backup-downloads/"));
+    assert!(!url.contains(&h.token), "no operator credential in the URL");
+    let expires = chrono::DateTime::parse_from_rfc3339(issued["expiresAt"].as_str().unwrap())
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert!(expires - chrono::Utc::now() <= chrono::Duration::minutes(5));
+
+    // A plain GET without Authorization streams the exact bytes once.
+    let (status, headers, body) = get_raw(&h, &url).await;
+    assert_eq!(status, 200);
+    assert_eq!(body, data);
+    assert_eq!(headers["cache-control"], "no-store");
+    assert!(
+        headers["content-disposition"]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment")
+    );
+    let (status, _, _) = get_raw(&h, &url).await;
+    assert_eq!(status, 404, "tickets are single-use");
+    let (status, _, _) = get_raw(&h, "/api/v1/backup-downloads/fbd_forged").await;
+    assert_eq!(status, 404);
+
+    // Expired tickets are refused.
+    h.state
+        .backups
+        .set_download_ticket_ttl(std::time::Duration::from_millis(10));
+    let (_, issued) = send(&h.app, request("POST", &ticket_uri, Some(&h.token), None)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    let (status, _, _) = get_raw(&h, issued["url"].as_str().unwrap()).await;
+    assert_eq!(status, 404, "expired tickets are refused");
+}

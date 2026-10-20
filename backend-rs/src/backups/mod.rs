@@ -158,6 +158,25 @@ pub struct BundleDownload {
     pub filename: String,
 }
 
+/// A short-lived, single-use download ticket returned to an operator.
+#[derive(Debug, Clone)]
+pub struct DownloadTicket {
+    pub ticket: String,
+    pub run_id: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Default lifetime of a download ticket.
+pub const DOWNLOAD_TICKET_TTL: Duration = Duration::from_secs(120);
+
+/// Outstanding tickets are bounded; issuing more answers 503 busy.
+const MAX_DOWNLOAD_TICKETS: usize = 64;
+
+struct TicketEntry {
+    run_id: String,
+    expires: std::time::Instant,
+}
+
 /// A failed export that may never have produced bytes.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -335,6 +354,10 @@ pub struct Backups {
     /// Cancelled at shutdown: stops the maintenance loop and aborts body
     /// reads that are still waiting on the network.
     shutdown: CancellationToken,
+    /// Download tickets keyed by the SHA-256 of the ticket; in memory only,
+    /// so a restart invalidates every outstanding ticket.
+    tickets: std::sync::Mutex<HashMap<String, TicketEntry>>,
+    ticket_ttl: std::sync::Mutex<Duration>,
 }
 
 impl Backups {
@@ -372,7 +395,69 @@ impl Backups {
             run_locks: Arc::new(std::sync::Mutex::new(HashMap::new())),
             limits: std::sync::Mutex::new(UploadLimits::default()),
             shutdown: CancellationToken::new(),
+            tickets: std::sync::Mutex::new(HashMap::new()),
+            ticket_ttl: std::sync::Mutex::new(DOWNLOAD_TICKET_TTL),
         })
+    }
+
+    /// Replace the ticket lifetime (tests use a short one).
+    pub fn set_download_ticket_ttl(&self, ttl: Duration) {
+        *self.ticket_ttl.lock().unwrap_or_else(PoisonError::into_inner) = ttl;
+    }
+
+    /// Issue a single-use ticket for one completed run. The browser can then
+    /// stream the bundle with a plain GET (no Authorization header, no
+    /// buffering in JavaScript) while no long-lived credential enters a URL:
+    /// the ticket names one run, expires within minutes and is consumed by
+    /// the first request.
+    pub async fn issue_download_ticket(&self, run_id: &str) -> Result<DownloadTicket, Error> {
+        let run = self.run_by_id(run_id).await?;
+        if run.status != runs::STATUS_COMPLETED {
+            return Err(Error::NotFound(
+                "bundle is not a retained completed run".to_string(),
+            ));
+        }
+        let ttl = *self.ticket_ttl.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut bytes = [0u8; 32];
+        rand::Rng::fill_bytes(&mut rand::rng(), &mut bytes);
+        let ticket = format!("fbd_{}", hex::encode(bytes));
+        let now = std::time::Instant::now();
+
+        let mut tickets = self.tickets.lock().unwrap_or_else(PoisonError::into_inner);
+        tickets.retain(|_, entry| entry.expires > now);
+        if tickets.len() >= MAX_DOWNLOAD_TICKETS {
+            return Err(Error::Busy(
+                "too many outstanding download tickets".to_string(),
+            ));
+        }
+        tickets.insert(
+            hash_token(&ticket),
+            TicketEntry {
+                run_id: run.id.clone(),
+                expires: now + ttl,
+            },
+        );
+        Ok(DownloadTicket {
+            ticket,
+            run_id: run.id,
+            expires_at: Utc::now() + chrono::Duration::from_std(ttl).unwrap_or_default(),
+        })
+    }
+
+    /// Consume a ticket and open its bundle. Unknown, used and expired
+    /// tickets are indistinguishable (404).
+    pub async fn redeem_download_ticket(&self, ticket: &str) -> Result<BundleDownload, Error> {
+        let entry = self
+            .tickets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&hash_token(ticket));
+        match entry {
+            Some(entry) if entry.expires > std::time::Instant::now() => {
+                self.open_bundle(&entry.run_id).await
+            }
+            _ => Err(Error::NotFound("download ticket is not valid".to_string())),
+        }
     }
 
     /// Replace the upload timeouts (tests use short ones).
