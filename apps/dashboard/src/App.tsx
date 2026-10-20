@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 import { getToken } from "@/lib/api";
+import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { usePath } from "@/lib/router";
 import { boardRouteFrom, statusSlugFromPath } from "@/lib/routes";
 
@@ -49,6 +50,9 @@ function RootRoute() {
  * "/superboard" (optionally group-scoped), and the chrome-free board at
  * "/superboard/kiosk". The route is resolved before either view mounts, so the
  * dashboard's polling never runs while the board or a status page is open.
+ *
+ * Every route sits in its own error boundary: the kiosk and status pages
+ * show the error and reload themselves, operator routes offer "try again".
  */
 export default function App() {
     const path = usePath();
@@ -56,20 +60,30 @@ export default function App() {
 
     if (board) {
         return (
-            <Suspense fallback={<RouteLoading />}>
-                <SuperboardApp kiosk={board.kiosk} filter={board.filter} />
-            </Suspense>
+            <RouteErrorBoundary resetKey={path} autoReload={board.kiosk}>
+                <Suspense fallback={<RouteLoading />}>
+                    <SuperboardApp kiosk={board.kiosk} filter={board.filter} />
+                </Suspense>
+            </RouteErrorBoundary>
         );
     }
 
     const statusSlug = statusSlugFromPath(path);
     if (statusSlug) {
+        // Status pages are often left on a screen too; nobody is there to
+        // click "try again", so they recover like the kiosk.
         return (
-            <Suspense fallback={<RouteLoading label="Loading status…" />}>
-                <StatusPageApp slug={statusSlug} />
-            </Suspense>
+            <RouteErrorBoundary resetKey={path} autoReload>
+                <Suspense fallback={<RouteLoading label="Loading status…" />}>
+                    <StatusPageApp slug={statusSlug} />
+                </Suspense>
+            </RouteErrorBoundary>
         );
     }
 
-    return <Suspense fallback={<RouteLoading />}>{path === "/" ? <RootRoute /> : <Dashboard />}</Suspense>;
+    return (
+        <RouteErrorBoundary resetKey={path}>
+            <Suspense fallback={<RouteLoading />}>{path === "/" ? <RootRoute /> : <Dashboard />}</Suspense>
+        </RouteErrorBoundary>
+    );
 }
