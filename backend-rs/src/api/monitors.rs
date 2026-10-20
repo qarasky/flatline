@@ -143,6 +143,36 @@ async fn latest_beats(
     Ok(beats)
 }
 
+/// Uptime lookups run this many at a time: enough to overlap the cold
+/// 30-day scans after a restart, few enough to leave pool connections for
+/// the check loops (the pool has five).
+const UPTIME_CONCURRENCY: usize = 3;
+
+/// Uptime windows for a page of monitors through the engine's cache.
+///
+/// Warm entries are memory reads. After a restart every entry is cold and
+/// the engine computes it inline, so the lookups are overlapped in small
+/// batches instead of running one monitor after another (A13).
+async fn uptime_windows_for(
+    engine: &std::sync::Arc<crate::monitors::engine::Engine>,
+    ids: &[i64],
+) -> std::collections::HashMap<i64, crate::heartbeats::UptimeWindows> {
+    let mut out = std::collections::HashMap::with_capacity(ids.len());
+    for chunk in ids.chunks(UPTIME_CONCURRENCY) {
+        let handles: Vec<_> = chunk
+            .iter()
+            .map(|&id| {
+                let engine = std::sync::Arc::clone(engine);
+                (id, tokio::spawn(async move { engine.uptime_windows(id).await }))
+            })
+            .collect();
+        for (id, handle) in handles {
+            out.insert(id, handle.await.unwrap_or_default());
+        }
+    }
+    out
+}
+
 /// GET /api/v1/monitors
 pub async fn list(
     State(state): State<AppState>,
@@ -180,9 +210,11 @@ pub async fn list(
     let ids: Vec<i64> = monitors.iter().map(|m| m.id).collect();
     let beats = latest_beats(&state.pool, &ids).await?;
 
+    let uptimes = uptime_windows_for(&state.engine, &ids).await;
+
     let mut result = Vec::with_capacity(monitors.len());
     for monitor in &monitors {
-        let uptime = state.engine.uptime_windows(monitor.id).await;
+        let uptime = uptimes.get(&monitor.id).copied().unwrap_or_default();
         let object = monitor_json(monitor, beats.get(&monitor.id), &uptime);
         // Status filtering happens after resolution, like the Node backend:
         // it depends on the latest heartbeat, not a column.
@@ -267,19 +299,29 @@ pub async fn heartbeats(
         None => 100,
     };
 
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM heartbeats WHERE monitor_id = ?")
-        .bind(monitor.id)
-        .fetch_one(&state.pool)
-        .await
-        .map_err(internal)?;
+    // `time DESC, id DESC` walks the `(monitor_id, time DESC)` index and
+    // stops after `limit` rows; `ORDER BY id DESC` sorted the monitor's whole
+    // history in a temp B-tree on every call.
+    let rows: Vec<Beat> = sqlx::query_as(
+        "SELECT * FROM heartbeats WHERE monitor_id = ? ORDER BY time DESC, id DESC LIMIT ?",
+    )
+    .bind(monitor.id)
+    .bind(limit)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(internal)?;
 
-    let rows: Vec<Beat> =
-        sqlx::query_as("SELECT * FROM heartbeats WHERE monitor_id = ? ORDER BY id DESC LIMIT ?")
+    // A short page is the whole history, so the total is free; only a full
+    // page needs the count (a covering-index range scan, no table reads).
+    let total: i64 = if (rows.len() as i64) < limit {
+        rows.len() as i64
+    } else {
+        sqlx::query_scalar("SELECT COUNT(*) FROM heartbeats WHERE monitor_id = ?")
             .bind(monitor.id)
-            .bind(limit)
-            .fetch_all(&state.pool)
+            .fetch_one(&state.pool)
             .await
-            .map_err(internal)?;
+            .map_err(internal)?
+    };
 
     let heartbeats: Vec<Value> = rows
         .iter()
