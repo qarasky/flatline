@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -75,12 +76,17 @@ func (r Runner) Run(ctx context.Context, cfg Config) error {
 	// A queued failure report from an offline export is best-effort; it must
 	// never block a new backup.
 	r.deliverQueuedFailure(ctx, cfg)
+	// Earlier versions never pruned quarantine/; enforce the caps on every
+	// run, before anything new is written.
+	if err := pruneQuarantine(cfg, maxQuarantineEntries, cfg.SpoolMaxBytes); err != nil {
+		return fmt.Errorf("prune quarantine: %w", err)
+	}
 
 	pending, exists, err := loadPending(cfg, spool)
 	if err != nil {
 		// A corrupt descriptor or bundle must not wedge every future backup.
 		// Preserve it under quarantine/ and start a fresh export.
-		if quarantineErr := quarantinePending(cfg, spool, "invalid-pending"); quarantineErr != nil {
+		if quarantineErr := r.quarantine(ctx, cfg, spool, "invalid-pending"); quarantineErr != nil {
 			return fmt.Errorf("quarantine invalid pending bundle: %w", quarantineErr)
 		}
 		exists = false
@@ -93,9 +99,10 @@ func (r Runner) Run(ctx context.Context, cfg Config) error {
 			if !errors.Is(err, errRunTerminal) {
 				return fmt.Errorf("deliver pending bundle: %w", err)
 			}
-			// The server refused to reopen a terminal run. Preserve the
-			// bundle for inspection and create a new client run below.
-			if quarantineErr := quarantinePending(cfg, spool, "terminal-run"); quarantineErr != nil {
+			// The server refused to reopen a terminal run (run_terminal or
+			// params_conflict, never active_run). Preserve the bundle for
+			// inspection and create a new client run below.
+			if quarantineErr := r.quarantine(ctx, cfg, spool, "terminal-run"); quarantineErr != nil {
 				return fmt.Errorf("quarantine terminal pending bundle: %w", quarantineErr)
 			}
 			exists = false
@@ -138,18 +145,51 @@ func (r Runner) Run(ctx context.Context, cfg Config) error {
 }
 
 func (r Runner) reportExportFailure(ctx context.Context, cfg Config, clientRunID string, started time.Time, code string) {
+	r.report(ctx, cfg, clientRunID, started.UTC().Format(time.RFC3339), code)
+}
+
+// report sends one safe failure code. A delivery problem that may clear
+// (offline, 5xx) queues the report for the next run; a permanent refusal
+// is dropped so it is not retried forever.
+func (r Runner) report(ctx context.Context, cfg Config, clientRunID, exportStartedAt, code string) {
 	if r.ReportFailure == nil {
 		return
 	}
 	reportCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := r.ReportFailure(reportCtx, cfg, clientRunID, started.UTC().Format(time.RFC3339), code); err != nil {
+	if err := r.ReportFailure(reportCtx, cfg, clientRunID, exportStartedAt, code); err != nil && reportRetryable(err) {
 		_ = saveFailure(cfg, failureRecord{
 			ClientRunID:     clientRunID,
-			ExportStartedAt: started.UTC().Format(time.RFC3339),
+			ExportStartedAt: exportStartedAt,
 			Code:            code,
 		})
 	}
+}
+
+func reportRetryable(err error) bool {
+	var permanent *permanentError
+	if errors.As(err, &permanent) {
+		return permanent.status == 408 || permanent.status == 429 || permanent.status >= 500
+	}
+	return true
+}
+
+// Quarantine keeps at most this many preserved bundles, and never more
+// bytes than one spool cap, so a repeating refusal cannot fill the disk.
+const maxQuarantineEntries = 2
+
+// quarantine moves the pending bundle aside, prunes older quarantined
+// bundles to the count and byte caps, and reports bundle_quarantined so the
+// office alerts: a quarantined bundle is a backup that was not delivered.
+func (r Runner) quarantine(ctx context.Context, cfg Config, spool *Spool, reason string) error {
+	if err := quarantinePending(cfg, spool, reason); err != nil {
+		return err
+	}
+	if err := pruneQuarantine(cfg, maxQuarantineEntries, cfg.SpoolMaxBytes); err != nil {
+		return fmt.Errorf("prune quarantine: %w", err)
+	}
+	r.report(ctx, cfg, r.NewRunID(), r.Now().UTC().Format(time.RFC3339), "bundle_quarantined")
+	return nil
 }
 
 func (r Runner) deliverQueuedFailure(ctx context.Context, cfg Config) {
@@ -162,7 +202,7 @@ func (r Runner) deliverQueuedFailure(ctx context.Context, cfg Config) {
 	}
 	reportCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := r.ReportFailure(reportCtx, cfg, record.ClientRunID, record.ExportStartedAt, record.Code); err == nil {
+	if err := r.ReportFailure(reportCtx, cfg, record.ClientRunID, record.ExportStartedAt, record.Code); err == nil || !reportRetryable(err) {
 		_ = os.Remove(failurePath(cfg))
 	}
 }
@@ -272,6 +312,64 @@ func quarantinePending(cfg Config, spool *Spool, reason string) error {
 		return err
 	}
 	return nil
+}
+
+func quarantineRoot(cfg Config) string { return filepath.Join(cfg.StateDir, "quarantine") }
+
+// pruneQuarantine removes the oldest quarantined bundles until at most
+// maxEntries remain and they hold at most maxBytes. The newest entry is
+// always kept for inspection. Entry names start with a sortable UTC stamp.
+func pruneQuarantine(cfg Config, maxEntries int, maxBytes int64) error {
+	entries, err := os.ReadDir(quarantineRoot(cfg))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	type quarantined struct {
+		path string
+		size int64
+	}
+	var kept []quarantined
+	var total int64
+	for _, entry := range entries {
+		path := filepath.Join(quarantineRoot(cfg), entry.Name())
+		size, err := treeSize(path)
+		if err != nil {
+			return err
+		}
+		kept = append(kept, quarantined{path: path, size: size})
+		total += size
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].path < kept[j].path })
+	for len(kept) > 1 && (len(kept) > maxEntries || total > maxBytes) {
+		if err := os.RemoveAll(kept[0].path); err != nil {
+			return err
+		}
+		total -= kept[0].size
+		kept = kept[1:]
+	}
+	return nil
+}
+
+// treeSize counts regular-file bytes without following symlinks.
+func treeSize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type().IsRegular() {
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			total += info.Size()
+		}
+		return nil
+	})
+	return total, err
 }
 
 func clearPending(cfg Config, spool *Spool) error {

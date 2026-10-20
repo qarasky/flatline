@@ -39,24 +39,53 @@ type runEnvelope struct {
 }
 
 type errorEnvelope struct {
-	OK      bool   `json:"ok"`
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	OK                bool   `json:"ok"`
+	Error             string `json:"error"`
+	Message           string `json:"message"`
+	ActiveRunID       string `json:"activeRunId"`
+	ActiveClientRunID string `json:"activeClientRunId"`
 }
 
 var errRedirectRefused = errors.New("redirects are not followed")
 
+// permanentError is a non-2xx answer. code is the server's
+// machine-readable `error` field; the free-text message is never kept, so
+// server-provided text cannot leak into logs or reports.
 type permanentError struct {
 	status int
+	code   string
 }
 
 func (e *permanentError) Error() string {
+	if e.code != "" {
+		return fmt.Sprintf("server rejected the request with status %d (%s)", e.status, e.code)
+	}
 	return fmt.Sprintf("server rejected the request with status %d", e.status)
+}
+
+// activeRunError is a 409 active_run: another run of this agent is still
+// uploading or finalizing on the server.
+type activeRunError struct {
+	runID       string
+	clientRunID string
+}
+
+func (e *activeRunError) Error() string {
+	return "another run of this agent is still uploading"
 }
 
 var (
 	errRunGone     = errors.New("run no longer accepts chunks")
 	errRunTerminal = errors.New("server run is terminal and cannot be resumed")
+	errStartBusy   = errors.New("server refused the upload start with an unclassified conflict")
+)
+
+// Server conflict codes on POST /runs. Only the last two mean the local
+// bundle can never be delivered under its clientRunId.
+const (
+	conflictActiveRun = "active_run"
+	conflictParams    = "params_conflict"
+	conflictTerminal  = "run_terminal"
 )
 
 // RetryPolicy is bounded and injectable for tests.
@@ -142,7 +171,7 @@ func uploadBundleWith(ctx context.Context, client *UploadClient, bundle Bundle) 
 		return RunSummary{}, errors.New("bundle size is outside the accepted range")
 	}
 
-	run, offset, err := client.start(ctx, bundle)
+	run, offset, err := client.startOrReleaseStale(ctx, bundle)
 	if err != nil {
 		return RunSummary{}, err
 	}
@@ -180,7 +209,7 @@ func uploadBundleWith(ctx context.Context, client *UploadClient, bundle Bundle) 
 		if err != nil {
 			if errors.Is(err, errRunGone) && !restarted {
 				restarted = true
-				run, offset, err = client.start(ctx, bundle)
+				run, offset, err = client.startOrReleaseStale(ctx, bundle)
 				if err != nil {
 					return RunSummary{}, err
 				}
@@ -218,6 +247,33 @@ func (c *UploadClient) throttle(ctx context.Context, bytes int64) error {
 	return sleepContext(ctx, wait)
 }
 
+// startOrReleaseStale starts (or resumes) the bundle's run. When the
+// server reports another active run of this agent with a different
+// clientRunId, this instance no longer holds that run's bundle (there is at
+// most one pending bundle per instance), so it can never be completed: the
+// agent abandons it once and retries the start. That run's reservation is
+// released immediately instead of after the 48-hour expiry.
+func (c *UploadClient) startOrReleaseStale(ctx context.Context, bundle Bundle) (RunSummary, int64, error) {
+	run, offset, err := c.start(ctx, bundle)
+	var active *activeRunError
+	if !errors.As(err, &active) {
+		return run, offset, err
+	}
+	if active.runID == "" || active.clientRunID == bundle.ClientRunID {
+		return RunSummary{}, 0, err
+	}
+	if abandonErr := c.abandon(ctx, active.runID); abandonErr != nil {
+		return RunSummary{}, 0, fmt.Errorf("release stale active run: %w", abandonErr)
+	}
+	return c.start(ctx, bundle)
+}
+
+func (c *UploadClient) abandon(ctx context.Context, runID string) error {
+	path := fmt.Sprintf("/runs/%s/abandon", url.PathEscape(runID))
+	_, err := c.request(ctx, http.MethodPost, path, nil, nil)
+	return err
+}
+
 func (c *UploadClient) start(ctx context.Context, bundle Bundle) (RunSummary, int64, error) {
 	body, err := json.Marshal(map[string]any{
 		"clientRunId":      bundle.ClientRunID,
@@ -232,9 +288,20 @@ func (c *UploadClient) start(ctx context.Context, bundle Bundle) (RunSummary, in
 	}
 	data, err := c.request(ctx, http.MethodPost, "/runs", body, map[string]string{"Content-Type": "application/json"})
 	if err != nil {
+		var active *activeRunError
+		if errors.As(err, &active) {
+			return RunSummary{}, 0, err
+		}
 		var permanent *permanentError
 		if errors.As(err, &permanent) && permanent.status == http.StatusConflict {
-			return RunSummary{}, 0, errRunTerminal
+			switch permanent.code {
+			case conflictTerminal, conflictParams:
+				return RunSummary{}, 0, errRunTerminal
+			default:
+				// Unknown or generic conflicts are never a reason to
+				// quarantine a valid bundle; the next run retries.
+				return RunSummary{}, 0, errStartBusy
+			}
 		}
 		return RunSummary{}, 0, err
 	}
@@ -350,20 +417,28 @@ func (c *UploadClient) request(ctx context.Context, method, path string, body []
 			return data, nil
 		}
 
+		var envelope errorEnvelope
+		_ = json.Unmarshal(data, &envelope)
+		code := safeErrorCode(envelope.Error)
+
 		switch {
 		case response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden:
-			return nil, &permanentError{status: response.StatusCode}
+			return nil, &permanentError{status: response.StatusCode, code: code}
 		case response.StatusCode == http.StatusNotFound:
 			last = errRunGone
 		case response.StatusCode == http.StatusConflict &&
 			(strings.Contains(path, "/chunks/") || strings.HasSuffix(path, "/complete")):
 			last = errRunGone
-		case response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500:
-			last = &permanentError{status: response.StatusCode}
+		case response.StatusCode == http.StatusConflict && code == conflictActiveRun:
+			return nil, &activeRunError{runID: envelope.ActiveRunID, clientRunID: envelope.ActiveClientRunID}
+		case response.StatusCode == http.StatusRequestTimeout ||
+			response.StatusCode == http.StatusTooManyRequests ||
+			response.StatusCode >= 500:
+			// 503 includes a backend that could not check the credential
+			// (database unavailable): retry, never treat it as revoked.
+			last = &permanentError{status: response.StatusCode, code: code}
 		default:
-			var envelope errorEnvelope
-			_ = json.Unmarshal(data, &envelope)
-			return nil, &permanentError{status: response.StatusCode}
+			return nil, &permanentError{status: response.StatusCode, code: code}
 		}
 
 		if attempt < c.retry.Attempts {
@@ -397,6 +472,20 @@ func (c *UploadClient) backoff(attempt int) time.Duration {
 		wait = c.retry.Max
 	}
 	return wait
+}
+
+// safeErrorCode keeps only a short lowercase identifier from the server's
+// `error` field.
+func safeErrorCode(value string) string {
+	if len(value) == 0 || len(value) > 32 {
+		return ""
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && character != '_' {
+			return ""
+		}
+	}
+	return value
 }
 
 func retryAfterDuration(value string, maximum time.Duration) time.Duration {

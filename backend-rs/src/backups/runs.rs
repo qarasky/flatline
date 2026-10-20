@@ -217,6 +217,8 @@ pub const FAILURE_CODES: &[&str] = &[
     "auth_failed",
     "config_invalid",
     "source_changed",
+    // The agent moved an undeliverable pending bundle to quarantine/.
+    "bundle_quarantined",
     "unknown",
 ];
 
