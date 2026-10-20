@@ -18,7 +18,10 @@ systemctl daemon-reload
 
 `install` writes the named `flatline-backup@meks.service` and
 `flatline-backup@meks.timer`. The timer stays disabled until the operator adds
-`--enable-timer`; do not enable it before a restore has been proven.
+`--enable-timer`, which runs `systemctl daemon-reload` and
+`systemctl enable --now flatline-backup@meks.timer` (linking it into
+`timers.target` and starting it) and fails the install if either command
+fails. Do not enable it before a restore has been proven.
 
 ## Configuration
 
@@ -65,7 +68,8 @@ does. A separate development-host test may use a generated identity.
 - `check --config FILE` validates configuration and local secret file modes.
 - `run-once --config FILE` retries one pending bundle first, otherwise exports,
   encrypts, persists a pending descriptor and uploads. The daily timer runs it.
-- `install --config FILE [--enable-timer]` writes the named service and timer.
+- `install --config FILE [--enable-timer]` writes the named service and timer;
+  `--enable-timer` also enables and starts the timer through systemctl.
 - `version` prints the binary version.
 
 A pending encrypted bundle is retained until the server reports completion;
@@ -81,12 +85,17 @@ StartLimitIntervalSec=0
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/flatline-backup run-once --config /etc/flatline-backup/meks.json
+TimeoutStartSec=6h
 Restart=on-failure
 RestartSec=30min
 ```
 
+`TimeoutStartSec=6h` covers the two-hour export deadline plus a throttled
+upload of a maximum-size bundle; a oneshot otherwise has no start timeout, and
+a hung run would keep the timer from ever firing again.
+
 The timer uses `OnCalendar=*-*-* 02:00:00 Asia/Almaty`, a 600-second
-randomized delay and `Persistent=true`. A successful oneshot is not restarted;
+randomized delay, `Persistent=true` and `WantedBy=timers.target`. A successful oneshot is not restarted;
 a failed source export or upload retries after 30 minutes and reuses any
 pending encrypted bundle first.
 

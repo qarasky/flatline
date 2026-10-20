@@ -118,9 +118,9 @@ func runInstall(args []string) int {
 		return 1
 	}
 	if *enableTimer {
-		fmt.Println("installed; daily timer enabled")
+		fmt.Println("installed; daily timer enabled and started (systemctl list-timers shows the next run)")
 	} else {
-		fmt.Println("installed; daily timer left disabled")
+		fmt.Println("installed; daily timer left disabled; run systemctl daemon-reload")
 	}
 	return 0
 }

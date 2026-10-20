@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +14,15 @@ func TestTwoInstanceUnitsAndManualLock(t *testing.T) {
 	meksConfig := runnerConfig(t, fixture, "meks")
 	zhkhConfig := runnerConfig(t, fixture, "zhkhteam")
 	unitDir := t.TempDir()
-	options := installOptions{unitDir: unitDir, binaryPath: "/usr/local/bin/flatline-backup"}
+	var systemctl [][]string
+	options := installOptions{
+		unitDir:    unitDir,
+		binaryPath: "/usr/local/bin/flatline-backup",
+		systemctl: func(args ...string) error {
+			systemctl = append(systemctl, args)
+			return nil
+		},
+	}
 
 	if err := installInstance(fixture.writeConfig(t, "meks", fixture.config("meks")), false, options); err != nil {
 		t.Fatal(err)
@@ -32,6 +42,8 @@ func TestTwoInstanceUnitsAndManualLock(t *testing.T) {
 		"Restart=on-failure",
 		"RestartSec=30min",
 		"StartLimitIntervalSec=0",
+		// Review L1: a oneshot has no start timeout by default.
+		"TimeoutStartSec=6h",
 	} {
 		if !strings.Contains(string(service), expected) {
 			t.Fatalf("service unit lacks %q:\n%s", expected, service)
@@ -42,30 +54,30 @@ func TestTwoInstanceUnitsAndManualLock(t *testing.T) {
 		"RandomizedDelaySec=600",
 		"Persistent=true",
 		"Unit=flatline-backup@meks.service",
+		"WantedBy=timers.target",
 	} {
 		if !strings.Contains(string(timer), expected) {
 			t.Fatalf("timer unit lacks %q:\n%s", expected, timer)
 		}
 	}
 
-	wants := filepath.Join(unitDir, "multi-user.target.wants")
-	if _, err := os.Lstat(filepath.Join(wants, "flatline-backup@meks.timer")); !os.IsNotExist(err) {
-		t.Fatalf("a fresh installation must leave the timer disabled: %v", err)
+	if len(systemctl) != 0 {
+		t.Fatalf("a fresh installation must leave the timer disabled: %v", systemctl)
 	}
 
+	// Review L1: --enable-timer must really enable and start the timer.
 	if err := installInstance(fixture.writeConfig(t, "zhkhteam", fixture.config("zhkhteam")), true, options); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(wants, "flatline-backup@zhkhteam.timer")
-	target, err := os.Readlink(link)
-	if err != nil {
-		t.Fatalf("enabled timer symlink missing: %v", err)
+	want := [][]string{{"daemon-reload"}, {"enable", "--now", "flatline-backup@zhkhteam.timer"}}
+	if fmt.Sprint(systemctl) != fmt.Sprint(want) {
+		t.Fatalf("systemctl calls = %v, want %v", systemctl, want)
 	}
-	if target != filepath.Join(unitDir, "flatline-backup@zhkhteam.timer") {
-		t.Fatalf("timer symlink target = %q", target)
-	}
-	if _, err := os.Lstat(filepath.Join(wants, "flatline-backup@meks.timer")); !os.IsNotExist(err) {
-		t.Fatal("enabling one instance must not enable another")
+
+	// A failing systemctl is an installation failure, never "enabled".
+	options.systemctl = func(args ...string) error { return errors.New("no systemd") }
+	if err := installInstance(fixture.writeConfig(t, "zhkhteam", fixture.config("zhkhteam")), true, options); err == nil {
+		t.Fatal("enable failures must be reported")
 	}
 
 	// Separate names have separate locks; a second holder of one fails.
