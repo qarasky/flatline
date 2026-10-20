@@ -663,3 +663,94 @@ async fn reconciliation_without_storage_does_not_block_boot() {
         .unwrap();
     assert_eq!(status, "uploading");
 }
+
+/// Records every fault point with the thread that reached it.
+#[derive(Default)]
+struct RecordingFaults {
+    events: Mutex<Vec<(FaultPoint, std::thread::ThreadId)>>,
+}
+
+impl RecordingFaults {
+    fn take(&self) -> Vec<(FaultPoint, std::thread::ThreadId)> {
+        std::mem::take(&mut *self.events.lock().unwrap())
+    }
+}
+
+impl FaultInjector for RecordingFaults {
+    fn hit(&self, point: FaultPoint) -> io::Result<()> {
+        self.events
+            .lock()
+            .unwrap()
+            .push((point, std::thread::current().id()));
+        Ok(())
+    }
+}
+
+/// Review H2: finalization hashed the bundle twice on a runtime worker.
+/// `#[tokio::test]` uses a current-thread runtime, so every async step runs
+/// on this test thread; storage work must happen elsewhere (the blocking
+/// pool), and the bundle must be hashed exactly once per finalization.
+#[tokio::test]
+async fn finalize_hashes_once_off_the_runtime_thread() {
+    let runtime_thread = std::thread::current().id();
+    let faults = Arc::new(RecordingFaults::default());
+    let free = FakeFreeSpace::new(RESERVE_BYTES + 256 * 1024 * 1024);
+    let h = harness_with_backups(free, Arc::clone(&faults) as Arc<dyn FaultInjector>).await;
+    let (_, token) = register(&h, "meks").await;
+    let data = vec![7u8; 4096];
+
+    let (status, started) = start_run(&h, &token, "hash-once", 4096, &digest(&data)).await;
+    assert_eq!(status, 200, "{started}");
+    let run_id = started["run"]["id"].as_str().unwrap().to_string();
+    let (status, uploaded) = put(&h, &token, &run_id, 0, 0, data.clone()).await;
+    assert_eq!(status, 200, "{uploaded}");
+    let (status, completed) = complete(&h, &token, &run_id).await;
+    assert_eq!(status, 200, "{completed}");
+    assert_eq!(completed["run"]["status"], "completed");
+
+    let events = faults.take();
+    let hashes = events
+        .iter()
+        .filter(|(point, _)| *point == FaultPoint::FullHash)
+        .count();
+    assert_eq!(hashes, 1, "finalize must hash the bundle exactly once");
+    for (point, thread) in &events {
+        if *point == FaultPoint::AfterDbUpdate {
+            continue; // SQLite bookkeeping, not file I/O
+        }
+        assert_ne!(
+            *thread, runtime_thread,
+            "{point:?} ran on the async runtime thread"
+        );
+    }
+
+    // Boot reconciliation of an interrupted finalization: same guarantees.
+    let (status, started) = start_run(&h, &token, "reconcile-once", 4096, &digest(&data)).await;
+    assert_eq!(status, 200, "{started}");
+    let run_id = started["run"]["id"].as_str().unwrap().to_string();
+    let (status, _) = put(&h, &token, &run_id, 0, 0, data.clone()).await;
+    assert_eq!(status, 200);
+    sqlx::query("UPDATE backup_runs SET status = 'finalizing' WHERE id = ?")
+        .bind(&run_id)
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    faults.take();
+    h.state.backups.reconcile_storage().await.unwrap();
+    let events = faults.take();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|(point, _)| *point == FaultPoint::FullHash)
+            .count(),
+        1,
+        "reconciliation must hash once"
+    );
+    assert!(
+        events.iter().all(|(_, thread)| *thread != runtime_thread),
+        "reconciliation file I/O ran on the runtime thread"
+    );
+    let (_, probe) =
+        common::get_json(&h.app, &format!("/api/backup/v1/runs/{run_id}"), &token).await;
+    assert_eq!(probe["run"]["status"], "completed");
+}

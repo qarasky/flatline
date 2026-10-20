@@ -31,7 +31,7 @@ use crate::events::Events;
 use runs::{ValidatedStart, Verification};
 use storage::{
     CHUNK_BYTES, FaultInjector, FaultPoint, FreeSpace, NoFaults, RESERVE_BYTES, Storage,
-    StorageError, SystemFreeSpace,
+    StorageError, SystemFreeSpace, run_blocking,
 };
 
 pub use runs::{RunSummary, StartRun};
@@ -700,8 +700,9 @@ impl Backups {
                     return Ok(existing);
                 }
                 runs::STATUS_EXPIRED => {
-                    storage
-                        .delete_run(agent_id, &existing.id)
+                    let (agent, run) = (agent_id.to_string(), existing.id.clone());
+                    run_blocking(&storage, move |storage| storage.delete_run(&agent, &run))
+                        .await
                         .map_err(storage_error)?;
                     sqlx::query("DELETE FROM backup_run_chunks WHERE run_id = ?")
                         .bind(&existing.id)
@@ -720,8 +721,9 @@ impl Backups {
                     .bind(&existing.id)
                     .execute(&self.pool)
                     .await?;
-                    storage
-                        .prepare_run(agent_id, &existing.id)
+                    let (agent, run) = (agent_id.to_string(), existing.id.clone());
+                    run_blocking(&storage, move |storage| storage.prepare_run(&agent, &run))
+                        .await
                         .map_err(storage_error)?;
                     self.events.invalidate();
                     return self.run_by_id(&existing.id).await;
@@ -752,7 +754,10 @@ impl Backups {
 
         let id = uuid::Uuid::new_v4().to_string();
         insert_run(&self.pool, &id, agent_id, &validated, now).await?;
-        if let Err(error) = storage.prepare_run(agent_id, &id) {
+        let (agent, run) = (agent_id.to_string(), id.clone());
+        if let Err(error) =
+            run_blocking(&storage, move |storage| storage.prepare_run(&agent, &run)).await
+        {
             let _ = sqlx::query("DELETE FROM backup_runs WHERE id = ?")
                 .bind(&id)
                 .execute(&self.pool)
@@ -865,9 +870,13 @@ impl Backups {
             ));
         }
 
-        storage
-            .append_chunk(agent_id, run_id, offset, &bytes)
-            .map_err(storage_error)?;
+        // Write and fsync off the async workers.
+        let (agent, run) = (agent_id.to_string(), run_id.to_string());
+        run_blocking(&storage, move |storage| {
+            storage.append_chunk(&agent, &run, offset, &bytes)
+        })
+        .await
+        .map_err(storage_error)?;
 
         let next = offset + length;
         let mut transaction = self.pool.begin().await?;
@@ -933,7 +942,13 @@ impl Backups {
                 .await?;
         }
 
-        match storage.finalize(agent_id, run_id, total as u64, &sha256) {
+        // One hashing pass plus fsync/rename, on the blocking pool.
+        let (agent, run, digest) = (agent_id.to_string(), run_id.to_string(), sha256.clone());
+        let finalized = run_blocking(&storage, move |storage| {
+            storage.finalize(&agent, &run, total as u64, &digest)
+        })
+        .await;
+        match finalized {
             Ok(()) => {}
             Err(StorageError::Mismatch(message)) => {
                 self.fail_run(run_id, "bundle_hash_mismatch").await?;
@@ -983,11 +998,13 @@ impl Backups {
         for row in rows {
             match row.status.as_str() {
                 runs::STATUS_UPLOADING => {
-                    match storage.truncate_to_committed(
-                        &row.agent_id,
-                        &row.id,
-                        row.received_bytes as u64,
-                    ) {
+                    let (agent, run, committed) =
+                        (row.agent_id.clone(), row.id.clone(), row.received_bytes as u64);
+                    let truncated = run_blocking(&storage, move |storage| {
+                        storage.truncate_to_committed(&agent, &run, committed)
+                    })
+                    .await;
+                    match truncated {
                         Ok(()) => {}
                         Err(StorageError::Io(error))
                             if error.kind() == std::io::ErrorKind::NotFound =>
@@ -1016,19 +1033,15 @@ impl Backups {
     async fn reconcile_finalizing(&self, storage: &Storage, row: &RunRow) -> Result<(), Error> {
         let total = row.total_bytes.unwrap_or_default() as u64;
         let sha256 = row.sha256.clone().unwrap_or_default();
-        let final_path = storage
-            .final_path(&row.agent_id, &row.id)
-            .map_err(storage_error)?;
-
-        if final_path.exists() {
-            storage
-                .verify_final(&row.agent_id, &row.id, total, &sha256)
-                .map_err(storage_error)?;
-        } else {
-            storage
-                .finalize(&row.agent_id, &row.id, total, &sha256)
-                .map_err(storage_error)?;
-        }
+        let (agent, run) = (row.agent_id.clone(), row.id.clone());
+        // `finalize` verifies an already-published bundle once, or hashes the
+        // partial once and publishes it. Both run on the blocking pool so a
+        // boot with several large finalizing runs cannot starve monitoring.
+        run_blocking(storage, move |storage| {
+            storage.finalize(&agent, &run, total, &sha256)
+        })
+        .await
+        .map_err(storage_error)?;
 
         sqlx::query(
             "UPDATE backup_runs SET status = 'completed', completed_at = ?,

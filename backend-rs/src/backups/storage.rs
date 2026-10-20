@@ -61,6 +61,9 @@ pub enum FaultPoint {
     BeforeRename,
     /// The bundle is published but the run is not marked completed.
     AfterRename,
+    /// A full-bundle hashing pass starts. Lets tests count passes and check
+    /// the thread that performs them; production ignores it.
+    FullHash,
 }
 
 pub trait FaultInjector: Send + Sync {
@@ -351,7 +354,7 @@ impl Storage {
         self.verify_root()?;
         let path = self.final_path(agent_id, run_id)?;
         ensure_regular(&path, false)?;
-        let (size, digest) = hash_file(&path)?;
+        let (size, digest) = self.hash_bundle(&path)?;
         if size != total {
             return Err(StorageError::Mismatch(format!(
                 "published bundle is {size} bytes, expected {total}"
@@ -365,8 +368,14 @@ impl Storage {
         Ok(())
     }
 
-    /// Stream-check the partial bundle, fsync, atomically publish it, and
-    /// fsync the containing directory.
+    /// Stream-check the partial bundle once, fsync, atomically publish it,
+    /// and fsync the containing directory.
+    ///
+    /// This is synchronous, long-running file I/O (an 8 GiB bundle takes
+    /// tens of seconds to hash): callers must run it on the blocking pool,
+    /// never on a runtime worker. The bundle is hashed exactly once; the
+    /// rename is atomic within one directory, so the published inode is the
+    /// one that was verified and is not read again.
     pub fn finalize(
         &self,
         agent_id: &str,
@@ -380,7 +389,8 @@ impl Storage {
         let final_path = run_dir.join(FINAL_NAME);
 
         // A published file may already exist after a crash between rename and
-        // the SQLite update: verify it, drop any leftover partial, and finish.
+        // the SQLite update: verify it once, drop any leftover partial, and
+        // finish.
         match fs::symlink_metadata(&final_path) {
             Ok(metadata) => {
                 if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -399,7 +409,8 @@ impl Storage {
         }
 
         ensure_regular(&partial, false)?;
-        let (size, digest) = hash_file(&partial)?;
+        let file = OpenOptions::new().read(true).open(&partial)?;
+        let (size, digest) = self.hash_open(&file)?;
         if size != total {
             return Err(StorageError::Mismatch(format!(
                 "bundle is {size} bytes, expected {total}"
@@ -410,8 +421,6 @@ impl Storage {
                 "bundle sha256 does not match".to_string(),
             ));
         }
-
-        let file = OpenOptions::new().read(true).open(&partial)?;
         file.sync_all()?;
         drop(file);
 
@@ -424,8 +433,19 @@ impl Storage {
         self.faults
             .hit(FaultPoint::AfterRename)
             .map_err(StorageError::Io)?;
+        Ok(())
+    }
 
-        self.verify_final(agent_id, run_id, total, sha256)
+    fn hash_bundle(&self, path: &Path) -> Result<(u64, String), StorageError> {
+        let file = File::open(path)?;
+        self.hash_open(&file)
+    }
+
+    fn hash_open(&self, file: &File) -> Result<(u64, String), StorageError> {
+        self.faults
+            .hit(FaultPoint::FullHash)
+            .map_err(StorageError::Io)?;
+        Ok(hash_reader(file)?)
     }
 
     /// Remove a run's files; errors removing absent files are ignored.
@@ -446,6 +466,20 @@ impl Storage {
     pub fn fault(&self, point: FaultPoint) -> Result<(), StorageError> {
         self.faults.hit(point).map_err(StorageError::Io)
     }
+}
+
+/// Run a synchronous storage operation on Tokio's blocking pool. Hashing,
+/// fsync, rename and unlink on the office mirror can take seconds to minutes;
+/// none of it may occupy an async worker that also serves monitoring.
+pub async fn run_blocking<T, F>(storage: &Storage, operation: F) -> Result<T, StorageError>
+where
+    T: Send + 'static,
+    F: FnOnce(&Storage) -> Result<T, StorageError> + Send + 'static,
+{
+    let storage = storage.clone();
+    tokio::task::spawn_blocking(move || operation(&storage))
+        .await
+        .map_err(|error| StorageError::Io(io::Error::other(format!("storage task failed: {error}"))))?
 }
 
 fn sync_directory(path: &Path) -> io::Result<()> {
@@ -536,7 +570,10 @@ fn remove_regular(path: &Path) -> io::Result<()> {
 /// Streaming SHA-256 and byte count for a file, used by finalization and
 /// recovery. Never loads the bundle into memory.
 pub fn hash_file(path: &Path) -> io::Result<(u64, String)> {
-    let mut file = File::open(path)?;
+    hash_reader(&File::open(path)?)
+}
+
+fn hash_reader(mut file: &File) -> io::Result<(u64, String)> {
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
     let mut total = 0u64;

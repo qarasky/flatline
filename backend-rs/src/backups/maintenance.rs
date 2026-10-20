@@ -8,6 +8,7 @@
 
 use chrono::{DateTime, SecondsFormat, Utc};
 
+use super::storage::run_blocking;
 use super::{Backups, Error};
 
 /// An upload with no accepted chunk/activity for 48 hours is abandoned.
@@ -60,7 +61,10 @@ impl Backups {
         .await?;
         if let Some(storage) = self.storage().ok() {
             for (id, agent_id) in &failed {
-                if let Err(error) = storage.delete_run(agent_id, id) {
+                let (agent, run) = (agent_id.clone(), id.clone());
+                if let Err(error) =
+                    run_blocking(&storage, move |storage| storage.delete_run(&agent, &run)).await
+                {
                     tracing::warn!("failed-run cleanup of {id} failed: {error}");
                     continue;
                 }
@@ -128,7 +132,10 @@ impl Backups {
 
         let mut changed = false;
         for (id, agent_id, reason) in rows {
-            if let Err(error) = storage.delete_run(&agent_id, &id) {
+            let (agent, run) = (agent_id.clone(), id.clone());
+            if let Err(error) =
+                run_blocking(&storage, move |storage| storage.delete_run(&agent, &run)).await
+            {
                 tracing::warn!("backup deletion of run {id} failed: {error}");
                 continue;
             }
