@@ -228,7 +228,7 @@ changes shape.
   },
   "updates": { "total": 41, "security": 6, "rebootRequired": true },
   "agent": {
-    "version": "1.7.0",
+    "version": "1.8.0",
     "uptime": 86400,
     "samplesDropped": 4,
     "failedPushes": 3,
@@ -417,7 +417,7 @@ by the fleet.
 
 | Command                                                                                        | Purpose                                                                                                                                                       |
 | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `superboard version`                                                                           | Print the version (e.g. `superboard 1.7.0`). Release builds stamp it via `-ldflags`.                                                                          |
+| `superboard version`                                                                           | Print the version (e.g. `superboard 1.8.0`). Release builds stamp it via `-ldflags`.                                                                          |
 | `superboard check [--verbose]`                                                                 | Collect and push **once**, print the outcome, exit 0 on accept. `--verbose` prints the full payload. A fast diagnostic (1s CPU window), never a load average. |
 | `superboard install --server URL --token TOKEN [--interval SECS] [--insecure] [--config PATH]` | Write config, install the service, and start it. Must run as root; refuses to double-install.                                                                 |
 | `superboard uninstall [--config PATH]`                                                         | Stop and remove everything install created: service (or cron entry), buffer directory, and config. Must run as root.                                          |

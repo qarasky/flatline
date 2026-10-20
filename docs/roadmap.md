@@ -32,7 +32,7 @@ per-container one-shot CPU/memory stats, SMART disk health, agent self-update
 | Item                                             | Rationale                                                                                                                                          |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Docker event subscriptions**                   | The agent polls the Docker API; it does not subscribe to daemon events, so container start/stop/die transitions are only observed on the next poll |
-| **Agent 1.7.0 rollout to the rest of the fleet** | The image ships 1.7.0; hosts on 1.6.1 need one manual `install.sh --update` hop before self-update can take over (operational, not a code gap)     |
+| **Agent 1.8.0 rollout to the rest of the fleet** | The image ships 1.8.0; hosts on 1.6.1 need one manual `install.sh --update` hop before self-update can take over (operational, not a code gap)     |
 
 ## Monitors, tags & API surface
 

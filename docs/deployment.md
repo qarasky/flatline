@@ -182,15 +182,22 @@ provisioning history for the client hosts is in the cabinet record, not here.
 
 ### Agent versions
 
-The fleet is being moved from **1.6.1** to **1.7.0**. Self-update exists only
-from 1.7.0, so the first hop is manual, per host:
+The current release is **1.8.0**. Self-update exists only from 1.7.0, so a host
+still on 1.6.1 needs one manual hop, per host:
 
 ```bash
 curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
 ```
 
-After that each host keeps itself current. `home-rpi` and `office-mac-server`
-report no agent version at all and need the same one-liner to join.
+Hosts already on 1.7.0 or newer pick up 1.8.0 themselves. `home-rpi` and
+`office-mac-server` report no agent version at all and need the same one-liner
+to join.
+
+1.8.0 carries the G1 fix (a restart during self-update could kill the helper
+before it replaced the binary) and the audit's resource-cap fixes. Hosts on
+1.7.0 take this one update with their old helper, which is still exposed to
+G1; from 1.8.0 on, the agent rewrites its unit on first start and later updates
+are safe.
 
 ### Host-down noise
 
@@ -207,6 +214,7 @@ minutes and only real outages page.
 | 2026-10-13 | Rust backend cutover (parity-verified against the Node backend, then the Node backend was retired).                                                                     |
 | 2026-10-14 | Performance/stability follow-up fixes; agent 1.6.0/1.6.1 rolled to the fleet.                                                                                           |
 | 2026-10-18 | Node backend removed from the repository; Superboard card redesign; hosted-website links; provider logos; agent-warning acknowledgements; agent 1.7.0 with self-update. |
+| 2026-10-21 | October performance and reliability audit (storage, engine, API, agent, dashboard findings) merged; backup agent integrated; agent 1.8.0.                               |
 
 Each release is also recorded in [history](history.md) with the defects it fixed.
 
