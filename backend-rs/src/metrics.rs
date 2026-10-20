@@ -32,6 +32,8 @@ pub const METRICS_MAX_BYTES: usize = 64 * 1024;
 pub const METRICS_RETENTION_DAYS: i64 = 30;
 /// Archive cadence for live telemetry, in milliseconds.
 pub const HISTORY_INTERVAL_MS: i64 = 30_000;
+/// Delay before the first heartbeat-retention pass after boot.
+const HEARTBEAT_PRUNE_BOOT_DELAY: Duration = Duration::from_secs(10 * 60);
 
 /// Process-local metrics state: the latest-sample cache (with the counters
 /// and rate windows it needs), the CPU peak tracker and the threshold-alert
@@ -137,8 +139,8 @@ impl Metrics {
 
     /// Background jobs: hourly rollups at :12 past the hour (which fold and
     /// then prune the raw rows that are proven folded — one maintenance run,
-    /// so a failed fold can never race a delete) and heartbeat retention once
-    /// at startup and daily at 04:32.
+    /// so a failed fold can never race a delete) and heartbeat retention ten
+    /// minutes after startup and daily at 04:32.
     ///
     /// `heartbeat_retention_days` comes from the configuration; 0 keeps
     /// heartbeats forever.
@@ -172,10 +174,13 @@ impl Metrics {
         });
 
         // Heartbeats grow with every check and had no retention at all. The
-        // first pass runs at startup (an imported database can carry years),
-        // then daily just after the raw metrics prune.
+        // first pass runs shortly after startup (an imported database can
+        // carry years) — delayed so it does not compete with every check
+        // loop's first beat for the write lock — then daily just after the
+        // raw metrics prune.
         let metrics = Arc::clone(self);
         tokio::spawn(async move {
+            tokio::time::sleep(HEARTBEAT_PRUNE_BOOT_DELAY).await;
             loop {
                 match crate::heartbeats::prune(&metrics.pool, heartbeat_retention_days).await {
                     Ok(deleted) if deleted > 0 => {

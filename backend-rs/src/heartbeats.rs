@@ -89,6 +89,12 @@ pub async fn latest(pool: &SqlitePool, monitor_id: i64) -> sqlx::Result<Option<B
 /// for operators who want more raw history.
 pub const DEFAULT_RETENTION_DAYS: i64 = 90;
 
+/// Rows deleted per heartbeat-retention statement.
+pub const PRUNE_BATCH: i64 = 1000;
+/// Pause between retention batches, so check loops and pushes waiting for
+/// the write lock get it between batches instead of after the whole prune.
+const PRUNE_BATCH_PAUSE: std::time::Duration = std::time::Duration::from_millis(10);
+
 /// Delete heartbeats older than the retention window, keeping one boundary
 /// sample per monitor.
 ///
@@ -98,33 +104,78 @@ pub const DEFAULT_RETENTION_DAYS: i64 = 90;
 /// than the cutoff goes; state transitions inside the window stay, so the
 /// incident history matches the retained period. `retention_days <= 0`
 /// disables pruning entirely.
+///
+/// Work is per monitor and in bounded batches ([`PRUNE_BATCH`] rows per
+/// statement, each its own short write transaction, with a pause between
+/// them): the old single `DELETE ... NOT IN (ROW_NUMBER() ...)` scanned and
+/// sorted the whole table inside one write transaction, holding SQLite's
+/// only write lock past the 5 s busy timeout on a large database.
 pub async fn prune(pool: &SqlitePool, retention_days: i64) -> sqlx::Result<u64> {
+    prune_batched(pool, retention_days, PRUNE_BATCH).await
+}
+
+/// [`prune`] with an explicit batch size (tests exercise the batching).
+pub async fn prune_batched(
+    pool: &SqlitePool,
+    retention_days: i64,
+    batch: i64,
+) -> sqlx::Result<u64> {
     if retention_days <= 0 {
         return Ok(0);
     }
+    let batch = batch.max(1);
 
     let cutoff = (Utc::now() - ChronoDuration::days(retention_days))
         .format("%Y-%m-%d %H:%M:%S%.3f")
         .to_string();
 
-    let result = sqlx::query(
-        "DELETE FROM heartbeats
-         WHERE time < ?
-           AND id NOT IN (
-               SELECT id FROM (
-                   SELECT id, ROW_NUMBER() OVER (
-                       PARTITION BY monitor_id ORDER BY time DESC, id DESC
-                   ) AS rn
-                   FROM heartbeats WHERE time < ?
-               ) WHERE rn = 1
-           )",
-    )
-    .bind(&cutoff)
-    .bind(&cutoff)
-    .execute(pool)
-    .await?;
+    // Monitors with anything older than the cutoff (`heartbeats_time_idx`).
+    let monitor_ids: Vec<i64> =
+        sqlx::query_scalar("SELECT DISTINCT monitor_id FROM heartbeats WHERE time < ?")
+            .bind(&cutoff)
+            .fetch_all(pool)
+            .await?;
 
-    Ok(result.rows_affected())
+    let mut deleted = 0;
+    for monitor_id in monitor_ids {
+        // The boundary sample, re-read per monitor: same order as before
+        // (newest time, then highest id).
+        let Some(boundary): Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM heartbeats WHERE monitor_id = ? AND time < ?
+             ORDER BY time DESC, id DESC LIMIT 1",
+        )
+        .bind(monitor_id)
+        .bind(&cutoff)
+        .fetch_optional(pool)
+        .await?
+        else {
+            continue;
+        };
+
+        loop {
+            let result = sqlx::query(
+                "DELETE FROM heartbeats WHERE id IN (
+                     SELECT id FROM heartbeats
+                     WHERE monitor_id = ? AND time < ? AND id <> ?
+                     LIMIT ?
+                 )",
+            )
+            .bind(monitor_id)
+            .bind(&cutoff)
+            .bind(boundary)
+            .bind(batch)
+            .execute(pool)
+            .await?;
+            let affected = result.rows_affected();
+            deleted += affected;
+            if (affected as i64) < batch {
+                break;
+            }
+            tokio::time::sleep(PRUNE_BATCH_PAUSE).await;
+        }
+    }
+
+    Ok(deleted)
 }
 
 /// The status walk of the Node push route (`determineStatus`): requested is
