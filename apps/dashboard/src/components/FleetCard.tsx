@@ -1,4 +1,4 @@
-import { memo, type MouseEvent } from "react";
+import { memo, useEffect, useState, type MouseEvent } from "react";
 import type { MonitorSummary, MetricsPayload, CPUPeak, ResolvedMonitorLink } from "@/lib/api";
 import {
     agentWarnings,
@@ -29,12 +29,31 @@ export interface FleetServer {
     links?: ResolvedMonitorLink[];
 }
 
-export function ageOf(value: string | null | undefined): string {
+export function ageOf(value: string | null | undefined, now = Date.now()): string {
     if (!value) {
         return "—";
     }
-    const age = sampleAgeMs(value);
+    const age = sampleAgeMs(value, now);
     return Number.isFinite(age) ? (formatDuration(age / 1000) ?? "0s") : "—";
+}
+
+/**
+ * "12s ago", ticking on its own once a second.
+ *
+ * Isolated so the per-second tick re-renders one text node per card instead
+ * of the whole card (which would defeat FleetCard's memo).
+ */
+function SampleAge({ time }: { time: string }) {
+    const [now, setNow] = useState(Date.now);
+    useEffect(() => {
+        const timer = window.setInterval(() => {
+            if (!document.hidden) {
+                setNow(Date.now());
+            }
+        }, 1000);
+        return () => window.clearInterval(timer);
+    }, []);
+    return <>{ageOf(time, now)} ago</>;
 }
 
 function temperature(value: number | undefined): string | null {
@@ -53,17 +72,21 @@ const SHOW_GPU = false;
 /** Host reachability stays distinct from workload health and data freshness. */
 export const FleetCard = memo(function FleetCard({
     server,
-    now,
+    stale,
+    peakFresh,
     onOpenHistory,
     onMenu,
 }: {
     server: FleetServer;
-    now: number;
+    /** Computed by the board on its freshness tick, so the memo holds between flips. */
+    stale: boolean;
+    /** Whether `server.cpuPeak10m` is still inside its 10-minute window. */
+    peakFresh: boolean;
     onOpenHistory: (id: number) => void;
     onMenu: (e: MouseEvent, monitor: MonitorSummary) => void;
 }) {
     const { monitor, metrics, time } = server;
-    const { stale, containers, issues, hot } = fleetAttention(metrics, time, monitor.interval || 60, now);
+    const { containers, issues, hot } = fleetAttention(metrics, time, monitor.interval || 60);
     const down = monitor.status === 0;
     const hostLabel =
         ({ 0: "Host down", 1: "Host up", 2: "Pending", 3: "Maintenance" } as Record<number, string>)[monitor.status] ??
@@ -95,10 +118,7 @@ export const FleetCard = memo(function FleetCard({
                   : hostLabel;
     const cpu = metrics.cpu;
     const mem = metrics.mem;
-    const peak =
-        server.cpuPeak10m && sampleAgeMs(server.cpuPeak10m.at, now) <= 10 * 60_000
-            ? server.cpuPeak10m.percent
-            : undefined;
+    const peak = server.cpuPeak10m && peakFresh ? server.cpuPeak10m.percent : undefined;
     const disk = metrics.disk?.reduce((worst, next) => ((next.percent ?? -1) > (worst.percent ?? -1) ? next : worst));
     const gpu = metrics.gpu;
     const gpus = gpu?.gpus?.length ? gpu.gpus : gpu?.available ? [gpu] : [];
@@ -190,7 +210,7 @@ export const FleetCard = memo(function FleetCard({
                     </span>
                     <span className={`fleet-freshness tnum ${stale ? "text-warn" : "text-quiet"}`}>
                         {stale ? "Stale · " : "Updated "}
-                        {ageOf(time)} ago
+                        <SampleAge time={time} />
                     </span>
                 </div>
             </header>

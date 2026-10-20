@@ -539,6 +539,24 @@ export function groupSlug(name: string): string {
 }
 
 /**
+ * Whether a server's latest sample is older than its freshness window:
+ * three agent sample intervals (at least 5 s) when the agent reports one,
+ * otherwise the monitor interval (at least 60 s).
+ */
+export function isSampleStale(metrics: MetricsPayload, time: string, interval: number, now = Date.now()): boolean {
+    const freshnessWindow =
+        metrics.sampleInterval && Number.isFinite(metrics.sampleInterval) && metrics.sampleInterval > 0
+            ? Math.max(5, metrics.sampleInterval * 3)
+            : Math.max(60, interval);
+    return sampleAgeMs(time, now) > freshnessWindow * 1000;
+}
+
+/** Whether a 10-minute CPU peak is still inside its window. */
+export function isPeakFresh(at: string | null | undefined, now = Date.now()): boolean {
+    return Boolean(at) && sampleAgeMs(at as string, now) <= 10 * 60_000;
+}
+
+/**
  * Match a comma-separated group filter against the roster's groups.
  *
  * Each entry matches a group by slug or case-insensitive exact name; only
@@ -570,11 +588,7 @@ export function matchGroups(monitors: MonitorSummary[], filter: string): Monitor
 }
 
 export function fleetAttention(metrics: MetricsPayload, time: string, interval: number, now = Date.now()) {
-    const freshnessWindow =
-        metrics.sampleInterval && Number.isFinite(metrics.sampleInterval) && metrics.sampleInterval > 0
-            ? Math.max(5, metrics.sampleInterval * 3)
-            : Math.max(60, interval);
-    const stale = sampleAgeMs(time, now) > freshnessWindow * 1000;
+    const stale = isSampleStale(metrics, time, interval, now);
     const containers = [...(metrics.docker ?? [])].sort(
         (a, b) => Number(containerIssue(b)) - Number(containerIssue(a)) || (a.name ?? "").localeCompare(b.name ?? "")
     );
