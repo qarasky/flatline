@@ -34,25 +34,28 @@ pub async fn bulk(
 
     let mut ids = Vec::with_capacity(parts.len());
     for part in parts {
-        let id: i64 = part
-            .parse()
-            .ok()
-            .filter(|n| *n > 0)
-            .ok_or_else(|| {
-                ApiError::bad("`ids` must be a comma-separated list of positive integers.")
-            })?;
+        let id: i64 = part.parse().ok().filter(|n| *n > 0).ok_or_else(|| {
+            ApiError::bad("`ids` must be a comma-separated list of positive integers.")
+        })?;
         ids.push(id);
     }
 
     let (count, servers) = links::for_many(&state.pool, &ids).await?;
-    Ok(Json(json!({ "ok": true, "count": count, "servers": servers })))
+    Ok(Json(
+        json!({ "ok": true, "count": count, "servers": servers }),
+    ))
 }
 
 /// GET /api/v1/monitors/{id}/links
-pub async fn single(State(state): State<AppState>, Path(id): Path<i64>) -> Result<Json<Value>, ApiError> {
+pub async fn single(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, ApiError> {
     let _monitor = load(&state.pool, id).await?;
     let (raw, resolved) = links::resolve(&state.pool, id).await?;
-    Ok(Json(json!({ "ok": true, "monitorId": id, "raw": raw, "resolved": resolved })))
+    Ok(Json(
+        json!({ "ok": true, "monitorId": id, "raw": raw, "resolved": resolved }),
+    ))
 }
 
 /// PUT /api/v1/monitors/{id}/links
@@ -92,13 +95,20 @@ pub async fn replace(
     state.events.invalidate();
 
     let (raw, resolved) = links::resolve(&state.pool, id).await?;
-    Ok(Json(json!({ "ok": true, "monitorId": id, "raw": raw, "resolved": resolved })))
+    Ok(Json(
+        json!({ "ok": true, "monitorId": id, "raw": raw, "resolved": resolved }),
+    ))
 }
 
 /// DELETE /api/v1/monitors/{id}/links
-pub async fn clear(State(state): State<AppState>, Path(id): Path<i64>) -> Result<Json<Value>, ApiError> {
+pub async fn clear(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, ApiError> {
     let _monitor = load(&state.pool, id).await?;
     links::clear(&state.pool, id).await?;
     state.events.invalidate();
-    Ok(Json(json!({ "ok": true, "monitorId": id, "raw": [], "resolved": [] })))
+    Ok(Json(
+        json!({ "ok": true, "monitorId": id, "raw": [], "resolved": [] }),
+    ))
 }

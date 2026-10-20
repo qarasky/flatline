@@ -205,6 +205,63 @@ pub async fn page_data(pool: &SqlitePool, page: &Page) -> sqlx::Result<Value> {
     }))
 }
 
+/// One heartbeat as the public surfaces show it.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct RecentBeat {
+    pub id: i64,
+    pub monitor_id: i64,
+    pub time: String,
+    pub status: i64,
+    pub ping: Option<f64>,
+}
+
+/// Compound-select terms per statement; SQLite caps a compound SELECT at
+/// 500 terms by default.
+const BEAT_TERMS_PER_STATEMENT: usize = 200;
+
+/// The newest `per_monitor` heartbeats of each monitor, newest first, in one
+/// statement per 200 monitors.
+///
+/// Each monitor is its own `UNION ALL` term so every term walks the
+/// `(monitor_id, time DESC)` index and stops after `per_monitor` rows; a
+/// window-function ranking would read each monitor's whole history.
+pub async fn recent_beats(
+    pool: &SqlitePool,
+    ids: &[i64],
+    per_monitor: i64,
+) -> sqlx::Result<HashMap<i64, Vec<RecentBeat>>> {
+    let mut out: HashMap<i64, Vec<RecentBeat>> = HashMap::new();
+    let mut unique: Vec<i64> = Vec::with_capacity(ids.len());
+    for id in ids {
+        if !unique.contains(id) {
+            unique.push(*id);
+        }
+    }
+
+    for chunk in unique.chunks(BEAT_TERMS_PER_STATEMENT) {
+        // Dynamic only in statement count; values are bound.
+        let sql = vec![
+            "SELECT * FROM (SELECT id, monitor_id, time, status, ping FROM heartbeats \
+             WHERE monitor_id = ? ORDER BY time DESC, id DESC LIMIT ?)";
+            chunk.len()
+        ]
+        .join(" UNION ALL ");
+        let mut query = sqlx::query_as::<_, RecentBeat>(sqlx::AssertSqlSafe(sql));
+        for id in chunk {
+            query = query.bind(id).bind(per_monitor);
+        }
+        for beat in query.fetch_all(pool).await? {
+            out.entry(beat.monitor_id).or_default().push(beat);
+        }
+    }
+
+    // A compound select does not promise term order; restore it.
+    for beats in out.values_mut() {
+        beats.sort_by(|a, b| b.time.cmp(&a.time).then(b.id.cmp(&a.id)));
+    }
+    Ok(out)
+}
+
 /// Monitor ids on the page's public groups.
 async fn public_monitor_ids(pool: &SqlitePool, page_id: i64) -> sqlx::Result<Vec<i64>> {
     sqlx::query_scalar(
