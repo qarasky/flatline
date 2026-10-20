@@ -852,8 +852,8 @@ async fn unlinked_agents_and_upload_failures_still_alert() {
 
     // The agent reports a 507 during upload under a derived clientRunId.
     // Canonical storage form, as the receiver writes it.
-    let exported = (t0 - chrono::Duration::minutes(30))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let exported =
+        (t0 - chrono::Duration::minutes(30)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     for (token, code) in [
         (&linked_token, "office_storage_full"),
         (&unlinked_token, "upload_failed"),
@@ -886,7 +886,11 @@ async fn unlinked_agents_and_upload_failures_still_alert() {
         .iter()
         .map(|record| record["text"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(texts.len(), 2, "both agents alert via the default: {texts:?}");
+    assert_eq!(
+        texts.len(),
+        2,
+        "both agents alert via the default: {texts:?}"
+    );
     assert!(
         texts
             .iter()
@@ -1034,7 +1038,12 @@ async fn retention_keeps_latest_verified_recovery_points() {
         "completed",
         "the latest archive-verified run survives retention"
     );
-    for id in [&untested[0], &untested[1], &failed_restore, &older_restore_tested] {
+    for id in [
+        &untested[0],
+        &untested[1],
+        &failed_restore,
+        &older_restore_tested,
+    ] {
         assert_eq!(status_of(&h.pool, id).await, "pruned", "{id}");
     }
 }

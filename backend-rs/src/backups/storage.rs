@@ -479,7 +479,9 @@ where
     let storage = storage.clone();
     tokio::task::spawn_blocking(move || operation(&storage))
         .await
-        .map_err(|error| StorageError::Io(io::Error::other(format!("storage task failed: {error}"))))?
+        .map_err(|error| {
+            StorageError::Io(io::Error::other(format!("storage task failed: {error}")))
+        })?
 }
 
 fn sync_directory(path: &Path) -> io::Result<()> {

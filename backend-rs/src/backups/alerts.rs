@@ -109,7 +109,9 @@ impl Backups {
             };
         }
         if recipients.is_empty() {
-            tracing::error!("backup alert has no recipient (link a monitor or mark a default notification): {message}");
+            tracing::error!(
+                "backup alert has no recipient (link a monitor or mark a default notification): {message}"
+            );
             return;
         }
         for (name, _, config) in recipients {

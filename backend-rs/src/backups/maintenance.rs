@@ -61,7 +61,7 @@ impl Backups {
         )
         .fetch_all(&self.pool)
         .await?;
-        if let Some(storage) = self.storage().ok() {
+        if let Ok(storage) = self.storage() {
             for (id, agent_id) in &failed {
                 let (agent, run) = (agent_id.clone(), id.clone());
                 if let Err(error) =

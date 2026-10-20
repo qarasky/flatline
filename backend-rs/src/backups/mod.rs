@@ -402,7 +402,10 @@ impl Backups {
 
     /// Replace the ticket lifetime (tests use a short one).
     pub fn set_download_ticket_ttl(&self, ttl: Duration) {
-        *self.ticket_ttl.lock().unwrap_or_else(PoisonError::into_inner) = ttl;
+        *self
+            .ticket_ttl
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = ttl;
     }
 
     /// Issue a single-use ticket for one completed run. The browser can then
@@ -417,7 +420,10 @@ impl Backups {
                 "bundle is not a retained completed run".to_string(),
             ));
         }
-        let ttl = *self.ticket_ttl.lock().unwrap_or_else(PoisonError::into_inner);
+        let ttl = *self
+            .ticket_ttl
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let mut bytes = [0u8; 32];
         rand::Rng::fill_bytes(&mut rand::rng(), &mut bytes);
         let ticket = format!("fbd_{}", hex::encode(bytes));
@@ -1259,8 +1265,11 @@ impl Backups {
         for row in rows {
             match row.status.as_str() {
                 runs::STATUS_UPLOADING => {
-                    let (agent, run, committed) =
-                        (row.agent_id.clone(), row.id.clone(), row.received_bytes as u64);
+                    let (agent, run, committed) = (
+                        row.agent_id.clone(),
+                        row.id.clone(),
+                        row.received_bytes as u64,
+                    );
                     let truncated = run_blocking(&storage, move |storage| {
                         storage.truncate_to_committed(&agent, &run, committed)
                     })
@@ -1439,7 +1448,8 @@ impl Backups {
     /// not the generic `invalidate`: only views that show backups reload,
     /// and backup progress never re-snapshots the monitor roster.
     fn publish_change(&self) {
-        self.events.publish(serde_json::json!({ "type": "backups" }));
+        self.events
+            .publish(serde_json::json!({ "type": "backups" }));
     }
 
     fn invalidate_progress(&self) {

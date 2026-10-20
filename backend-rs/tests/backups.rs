@@ -340,7 +340,7 @@ async fn run_metadata_validates_time_and_limits() {
 
 #[tokio::test]
 async fn backup_mutations_publish_backup_events() {
-    use flatline_backend::backups::{storage::NoFaults, NewAgent};
+    use flatline_backend::backups::{NewAgent, storage::NoFaults};
     use sha2::{Digest, Sha256};
     use std::sync::Arc;
     use std::time::Duration;
@@ -352,16 +352,10 @@ async fn backup_mutations_publish_backup_events() {
         }
     }
 
-    let h = common::harness_with_backups(
-        Arc::new(FakeFreeSpace),
-        Arc::new(NoFaults),
-    )
-    .await;
+    let h = common::harness_with_backups(Arc::new(FakeFreeSpace), Arc::new(NoFaults)).await;
     let mut events = h.state.events.subscribe();
 
-    async fn expect_invalidate(
-        events: &mut tokio::sync::broadcast::Receiver<serde_json::Value>,
-    ) {
+    async fn expect_invalidate(events: &mut tokio::sync::broadcast::Receiver<serde_json::Value>) {
         let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
             .await
             .expect("a backup mutation must publish an event")
