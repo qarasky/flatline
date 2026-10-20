@@ -14,7 +14,8 @@ pub mod storage;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
+use std::time::Duration;
 
 use axum::body::Body;
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -23,7 +24,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{Mutex, OwnedMutexGuard, Semaphore};
+use tokio_util::sync::CancellationToken;
 
 use crate::auth::hash_token;
 use crate::config::Config;
@@ -47,6 +49,10 @@ pub enum Error {
     Insufficient(String),
     TooLarge(String),
     HashMismatch(String),
+    /// Transient contention (upload slots, per-run lock): retry later.
+    Busy(String),
+    /// The client stopped sending a request body in time.
+    Timeout(String),
     Internal(String),
 }
 
@@ -60,6 +66,8 @@ impl std::fmt::Display for Error {
             | Error::Insufficient(message)
             | Error::TooLarge(message)
             | Error::HashMismatch(message)
+            | Error::Busy(message)
+            | Error::Timeout(message)
             | Error::Internal(message) => formatter.write_str(message),
             Error::Unauthorized => formatter.write_str("Missing or invalid token."),
         }
@@ -227,6 +235,64 @@ impl From<RunRow> for RunSummary {
     }
 }
 
+/// Bounds on one chunk upload. A half-open connection must release its
+/// upload slot and the run lock instead of holding them forever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UploadLimits {
+    /// Longest wait for one of the four body-reader slots.
+    pub slot_wait: Duration,
+    /// Longest wait for the per-run append/finalize lock.
+    pub lock_wait: Duration,
+    /// Longest silence between two body frames.
+    pub body_idle: Duration,
+    /// Longest time to receive one whole chunk body.
+    pub body_total: Duration,
+}
+
+impl Default for UploadLimits {
+    fn default() -> Self {
+        Self {
+            slot_wait: Duration::from_secs(30),
+            lock_wait: Duration::from_secs(30),
+            body_idle: Duration::from_secs(30),
+            // The Go agent's own request deadline is two minutes.
+            body_total: Duration::from_secs(5 * 60),
+        }
+    }
+}
+
+type RunLockMap = Arc<std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>>;
+
+/// One reference to a per-run lock entry. Dropping the last reference
+/// removes the entry, so the map holds only runs with work in flight.
+struct RunLockEntry {
+    key: String,
+    map: RunLockMap,
+    entry: Option<Arc<Mutex<()>>>,
+}
+
+impl Drop for RunLockEntry {
+    fn drop(&mut self) {
+        // Clones are only made under the map lock, so the count is stable
+        // while it is held.
+        let mut map = self.map.lock().unwrap_or_else(PoisonError::into_inner);
+        drop(self.entry.take());
+        if map
+            .get(&self.key)
+            .is_some_and(|entry| Arc::strong_count(entry) == 1)
+        {
+            map.remove(&self.key);
+        }
+    }
+}
+
+/// Held per-run lock. Field order matters: the mutex guard is released
+/// before the entry reference is pruned.
+struct RunLockGuard {
+    _guard: OwnedMutexGuard<()>,
+    _entry: RunLockEntry,
+}
+
 /// Shared service, stored in `AppState`.
 pub struct Backups {
     pool: SqlitePool,
@@ -244,8 +310,14 @@ pub struct Backups {
     upload_slots: Semaphore,
     /// Last chunk-progress invalidation, coalesced to one per second.
     progress_event: std::sync::Mutex<Option<std::time::Instant>>,
-    /// Serializes appends and finalization per run.
-    run_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Serializes appends and finalization per run. Entries exist only
+    /// while a request holds or awaits them.
+    run_locks: RunLockMap,
+    /// Upload timeouts; adjustable for tests.
+    limits: std::sync::Mutex<UploadLimits>,
+    /// Cancelled at shutdown: stops the maintenance loop and aborts body
+    /// reads that are still waiting on the network.
+    shutdown: CancellationToken,
 }
 
 impl Backups {
@@ -280,8 +352,35 @@ impl Backups {
             reservation: Mutex::new(()),
             upload_slots: Semaphore::new(4),
             progress_event: std::sync::Mutex::new(None),
-            run_locks: Mutex::new(HashMap::new()),
+            run_locks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            limits: std::sync::Mutex::new(UploadLimits::default()),
+            shutdown: CancellationToken::new(),
         })
+    }
+
+    /// Replace the upload timeouts (tests use short ones).
+    pub fn set_upload_limits(&self, limits: UploadLimits) {
+        *self.limits.lock().unwrap_or_else(PoisonError::into_inner) = limits;
+    }
+
+    fn upload_limits(&self) -> UploadLimits {
+        *self.limits.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Number of per-run lock entries currently allocated. Exposed so tests
+    /// can prove the map does not grow with unknown or finished runs.
+    #[doc(hidden)]
+    pub fn run_lock_entries(&self) -> usize {
+        self.run_locks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    /// Stop background jobs and abort pending upload body reads. Safe to
+    /// call more than once.
+    pub fn shutdown(&self) {
+        self.shutdown.cancel();
     }
 
     /// Configured storage root, when the operator enabled backups.
@@ -291,12 +390,23 @@ impl Backups {
 
     /// Start the production maintenance/health loop. Tests construct the
     /// service directly and never call this.
-    pub fn start_jobs(self: &Arc<Self>) {
+    ///
+    /// `shutdown` is the process-wide stop signal: when it is cancelled the
+    /// loop exits after the current tick and in-flight chunk body reads are
+    /// aborted with 503 (see [`Self::shutdown`]).
+    pub fn start_jobs(self: &Arc<Self>, shutdown: CancellationToken) {
         let backups = Arc::clone(self);
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
-                ticker.tick().await;
+                tokio::select! {
+                    _ = shutdown.cancelled() => {
+                        backups.shutdown();
+                        break;
+                    }
+                    _ = backups.shutdown.cancelled() => break,
+                    _ = ticker.tick() => {}
+                }
                 let now = Utc::now().timestamp_millis();
                 if let Err(error) = backups.maintain(now).await {
                     tracing::error!("backup maintenance failed: {error}");
@@ -786,18 +896,20 @@ impl Backups {
             ));
         }
 
-        // Verify ownership before creating a per-run lock, so unknown ids
-        // cannot grow the lock map. Then serialize the whole body read for
-        // this run; at most four run bodies are in memory at once.
+        // Verify ownership before touching any shared limiter, so unknown
+        // ids cannot occupy a slot or grow the lock map.
         let owned = self.run_for_agent(agent_id, run_id).await?;
-        let run_lock = self.run_lock(&owned.id).await;
-        let _run = run_lock.lock().await;
-        let _slot = self
-            .upload_slots
-            .acquire()
+        let limits = self.upload_limits();
+
+        // At most four bodies are in memory at once. The slot is taken
+        // before the run lock and the body is read without the run lock, so
+        // a stalled sender holds only its own slot, and only until the
+        // idle/total read deadline.
+        let _slot = tokio::time::timeout(limits.slot_wait, self.upload_slots.acquire())
             .await
+            .map_err(|_| Error::Busy("all upload slots are busy".to_string()))?
             .map_err(|_| Error::Internal("upload limiter closed".to_string()))?;
-        let bytes = read_bounded(body, CHUNK_BYTES as usize).await?;
+        let bytes = read_bounded(body, CHUNK_BYTES as usize, &limits, &self.shutdown).await?;
         let digest = hex::encode(Sha256::digest(&bytes));
 
         if digest != sha256 {
@@ -806,6 +918,7 @@ impl Backups {
             ));
         }
 
+        let _run = self.lock_run(&owned.id, limits.lock_wait).await?;
         let run = self.run_for_agent(agent_id, run_id).await?;
 
         let total = run
@@ -909,8 +1022,11 @@ impl Backups {
     /// Finalize idempotently: check the full digest, publish atomically and
     /// only then mark the run completed.
     pub async fn complete_run(&self, agent_id: &str, run_id: &str) -> Result<RunSummary, Error> {
-        let run_lock = self.run_lock(run_id).await;
-        let _run = run_lock.lock().await;
+        // Ownership first: an unknown or foreign id never allocates a lock.
+        let owned = self.run_for_agent(agent_id, run_id).await?;
+        let _run = self
+            .lock_run(&owned.id, self.upload_limits().lock_wait)
+            .await?;
         let run = self.run_for_agent(agent_id, run_id).await?;
 
         if run.status == runs::STATUS_COMPLETED {
@@ -1166,13 +1282,32 @@ impl Backups {
         }
     }
 
-    async fn run_lock(&self, run_id: &str) -> Arc<Mutex<()>> {
-        let mut locks = self.run_locks.lock().await;
-        Arc::clone(
-            locks
-                .entry(run_id.to_string())
-                .or_insert_with(|| Arc::new(Mutex::new(()))),
-        )
+    /// Acquire the per-run lock within `wait`. The entry is removed from
+    /// the map again once no request holds or awaits it.
+    async fn lock_run(&self, run_id: &str, wait: Duration) -> Result<RunLockGuard, Error> {
+        let entry = {
+            let mut locks = self
+                .run_locks
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            RunLockEntry {
+                key: run_id.to_string(),
+                map: Arc::clone(&self.run_locks),
+                entry: Some(Arc::clone(
+                    locks
+                        .entry(run_id.to_string())
+                        .or_insert_with(|| Arc::new(Mutex::new(()))),
+                )),
+            }
+        };
+        let mutex = Arc::clone(entry.entry.as_ref().expect("entry is set until drop"));
+        let guard = tokio::time::timeout(wait, mutex.lock_owned())
+            .await
+            .map_err(|_| Error::Busy("another request is working on this run".to_string()))?;
+        Ok(RunLockGuard {
+            _guard: guard,
+            _entry: entry,
+        })
     }
 
     async fn chunk_row(
@@ -1396,9 +1531,34 @@ impl Backups {
     }
 }
 
-async fn read_bounded(mut body: Body, max: usize) -> Result<Vec<u8>, Error> {
+/// Read at most `max` bytes, giving up when the sender goes quiet for
+/// `body_idle`, exceeds `body_total`, or the server shuts down.
+async fn read_bounded(
+    mut body: Body,
+    max: usize,
+    limits: &UploadLimits,
+    shutdown: &CancellationToken,
+) -> Result<Vec<u8>, Error> {
+    let deadline = tokio::time::Instant::now() + limits.body_total;
     let mut data = Vec::new();
-    while let Some(frame) = body.frame().await {
+    loop {
+        let frame = tokio::select! {
+            _ = shutdown.cancelled() => {
+                return Err(Error::Unavailable("server is shutting down".to_string()));
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                return Err(Error::Timeout(
+                    "chunk body was not received within the read budget".to_string(),
+                ));
+            }
+            next = tokio::time::timeout(limits.body_idle, body.frame()) => match next {
+                Err(_) => {
+                    return Err(Error::Timeout("chunk body stalled".to_string()));
+                }
+                Ok(None) => break,
+                Ok(Some(frame)) => frame,
+            },
+        };
         let frame = frame.map_err(|_| Error::BadRequest("invalid request body".to_string()))?;
         if let Ok(chunk) = frame.into_data() {
             if data.len() + chunk.len() > max {

@@ -24,43 +24,85 @@ use crate::backups::{
 #[derive(Debug, Clone)]
 pub struct AgentId(pub String);
 
-fn api_error(error: BackupError) -> ApiError {
+/// The shared `{ok:false,error,message}` envelope plus what backup clients
+/// need to act on an error without parsing prose: an optional
+/// `Retry-After` and extra machine-readable fields.
+#[derive(Debug)]
+pub struct BackupApiError {
+    api: ApiError,
+    retry_after: Option<u64>,
+    details: serde_json::Map<String, serde_json::Value>,
+}
+
+impl From<ApiError> for BackupApiError {
+    fn from(api: ApiError) -> Self {
+        Self {
+            api,
+            retry_after: None,
+            details: serde_json::Map::new(),
+        }
+    }
+}
+
+impl IntoResponse for BackupApiError {
+    fn into_response(self) -> Response {
+        let mut body = serde_json::Map::new();
+        body.insert("ok".to_string(), false.into());
+        body.insert("error".to_string(), self.api.error.into());
+        body.insert("message".to_string(), self.api.message.into());
+        body.extend(self.details);
+        let mut response = (self.api.status, Json(serde_json::Value::Object(body))).into_response();
+        if let Some(seconds) = self.retry_after
+            && let Ok(value) = header::HeaderValue::from_str(&seconds.to_string())
+        {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
+        response
+    }
+}
+
+fn coded(status: StatusCode, error: &'static str, message: String) -> BackupApiError {
+    ApiError {
+        status,
+        error,
+        message,
+    }
+    .into()
+}
+
+fn api_error(error: BackupError) -> BackupApiError {
     match error {
-        BackupError::BadRequest(message) => ApiError::bad(message),
-        BackupError::NotFound(message) => ApiError::not_found(message),
-        BackupError::Conflict(message) => ApiError {
-            status: StatusCode::CONFLICT,
-            error: "conflict",
+        BackupError::BadRequest(message) => ApiError::bad(message).into(),
+        BackupError::NotFound(message) => ApiError::not_found(message).into(),
+        BackupError::Conflict(message) => coded(StatusCode::CONFLICT, "conflict", message),
+        BackupError::Unauthorized => coded(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "Missing or invalid token.".to_string(),
+        ),
+        BackupError::Unavailable(message) => BackupApiError {
+            retry_after: Some(60),
+            ..coded(StatusCode::SERVICE_UNAVAILABLE, "unavailable", message)
+        },
+        BackupError::Insufficient(message) => coded(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "insufficient_storage",
             message,
+        ),
+        BackupError::TooLarge(message) => {
+            coded(StatusCode::PAYLOAD_TOO_LARGE, "too_large", message)
+        }
+        BackupError::HashMismatch(message) => {
+            coded(StatusCode::UNPROCESSABLE_ENTITY, "hash_mismatch", message)
+        }
+        BackupError::Busy(message) => BackupApiError {
+            retry_after: Some(5),
+            ..coded(StatusCode::SERVICE_UNAVAILABLE, "busy", message)
         },
-        BackupError::Unauthorized => ApiError {
-            status: StatusCode::UNAUTHORIZED,
-            error: "unauthorized",
-            message: "Missing or invalid token.".to_string(),
-        },
-        BackupError::Unavailable(message) => ApiError {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            error: "unavailable",
-            message,
-        },
-        BackupError::Insufficient(message) => ApiError {
-            status: StatusCode::INSUFFICIENT_STORAGE,
-            error: "insufficient_storage",
-            message,
-        },
-        BackupError::TooLarge(message) => ApiError {
-            status: StatusCode::PAYLOAD_TOO_LARGE,
-            error: "too_large",
-            message,
-        },
-        BackupError::HashMismatch(message) => ApiError {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            error: "hash_mismatch",
-            message,
-        },
+        BackupError::Timeout(message) => coded(StatusCode::REQUEST_TIMEOUT, "timeout", message),
         BackupError::Internal(message) => {
             tracing::error!("backup service error: {message}");
-            ApiError::server()
+            ApiError::server().into()
         }
     }
 }
@@ -114,7 +156,7 @@ pub struct RunListQuery {
 pub async fn list_agents(
     State(state): State<AppState>,
     Query(query): Query<AgentListQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, BackupApiError> {
     let (agents, next) = state
         .backups
         .list_agents(
@@ -134,7 +176,7 @@ pub async fn list_agents(
 pub async fn create_agent(
     State(state): State<AppState>,
     Json(input): Json<NewAgent>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, BackupApiError> {
     let (agent, token) = state
         .backups
         .register_agent(input)
@@ -153,7 +195,7 @@ pub async fn patch_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(patch): Json<AgentPatch>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, BackupApiError> {
     let agent = state
         .backups
         .patch_agent(&id, patch)
@@ -166,7 +208,7 @@ pub async fn patch_agent(
 pub async fn rotate_token(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, BackupApiError> {
     let (agent, token) = state.backups.rotate_token(&id).await.map_err(api_error)?;
     Ok(Json(
         serde_json::json!({ "ok": true, "agent": agent, "token": token }),
@@ -177,7 +219,7 @@ pub async fn rotate_token(
 pub async fn revoke_token(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, BackupApiError> {
     let agent = state.backups.revoke_token(&id).await.map_err(api_error)?;
     Ok(Json(serde_json::json!({ "ok": true, "agent": agent })))
 }
@@ -187,7 +229,7 @@ pub async fn list_runs(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(query): Query<RunListQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, BackupApiError> {
     let (runs, next) = state
         .backups
         .list_runs(&id, query.limit.unwrap_or(20), query.cursor.as_deref())
@@ -212,7 +254,7 @@ pub async fn verify_run(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(input): Json<VerificationInput>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, BackupApiError> {
     let run = state
         .backups
         .verify_run(
@@ -232,7 +274,7 @@ pub async fn agent_run(
     State(state): State<AppState>,
     axum::Extension(AgentId(agent_id)): axum::Extension<AgentId>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, BackupApiError> {
     let run: RunSummary = state
         .backups
         .run_for_agent(&agent_id, &id)
@@ -246,7 +288,7 @@ pub async fn agent_start_run(
     State(state): State<AppState>,
     axum::Extension(AgentId(agent_id)): axum::Extension<AgentId>,
     Json(input): Json<StartRun>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, BackupApiError> {
     let run = state
         .backups
         .start_run(&agent_id, input)
@@ -274,7 +316,7 @@ pub async fn agent_put_chunk(
     Path((run_id, index)): Path<(String, u64)>,
     headers: HeaderMap,
     body: Body,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, BackupApiError> {
     let offset: u64 = required_header(&headers, "x-backup-offset")?
         .parse()
         .map_err(|_| ApiError::bad("X-Backup-Offset must be an unsigned integer"))?;
@@ -296,7 +338,7 @@ pub async fn agent_complete(
     State(state): State<AppState>,
     axum::Extension(AgentId(agent_id)): axum::Extension<AgentId>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, BackupApiError> {
     let run = state
         .backups
         .complete_run(&agent_id, &id)
@@ -312,7 +354,7 @@ pub async fn agent_complete(
 pub async fn download_run(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, BackupApiError> {
     let bundle = state.backups.open_bundle(&id).await.map_err(api_error)?;
 
     let stream = ReaderStream::new(bundle.file);
@@ -326,7 +368,7 @@ pub async fn download_run(
         )
         .header(CACHE_CONTROL, "no-store")
         .body(Body::from_stream(stream))
-        .map_err(|_| ApiError::server())
+        .map_err(|_| ApiError::server().into())
 }
 
 /// POST /api/backup/v1/failures (agent-scoped)
@@ -334,7 +376,7 @@ pub async fn agent_failure(
     State(state): State<AppState>,
     axum::Extension(AgentId(agent_id)): axum::Extension<AgentId>,
     Json(input): Json<FailureReport>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, BackupApiError> {
     let run = state
         .backups
         .report_failure(&agent_id, input)

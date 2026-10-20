@@ -754,3 +754,139 @@ async fn finalize_hashes_once_off_the_runtime_thread() {
         common::get_json(&h.app, &format!("/api/backup/v1/runs/{run_id}"), &token).await;
     assert_eq!(probe["run"]["status"], "completed");
 }
+
+/// Review L2: complete_run allocated a lock entry before checking
+/// ownership, and entries were never removed.
+#[tokio::test]
+async fn run_locks_are_owned_and_pruned() {
+    let free = FakeFreeSpace::new(RESERVE_BYTES + 256 * 1024 * 1024);
+    let h = harness_with_backups(free, ScriptedFaults::new()).await;
+    let (_, meks) = register(&h, "meks").await;
+    let (_, zhkh) = register(&h, "zhkhteam").await;
+    let data = vec![3u8; 4096];
+    let (_, started) = start_run(&h, &meks, "locks", 4096, &digest(&data)).await;
+    let run_id = started["run"]["id"].as_str().unwrap().to_string();
+
+    // Unknown and foreign ids never allocate an entry.
+    for id in [uuid::Uuid::new_v4().to_string(), "not-a-uuid".to_string()] {
+        let (status, _) = complete(&h, &meks, &id).await;
+        assert_eq!(status, 404);
+    }
+    let (status, _) = complete(&h, &zhkh, &run_id).await;
+    assert_eq!(status, 404, "another agent's run is indistinguishable");
+    let (status, _) = put(&h, &zhkh, &run_id, 0, 0, data.clone()).await;
+    assert_eq!(status, 404);
+    assert_eq!(h.state.backups.run_lock_entries(), 0);
+
+    // Real work releases its entry afterwards, including failures.
+    let (status, _) = complete(&h, &meks, &run_id).await;
+    assert_eq!(status, 409, "incomplete upload cannot complete");
+    let (status, _) = put(&h, &meks, &run_id, 0, 0, data.clone()).await;
+    assert_eq!(status, 200);
+    let (status, _) = complete(&h, &meks, &run_id).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        h.state.backups.run_lock_entries(),
+        0,
+        "finished runs must not keep lock entries"
+    );
+}
+
+fn stalled_body(prefix: usize) -> Body {
+    Body::from_stream(async_stream::stream! {
+        yield Ok::<_, io::Error>(axum::body::Bytes::from(vec![1u8; prefix]));
+        std::future::pending::<()>().await;
+    })
+}
+
+/// Review H3: a half-open connection held the run lock and an upload slot
+/// forever, because the body was read with no timeout under both.
+#[tokio::test]
+async fn stalled_chunk_bodies_release_slots_and_locks() {
+    let free = FakeFreeSpace::new(RESERVE_BYTES + 256 * 1024 * 1024);
+    let h = harness_with_backups(free, ScriptedFaults::new()).await;
+    let backups = Arc::clone(&h.state.backups);
+    backups.set_upload_limits(flatline_backend::backups::UploadLimits {
+        slot_wait: std::time::Duration::from_millis(100),
+        lock_wait: std::time::Duration::from_millis(100),
+        body_idle: std::time::Duration::from_millis(300),
+        body_total: std::time::Duration::from_secs(5),
+    });
+    let (agent_id, token) = register(&h, "meks").await;
+    let data = vec![9u8; 4096];
+    let (_, started) = start_run(&h, &token, "stalled", 4096, &digest(&data)).await;
+    let run_id = started["run"]["id"].as_str().unwrap().to_string();
+
+    // Four senders stall on the same run, occupying every slot.
+    let mut stalled = Vec::new();
+    for _ in 0..4 {
+        let backups = Arc::clone(&backups);
+        let (agent_id, run_id, sha) = (agent_id.clone(), run_id.clone(), digest(&data));
+        stalled.push(tokio::spawn(async move {
+            backups
+                .put_chunk(&agent_id, &run_id, 0, 0, &sha, stalled_body(1024))
+                .await
+        }));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // A fifth sender is told to come back instead of queueing forever.
+    let (status, busy) = put(&h, &token, &run_id, 0, 0, data.clone()).await;
+    assert_eq!(status, 503, "slots full must be retryable: {busy}");
+    assert_eq!(busy["error"], "busy");
+
+    for task in stalled {
+        let result = task.await.unwrap();
+        assert!(
+            matches!(result, Err(flatline_backend::backups::Error::Timeout(_))),
+            "stalled body must time out: {result:?}"
+        );
+    }
+    assert_eq!(h.state.backups.run_lock_entries(), 0);
+
+    // Over HTTP the same stall is a 408, and afterwards the run is usable.
+    let request = Request::builder()
+        .method("PUT")
+        .uri(format!("/api/backup/v1/runs/{run_id}/chunks/0"))
+        .header("authorization", format!("Bearer {token}"))
+        .header("x-backup-offset", "0")
+        .header("x-backup-sha256", digest(&data))
+        .body(stalled_body(16))
+        .unwrap();
+    let (status, timed_out) = send(&h.app, request).await;
+    assert_eq!(status, 408, "{timed_out}");
+
+    let (status, uploaded) = put(&h, &token, &run_id, 0, 0, data.clone()).await;
+    assert_eq!(status, 200, "locks and slots were released: {uploaded}");
+    let (status, _) = complete(&h, &token, &run_id).await;
+    assert_eq!(status, 200);
+}
+
+/// Shutdown aborts a body read that is still waiting on the network.
+#[tokio::test]
+async fn shutdown_aborts_pending_body_reads() {
+    let free = FakeFreeSpace::new(RESERVE_BYTES + 256 * 1024 * 1024);
+    let h = harness_with_backups(free, ScriptedFaults::new()).await;
+    let (agent_id, token) = register(&h, "meks").await;
+    let data = vec![9u8; 4096];
+    let (_, started) = start_run(&h, &token, "shutdown", 4096, &digest(&data)).await;
+    let run_id = started["run"]["id"].as_str().unwrap().to_string();
+
+    let backups = Arc::clone(&h.state.backups);
+    let sha = digest(&data);
+    let pending = tokio::spawn(async move {
+        backups
+            .put_chunk(&agent_id, &run_id, 0, 0, &sha, stalled_body(8))
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    h.state.backups.shutdown();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), pending)
+        .await
+        .expect("shutdown must not wait for the default body timeout")
+        .unwrap();
+    assert!(matches!(
+        result,
+        Err(flatline_backend::backups::Error::Unavailable(_))
+    ));
+}

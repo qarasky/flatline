@@ -96,7 +96,11 @@ pub async fn run() -> anyhow::Result<()> {
     {
         tracing::error!("backup reconciliation deferred: {error}");
     }
-    state.backups.start_jobs();
+    // Integration point: pass the shared shutdown token here once lib.rs
+    // has one; until then the jobs run for the life of the process.
+    state
+        .backups
+        .start_jobs(tokio_util::sync::CancellationToken::new());
 
     let listener = tokio::net::TcpListener::bind(&address).await?;
     tracing::info!("flatline-rs listening on {address}");
