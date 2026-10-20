@@ -188,6 +188,20 @@ partial failure leaves scratch data for inspection and reports `restoreStatus:
 failed`; it never claims verification. The `compare` command checks every
 object key/size and each database's table counts against the manifest.
 
+### Integration tests
+
+`FLATLINE_BACKUP_INTEGRATION=1 go -C backup-agent test ./integration -v`
+runs the opt-in tests. The PostgreSQL round-trip needs Docker and the
+`postgres:16` image. The Garage round-trip additionally needs
+`FLATLINE_BACKUP_GARAGE_ENDPOINT` (loopback HTTP is accepted),
+`FLATLINE_BACKUP_GARAGE_ACCESS_KEY_ID`, `FLATLINE_BACKUP_GARAGE_SECRET_ACCESS_KEY`,
+`FLATLINE_BACKUP_GARAGE_SOURCE_BUCKET` and `FLATLINE_BACKUP_GARAGE_TARGET_BUCKET`
+(optional `FLATLINE_BACKUP_GARAGE_REGION`, default `garage`): two dedicated
+scratch buckets, the target empty. It seeds exact keys (`a`, `a/b`, `x//y`,
+Unicode, an empty object) under a unique prefix, runs `run-once`, `verify`,
+`restore` and `compare`, checks every key, size, SHA-256 and content type, and
+deletes what it wrote. Missing prerequisites skip; they never pass.
+
 Globals are never restored implicitly. Use the separate command with an
 explicit globals target:
 

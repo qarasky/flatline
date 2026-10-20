@@ -27,10 +27,7 @@ func TestPostgres16AndGarageRoundTrip(t *testing.T) {
 		testPostgresRoundTrip(t)
 	})
 	t.Run("garage", func(t *testing.T) {
-		if os.Getenv("FLATLINE_BACKUP_GARAGE_ENDPOINT") == "" {
-			t.Skip("Garage prerequisite missing: set FLATLINE_BACKUP_GARAGE_ENDPOINT and credentials to run the object round-trip")
-		}
-		t.Skip("Garage round-trip harness requires a locally configured Garage bucket; not provided in this run")
+		testGarageRoundTrip(t)
 	})
 }
 
