@@ -1174,11 +1174,38 @@
                                 }
                             }
                         }
+                    },
+                    "503": {
+                        "description": "Storage failure; transient. Carries `Retry-After` (seconds, 5-30, jittered). Retry the same sample.",
+                        "headers": {
+                            "Retry-After": {
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok", "msg"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": false
+                                        },
+                                        "msg": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             },
             "post": {
-                "summary": "Push with an optional `metrics` body. A metrics problem answers 400 while the heartbeat stays recorded.",
+                "summary": "Push with an optional `metrics` body. Invalid metrics, or a non-empty body that is not JSON, answer 400 while the heartbeat stays recorded; storage failures answer 503 with `Retry-After`.",
                 "responses": {
                     "200": {
                         "description": "Success.",
@@ -1198,7 +1225,7 @@
                         }
                     },
                     "400": {
-                        "description": "Success.",
+                        "description": "Validation failure (permanent): invalid metrics or a body that is not JSON. The heartbeat, if any, was recorded.",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -1215,7 +1242,7 @@
                         }
                     },
                     "404": {
-                        "description": "Success.",
+                        "description": "Unknown or paused monitor, or out-of-range ping.",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -1225,6 +1252,33 @@
                                         "ok": {
                                             "type": "boolean",
                                             "const": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Storage failure; transient. Carries `Retry-After` (seconds, 5-30, jittered). Retry the same sample.",
+                        "headers": {
+                            "Retry-After": {
+                                "schema": {
+                                    "type": "integer"
+                                }
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok", "msg"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": false
+                                        },
+                                        "msg": {
+                                            "type": "string"
                                         }
                                     }
                                 }

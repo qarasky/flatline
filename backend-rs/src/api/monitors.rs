@@ -621,6 +621,14 @@ pub async fn delete(
         }
     }
 
+    // History first, in bounded batches; the monitor rows' cascade then has
+    // almost nothing left to remove under the write lock.
+    for monitor_id in &deleted {
+        crate::db::delete_monitor_history(&state.pool, *monitor_id)
+            .await
+            .map_err(internal)?;
+    }
+
     let placeholders = vec!["?"; deleted.len()].join(",");
     let sql = format!("DELETE FROM monitors WHERE id IN ({placeholders})");
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));

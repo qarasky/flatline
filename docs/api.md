@@ -66,14 +66,15 @@ missing page is plain-text `404`.
 | Code      | Meaning                                                                      | Where it occurs                                                      |
 | --------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | 200 / 201 | Success / Created                                                            | Reads and updates; `POST` monitors and API keys                      |
-| 400       | Validation failure; on push, "metrics dropped"                               | Bad type/`name`/range, bad `hours`/`ids`, invalid metrics            |
+| 400       | Validation failure; on push, "metrics dropped" (permanent)                   | Bad type/`name`/range, bad `hours`/`ids`, invalid metrics            |
 | 401       | Missing/invalid/inactive/expired token; locked status page                   | Any `/api/v1` route; gated status-page reads                         |
 | 403       | Invalid badge id                                                             | `/api/badge/{id}/...` with a non-numeric or non-positive id          |
 | 404       | Unknown resource, unknown/paused push monitor, no metrics, out-of-range ping | `.../{id}`, `POST /api/push/{pushToken}`                             |
 | 409       | Not emitted today                                                            | A duplicate `pushToken` hits the unique index but is reported as 500 |
 | 413       | Body over the 256 KB limit                                                   | `POST /api/push/{pushToken}`                                         |
 | 429       | Too many live SSE connections                                                | `GET /api/v1/events` (`stream_limit`)                                |
-| 500       | Storage failure                                                              | Any handler                                                          |
+| 500       | Storage failure                                                              | Any handler except the push endpoint                                 |
+| 503       | Storage failure on push (transient), with `Retry-After`                      | `POST /api/push/{pushToken}`                                         |
 
 ## Endpoint reference
 
@@ -188,12 +189,31 @@ active monitor by token in the path; a missing or paused monitor answers `404`.
   limited to 64 KB; the whole body is limited to 256 KB (`413` beyond that).
 - A legacy POST/GET records a heartbeat, then stores metrics. If the metrics are
   rejected the answer is `400` with "Heartbeat recorded, metrics dropped: ..." —
-  the heartbeat stands.
+  the heartbeat stands. A non-empty body that is not valid JSON is rejected the
+  same way (it used to be accepted with `{"ok":true}` and its metrics silently
+  lost); an empty or whitespace-only body is a plain heartbeat.
 - `?telemetry=1` (POST with metrics) takes a fast path: while the previous beat
   is UP and the heartbeat spacing (one third of the interval, clamped to 1–30s)
   has not elapsed, the sample is stored **without** a heartbeat row and the
   answer is `{"ok":true}`. A metrics failure here answers `400` ("Metrics
   dropped: ...") because no heartbeat was written.
+
+Push status codes are a contract with the agent, which treats them differently:
+
+| Code | Meaning                                                    | Sender should                                 |
+| ---- | ---------------------------------------------------------- | --------------------------------------------- |
+| 200  | Stored                                                     | Move on                                       |
+| 400  | Validation failure only: invalid metrics, body is not JSON | Not retry; the same payload fails identically |
+| 404  | Unknown or paused monitor, out-of-range ping               | Fix the token or monitor; keep the backlog    |
+| 413  | Body over 256 KB                                           | Not retry                                     |
+| 503  | Storage or database failure (lock timeout, disk full, ...) | Keep the sample and retry after `Retry-After` |
+
+A `503` carries `Retry-After: <seconds>` (5–30, jittered so a fleet does not
+retry in lockstep) and `{"ok":false,"msg":...}`. It is answered whether the
+heartbeat, the metrics or the token lookup failed; when only the metrics write
+failed the message says the heartbeat was recorded. A storage failure is never
+a `400` or a `404`: those would make the agent drop the sample or treat a
+database hiccup as a bad token.
 
 ## Monitor types and fields
 

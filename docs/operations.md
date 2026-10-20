@@ -85,15 +85,16 @@ curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
 
 ## Diagnosing
 
-| Symptom                                  | Look at                                                                                                                                                                                                           |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A monitor stays pending                  | Agent: `systemctl status superboard`, `journalctl -u superboard -n 50`, `sudo superboard check`. Server: `GET /api/v1/monitors/{id}` for `active` and `pushToken`.                                                |
-| A monitor flips down and back            | Network path from that host to the origin, and the monitor's `maxretries`/`retryInterval`. The agent buffers on disk, so short blips arrive late rather than lost.                                                |
-| The board is stale but checks work       | SSE: the proxy in front of the app must not buffer responses and must allow idle connections longer than the keepalive.                                                                                           |
-| Public origin down, container up         | The tunnel, then the published port (`127.0.0.1:3001`).                                                                                                                                                           |
-| Cards show agent warnings                | The tooltip has the per-collector detail and the last push error; right-click → Clear agent warnings once seen. A collector failing forever usually means a host-side tool (driver mismatch, missing `smartctl`). |
-| Database growing                         | Expected: 30 days of 30-second samples plus two years of hourly rollups. Monitor `du -sh data-rust/`; a sudden jump usually means a monitor was added, not a leak.                                                |
-| Backend will not start after a downgrade | The database has newer migrations than the binary. Restore the matching backup.                                                                                                                                   |
+| Symptom                                  | Look at                                                                                                                                                                                                                   |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A monitor stays pending                  | Agent: `systemctl status superboard`, `journalctl -u superboard -n 50`, `sudo superboard check`. Server: `GET /api/v1/monitors/{id}` for `active` and `pushToken`.                                                        |
+| A monitor flips down and back            | Network path from that host to the origin, and the monitor's `maxretries`/`retryInterval`. The agent buffers on disk, so short blips arrive late rather than lost.                                                        |
+| The board is stale but checks work       | SSE: the proxy in front of the app must not buffer responses and must allow idle connections longer than the keepalive.                                                                                                   |
+| Public origin down, container up         | The tunnel, then the published port (`127.0.0.1:3001`).                                                                                                                                                                   |
+| Cards show agent warnings                | The tooltip has the per-collector detail and the last push error; right-click → Clear agent warnings once seen. A collector failing forever usually means a host-side tool (driver mismatch, missing `smartctl`).         |
+| Database growing                         | Expected: 30 days of 30-second samples plus two years of hourly rollups. Monitor `du -sh data-rust/`; a sudden jump usually means a monitor was added, not a leak. The `-wal` file is capped at ~64 MB after checkpoints. |
+| Agents log `503` from the push endpoint  | The database refused a write (lock timeout, disk full). Agents keep the samples and retry after `Retry-After`; check `df`, then the backend log for the `push:` error. Nothing is lost while the agent buffer has room.   |
+| Backend will not start after a downgrade | The database has newer migrations than the binary. Restore the matching backup.                                                                                                                                           |
 
 ## Logs
 
