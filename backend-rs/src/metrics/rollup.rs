@@ -186,6 +186,7 @@ struct HourlyBucketRow {
     samples: i64,
 }
 
+
 /// The stored repair cursor, or `None` when the sweep has never run.
 async fn read_repair_cursor(pool: &SqlitePool) -> sqlx::Result<Option<i64>> {
     let value: Option<String> =
@@ -193,7 +194,10 @@ async fn read_repair_cursor(pool: &SqlitePool) -> sqlx::Result<Option<i64>> {
             .bind(REPAIR_CURSOR)
             .fetch_optional(pool)
             .await?;
-    Ok(value.as_deref().and_then(metric_time).map(hour_start))
+    Ok(value
+        .as_deref()
+        .and_then(metric_time)
+        .map(hour_start))
 }
 
 /// Persist the repair cursor.
@@ -393,13 +397,12 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
     // sample is folded without looking at any other hour. A marker whose raw
     // rows were pruned, or whose hour predates the boundary, is dropped at
     // the end of the run without touching its bucket.
-    let dirty: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT monitor_id, hour FROM metrics_rollup_dirty WHERE hour >= ? AND hour <= ?",
-    )
-    .bind(&from)
-    .bind(sql_time_millis(last_complete_hour))
-    .fetch_all(pool)
-    .await?;
+    let dirty: Vec<(i64, String)> =
+        sqlx::query_as("SELECT monitor_id, hour FROM metrics_rollup_dirty WHERE hour >= ? AND hour <= ?")
+            .bind(&from)
+            .bind(sql_time_millis(last_complete_hour))
+            .fetch_all(pool)
+            .await?;
     for (monitor_id, hour) in &dirty {
         let Some(hour) = metric_time(hour).map(hour_start) else {
             continue;
@@ -460,12 +463,7 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
     // Process the due pairs in time order. Chunks are bounded in elapsed
     // time (a gap splits them) and each chunk is folded page by page, so no
     // single query materializes a long stretch of raw payloads.
-    let mut hours: Vec<i64> = needs
-        .iter()
-        .map(|(_, hour)| *hour)
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
+    let mut hours: Vec<i64> = needs.iter().map(|(_, hour)| *hour).collect::<HashSet<_>>().into_iter().collect();
     hours.sort_unstable();
 
     let mut result = RollupResult::default();
@@ -631,7 +629,11 @@ pub struct RawPruneOutcome {
 /// pending repair can never put deletion ahead of repair. Whole hours only:
 /// a cutoff inside an hour would leave partial evidence behind, and a later
 /// late sample would re-fold that hour from the survivors.
-pub async fn prune_raw(pool: &SqlitePool, now_ms: i64, days: i64) -> sqlx::Result<RawPruneOutcome> {
+pub async fn prune_raw(
+    pool: &SqlitePool,
+    now_ms: i64,
+    days: i64,
+) -> sqlx::Result<RawPruneOutcome> {
     let cutoff_hour = hour_start(now_ms - days * 24 * 3_600_000);
 
     // Pairs that have aged out, with their remaining row counts.
@@ -814,12 +816,13 @@ mod tests {
 
         let mut monitor_ids = Vec::new();
         for name in ["a", "b", "c"] {
-            let (id,): (i64,) =
-                sqlx::query_as("INSERT INTO monitors (name, type) VALUES (?, 'push') RETURNING id")
-                    .bind(name)
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap();
+            let (id,): (i64,) = sqlx::query_as(
+                "INSERT INTO monitors (name, type) VALUES (?, 'push') RETURNING id",
+            )
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
             monitor_ids.push(id);
         }
 
@@ -827,8 +830,7 @@ mod tests {
         let hour = |offset: i64| hour_start(now) - 4 * 3_600_000 + offset * 3_600_000;
         let insert = |monitor_id: i64, ms: i64, cpu: f64| {
             let time = sql_time_millis(ms);
-            let payload =
-                json!({ "cpu": { "percent": cpu }, "mem": { "percent": 50.0 } }).to_string();
+            let payload = json!({ "cpu": { "percent": cpu }, "mem": { "percent": 50.0 } }).to_string();
             let pool = pool.clone();
             async move {
                 sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
@@ -972,13 +974,7 @@ mod tests {
 
         // One hour 20 days back and one recent hour: the old coverage check
         // would have produced a single chunk spanning the whole gap.
-        insert(
-            &pool,
-            monitor_id,
-            last_complete - 20 * 24 * 3_600_000 + 600_000,
-            10.0,
-        )
-        .await;
+        insert(&pool, monitor_id, last_complete - 20 * 24 * 3_600_000 + 600_000, 10.0).await;
         insert(&pool, monitor_id, last_complete + 600_000, 20.0).await;
 
         let result = rollup_metrics(&pool, now).await.unwrap();
@@ -1039,10 +1035,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.rolled_up, 2, "both hours fold");
-        assert_eq!(
-            result.pruned_raw, 1,
-            "the aged-out hour is pruned once folded"
-        );
+        assert_eq!(result.pruned_raw, 1, "the aged-out hour is pruned once folded");
         assert_eq!(result.skipped_raw, 0);
 
         let left: Vec<String> = sqlx::query_scalar("SELECT time FROM metrics_raw ORDER BY time")

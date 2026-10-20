@@ -288,7 +288,11 @@ enum Attempt {
 }
 
 /// Send one Telegram message, classifying the outcome.
-async fn attempt_send_telegram(client: &reqwest::Client, config: &Telegram, text: &str) -> Attempt {
+async fn attempt_send_telegram(
+    client: &reqwest::Client,
+    config: &Telegram,
+    text: &str,
+) -> Attempt {
     let mut body = serde_json::json!({
         "chat_id": config.chat_id,
         "text": text,
@@ -326,9 +330,7 @@ async fn attempt_send_telegram(client: &reqwest::Client, config: &Telegram, text
                     .and_then(serde_json::Value::as_f64)
             })
             .map(|seconds| {
-                std::time::Duration::from_secs_f64(
-                    seconds.clamp(0.0, MAX_RETRY_AFTER.as_secs_f64()),
-                )
+                std::time::Duration::from_secs_f64(seconds.clamp(0.0, MAX_RETRY_AFTER.as_secs_f64()))
             });
         return Attempt::Retryable {
             reason: format!("telegram answered {status}: {detail}"),
@@ -345,7 +347,12 @@ async fn attempt_send_telegram(client: &reqwest::Client, config: &Telegram, text
 }
 
 /// Deliver one Telegram message with bounded retries for transient failures.
-pub async fn deliver_telegram(client: &reqwest::Client, name: &str, config: &Telegram, text: &str) {
+pub async fn deliver_telegram(
+    client: &reqwest::Client,
+    name: &str,
+    config: &Telegram,
+    text: &str,
+) {
     for attempt in 0..DELIVERY_ATTEMPTS {
         match attempt_send_telegram(client, config, text).await {
             Attempt::Delivered => return,
@@ -491,21 +498,15 @@ mod tests {
             (format!("http://{addr}"), calls)
         }
 
-        let config = |base: &str| {
-            parse_telegram(&format!(
+        let config = |base: &str| parse_telegram(&format!(
             r#"{{"telegramServerUrl": "{base}", "telegramBotToken": "t", "telegramChatID": "1"}}"#
         ))
-        .unwrap()
-        };
+        .unwrap();
 
         // Two transient failures, then delivered on the third attempt.
         let (base, calls) = stub(2).await;
         deliver_telegram(&reqwest::Client::new(), "stub", &config(&base), "hi").await;
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            3,
-            "transient failures are retried"
-        );
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "transient failures are retried");
 
         // A 4xx is permanent: no retry.
         let calls = Arc::new(AtomicUsize::new(0));
@@ -525,13 +526,7 @@ mod tests {
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        deliver_telegram(
-            &reqwest::Client::new(),
-            "stub",
-            &config(&format!("http://{addr}")),
-            "hi",
-        )
-        .await;
+        deliver_telegram(&reqwest::Client::new(), "stub", &config(&format!("http://{addr}")), "hi").await;
         assert_eq!(calls.load(Ordering::SeqCst), 1, "a 4xx is not retried");
     }
 

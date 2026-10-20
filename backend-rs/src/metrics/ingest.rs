@@ -401,12 +401,11 @@ impl Metrics {
                     .collect();
                 if kept.len() != total {
                     let encoded = Value::Object(kept).to_string();
-                    let _ =
-                        sqlx::query("UPDATE monitors SET collector_errors_ack = ? WHERE id = ?")
-                            .bind(encoded)
-                            .bind(monitor_id)
-                            .execute(&self.pool)
-                            .await;
+                    let _ = sqlx::query("UPDATE monitors SET collector_errors_ack = ? WHERE id = ?")
+                        .bind(encoded)
+                        .bind(monitor_id)
+                        .execute(&self.pool)
+                        .await;
                 }
             }
         }

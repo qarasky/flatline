@@ -55,10 +55,7 @@ struct TargetRow {
 /// they point at, each with current status. `via` names the raw link that
 /// pulled a resolved monitor in (itself for a direct link, the group id for a
 /// group child).
-pub async fn resolve(
-    pool: &SqlitePool,
-    monitor_id: i64,
-) -> Result<(Vec<Value>, Vec<Value>), ApiError> {
+pub async fn resolve(pool: &SqlitePool, monitor_id: i64) -> Result<(Vec<Value>, Vec<Value>), ApiError> {
     let raw = raw_links(pool, monitor_id).await?;
     // A stored link to a non-website (possible before this rule existed: the
     // picker used to offer every monitor) is ignored rather than drawn as a
@@ -229,8 +226,7 @@ async fn descendants(pool: &SqlitePool, root: i64) -> Result<Vec<i64>, ApiError>
 
     while !frontier.is_empty() {
         let placeholders = vec!["?"; frontier.len()].join(",");
-        let sql =
-            format!("SELECT id, type FROM monitors WHERE parent IN ({placeholders}) ORDER BY id");
+        let sql = format!("SELECT id, type FROM monitors WHERE parent IN ({placeholders}) ORDER BY id");
         let mut query = sqlx::query_as::<_, (i64, String)>(sqlx::AssertSqlSafe(sql));
         for parent in &frontier {
             query = query.bind(parent);
