@@ -9,6 +9,7 @@ pub mod monitors;
 pub mod notifications;
 pub mod openapi;
 pub mod provisioning;
+pub mod public_cache;
 pub mod push;
 pub mod status_pages;
 pub mod stream;

@@ -13,8 +13,6 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
-use crate::heartbeats;
-
 /// Cookie holding a successful unlock.
 pub const AUTH_COOKIE: &str = "fl_status_auth";
 /// How long an unlock lasts, in seconds.
@@ -49,6 +47,9 @@ pub struct Page {
 }
 
 /// Load a page by slug (case-insensitive, like every Node route).
+///
+/// Unfiltered: the public routes check [`Page::published`] themselves, so an
+/// authenticated operator can still preview an unpublished page.
 pub async fn load(pool: &SqlitePool, slug: &str) -> sqlx::Result<Option<Page>> {
     sqlx::query_as::<_, Page>("SELECT * FROM status_pages WHERE slug = ?")
         .bind(slug.to_lowercase())
@@ -149,17 +150,39 @@ pub async fn page_data(pool: &SqlitePool, page: &Page) -> sqlx::Result<Value> {
     .fetch_all(pool)
     .await?;
 
+    // Every public group's monitors in one query, split per group in memory
+    // (previously one query per group).
+    let rows: Vec<(i64, GroupMonitorRow)> = {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            group_id: i64,
+            #[sqlx(flatten)]
+            monitor: GroupMonitorRow,
+        }
+        sqlx::query_as::<_, Row>(
+            "SELECT spm.group_id AS group_id, m.id, m.name, m.type, m.url,
+                    spm.send_url, spm.custom_url, spm.weight
+             FROM status_page_monitors spm
+             JOIN status_page_groups g ON g.id = spm.group_id
+             JOIN monitors m ON m.id = spm.monitor_id
+             WHERE g.status_page_id = ? AND g.public = 1
+             ORDER BY spm.group_id, spm.weight",
+        )
+        .bind(page.id)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|row| (row.group_id, row.monitor))
+        .collect()
+    };
+    let mut by_group: HashMap<i64, Vec<GroupMonitorRow>> = HashMap::new();
+    for (group_id, monitor) in rows {
+        by_group.entry(group_id).or_default().push(monitor);
+    }
+
     let mut public_groups = Vec::new();
     for (group_id, name, weight) in groups {
-        let monitors: Vec<GroupMonitorRow> = sqlx::query_as(
-            "SELECT m.id, m.name, m.type, m.url, spm.send_url, spm.custom_url, spm.weight
-                 FROM status_page_monitors spm
-                 JOIN monitors m ON m.id = spm.monitor_id
-                 WHERE spm.group_id = ? ORDER BY spm.weight",
-        )
-        .bind(group_id)
-        .fetch_all(pool)
-        .await?;
+        let monitors = by_group.remove(&group_id).unwrap_or_default();
 
         let monitor_list: Vec<Value> = monitors
             .into_iter()
@@ -263,7 +286,7 @@ pub async fn recent_beats(
 }
 
 /// Monitor ids on the page's public groups.
-async fn public_monitor_ids(pool: &SqlitePool, page_id: i64) -> sqlx::Result<Vec<i64>> {
+pub async fn public_monitor_ids(pool: &SqlitePool, page_id: i64) -> sqlx::Result<Vec<i64>> {
     sqlx::query_scalar(
         "SELECT spm.monitor_id FROM status_page_monitors spm
          JOIN status_page_groups g ON g.id = spm.group_id
@@ -276,31 +299,36 @@ async fn public_monitor_ids(pool: &SqlitePool, page_id: i64) -> sqlx::Result<Vec
 
 /// `{heartbeatList, uptimeList}` — the polling endpoint. Beats are public
 /// JSON (messages hidden), oldest first, capped at 100 per monitor.
-pub async fn heartbeat_data(pool: &SqlitePool, page: &Page) -> sqlx::Result<Value> {
+///
+/// The beats come from one batched statement; the 24h uptime comes from
+/// the engine's uptime cache instead of a window-function scan per monitor
+/// per poll.
+pub async fn heartbeat_data(
+    pool: &SqlitePool,
+    engine: &std::sync::Arc<crate::monitors::engine::Engine>,
+    page: &Page,
+) -> sqlx::Result<Value> {
+    let ids = public_monitor_ids(pool, page.id).await?;
+    let mut beats = recent_beats(pool, &ids, 100).await?;
+
     let mut heartbeat_list = serde_json::Map::new();
     let mut uptime_list = serde_json::Map::new();
-
-    for monitor_id in public_monitor_ids(pool, page.id).await? {
-        let rows: Vec<(String, i64, Option<f64>)> = sqlx::query_as(
-            "SELECT time, status, ping FROM heartbeats
-             WHERE monitor_id = ? ORDER BY time DESC, id DESC LIMIT 100",
-        )
-        .bind(monitor_id)
-        .fetch_all(pool)
-        .await?;
-
-        let beats: Vec<Value> = rows
+    for monitor_id in ids {
+        if heartbeat_list.contains_key(&monitor_id.to_string()) {
+            continue;
+        }
+        let list: Vec<Value> = beats
+            .remove(&monitor_id)
+            .unwrap_or_default()
             .into_iter()
             .rev()
-            .map(|(time, status, ping)| json!({ "status": status, "time": time, "msg": "", "ping": ping }))
+            .map(|beat| {
+                json!({ "status": beat.status, "time": beat.time, "msg": "", "ping": beat.ping })
+            })
             .collect();
+        let uptime = engine.uptime_windows(monitor_id).await.day.unwrap_or(0.0);
 
-        let uptime = heartbeats::uptime_window(pool, monitor_id, 24 * 3600)
-            .await
-            .unwrap_or(None)
-            .unwrap_or(0.0);
-
-        heartbeat_list.insert(monitor_id.to_string(), json!(beats));
+        heartbeat_list.insert(monitor_id.to_string(), json!(list));
         uptime_list.insert(format!("{monitor_id}_24"), json!(uptime));
     }
 
@@ -380,10 +408,12 @@ pub async fn resolve_host(pool: &SqlitePool, host: &str) -> Option<String> {
     if host.is_empty() {
         return None;
     }
+    // Unpublished pages are not resolvable: the host falls back to the
+    // dashboard rather than to a page the public may not see (A14).
     sqlx::query_scalar(
         "SELECT p.slug FROM status_page_cnames c
          JOIN status_pages p ON p.id = c.status_page_id
-         WHERE c.domain = ?",
+         WHERE c.domain = ? AND p.published = 1",
     )
     .bind(host)
     .fetch_optional(pool)
