@@ -6,8 +6,6 @@ import (
 	"log"
 	"os/exec"
 	"time"
-
-	"github.com/shirou/gopsutil/v4/disk"
 )
 
 // SMART disk health, best-effort by contract like nvidia-smi: a missing
@@ -123,7 +121,7 @@ func parseSMARTJSON(device string, data []byte) (SMARTDisk, bool) {
 // smartDevices lists the whole disks to probe, using the same partition
 // filter as the I/O counters.
 func smartDevices() []string {
-	counters, err := disk.IOCounters()
+	counters, err := readDiskCounters()
 	if err != nil {
 		return nil
 	}

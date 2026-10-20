@@ -4,7 +4,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/load"
 	"github.com/shirou/gopsutil/v4/net"
 )
@@ -58,7 +57,7 @@ func collectNet() []NetInterface {
 // whole disks only. A partition's counters are already included in its
 // disk's, so summing both would double count.
 func collectDiskIO() []DiskIO {
-	counters, err := disk.IOCounters()
+	counters, err := readDiskCounters()
 	if err != nil {
 		stats.recordCollectorError("diskio")
 		return nil
