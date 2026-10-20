@@ -53,9 +53,13 @@ Flags: `--server`, `--token`, `--interval SECONDS`, `--update`.
 
 The unit runs `superboard run --config /etc/superboard/config.json` as
 `User=root` (the Docker socket is root-owned; the agent only reads it), with
-`Type=simple`, `Restart=always`, `RestartSec=10`, ordered after
-`network-online.target` and `docker.service`. One agent per box, a predictable
-service name to grep for.
+`Type=simple`, `Restart=always`, `RestartSec=10`, `KillMode=process`,
+`TimeoutStopSec=30`, ordered after `network-online.target` and
+`docker.service`. One agent per box, a predictable service name to grep for.
+`KillMode=process` signals only the agent on stop/restart, so a self-update
+helper started as its child (the fallback path, see
+[Self-update](#self-update-agent-17)) survives the restart it performs; the
+agent's other children are short collector commands with deadlines.
 
 ### systemd, and the cron fallback
 
@@ -76,10 +80,23 @@ line.
 ### Updating an existing install
 
 `install.sh --update` keeps the config and push token, copies the current binary
-to `superboard.bak`, moves the new one into `/usr/local/bin/superboard`, and
-restarts. On systemd hosts it is the manual fallback for what the agent cannot
-do itself (see [Self-update](#self-update-agent-17)). Fleet provisioning is in
-the [provisioning runbook](provisioning.md).
+to `superboard.bak`, puts the new one at `/usr/local/bin/superboard` (copy next
+to it, then rename — never written in place), and on a host running systemd:
+
+1. runs the new binary's `refresh-unit`, which rewrites a unit written by an
+   older release to the current template (keeping its `ExecStart`) and reloads
+   systemd;
+2. restarts the service and requires it to reach `active` within 30s, then keep
+   the same `MainPID` and `NRestarts` for 30s;
+3. otherwise restores `superboard.bak` and restarts it, and exits non-zero.
+
+It also reports whether the new agent's first push was accepted; that is
+informational, because a server that is down should not roll back an operator's
+update. Downloads are bounded (`--connect-timeout 10 --max-time 300`, three
+retries), and systemd is detected by `/run/systemd/system`, not by the
+`systemctl` binary. On systemd hosts it is the manual fallback for what the
+agent cannot do itself (see [Self-update](#self-update-agent-17)). Fleet
+provisioning is in the [provisioning runbook](provisioning.md).
 
 ## Configuration
 
@@ -112,13 +129,13 @@ schedule and are cached until then, so a slow source never blocks the push loop.
 | RAM                                  | `mem.VirtualMemory`                                  | Every sample (~1s)                    | The one sample-fatal read.                                                   |
 | Memory temperature                   | hwmon (`dimm`, `ddr`, `memory`)                      | Every 30s                             | Hidden when zero.                                                            |
 | Disks (per mount)                    | `disk.Partitions`/`Usage`, pseudo-fs skipped         | Every 30s                             | Unreadable mount skipped and logged; empty list means "cannot read mounts".  |
-| Disk I/O                             | Cumulative per-disk counters, whole disks only       | Every push                            | `diskio` error counted; field omitted.                                       |
+| Disk I/O                             | `/proc/diskstats`, whole disks only                  | Every push                            | `diskio` error counted; field omitted.                                       |
 | Network I/O                          | Cumulative per-interface counters, loopback excluded | Every push                            | `net` error counted; field omitted.                                          |
 | Load average                         | `load.Avg` (gauge, no delta)                         | Every push                            | `load` error counted; field omitted.                                         |
 | Docker containers + one-shot stats   | Docker Unix socket (`docker ps` fallback)            | Every 10s                             | Keeps last list and reports `dockerError` + `dockerAt`.                      |
 | Pending OS updates                   | apt / dnf / yum / pacman / apk, read-only            | Every 4h                              | Field omitted (unknown); `updates` error counted.                            |
 | GPU                                  | `nvidia-smi` CSV                                     | Every 5s                              | `gpu.available:false`; backoff after 3 consecutive failures.                 |
-| SMART disk health                    | `smartctl -j -H -A`                                  | Every 6h                              | `smart.available:false` or skipped device; `smart` error counted.            |
+| SMART disk health                    | `smartctl -j -n standby -H -A`                       | Every 6h                              | `smart.available:false` or skipped device; `smart` error counted.            |
 
 Failure policy is consistent:
 
@@ -132,7 +149,23 @@ Failure policy is consistent:
   healthy period, so a permanently broken collector contributes one, not one per
   second; the count rises again only after recovery and a new failure.
 - **Never fatal.** Collectors log, degrade, and return; a panicking collector
-  goroutine is recovered and counted. GPU and Docker back off while broken.
+  goroutine is recovered and counted. So are a panic while taking a sample
+  (`sample`) or while pushing one (`push`): that tick or attempt is lost, the
+  loop continues. GPU and Docker back off while broken.
+- **Logged once per episode.** A persistent failure (an unreadable mount, an
+  unreachable daemon, a container that cannot be inspected, a full buffer disk)
+  writes one journal line when it starts and one when it recovers, not one per
+  tick.
+- **Bounded commands.** Every external command runs under a deadline with
+  `WaitDelay`, so a grandchild that keeps stdout open cannot hang a worker.
+- **Data age is published.** Slow collectors keep their last good value when a
+  refresh fails; `collectedAt` says when each last succeeded.
+
+Disk I/O is parsed from `/proc/diskstats` directly (honouring `HOST_PROC`), with
+gopsutil's semantics — lines with fewer than 14 fields ignored, all-zero devices
+omitted, 512-byte sectors — but without its per-device serial and label lookups.
+SMART uses `-n standby`: a sleeping disk is not spun up, and keeps its previous
+reading.
 
 The Docker pass is bounded to 20s with four workers, tries `DOCKER_HOST` (unix
 only), `/var/run/docker.sock` and rootless socket paths in order, then falls
@@ -188,6 +221,11 @@ changes shape.
   ],
   "dockerError": "no docker access (…)",
   "dockerAt": "2026-10-18T08:59:57Z",
+  "collectedAt": {
+    "disk": "2026-10-18T08:59:31Z",
+    "updates": "2026-10-18T06:12:04Z",
+    "smart": "2026-10-18T03:00:12Z"
+  },
   "updates": { "total": 41, "security": 6, "rebootRequired": true },
   "agent": {
     "version": "1.7.0",
@@ -195,7 +233,8 @@ changes shape.
     "samplesDropped": 4,
     "failedPushes": 3,
     "lastError": "connect: connection timed out",
-    "collectorErrors": { "gpu": 2 }
+    "collectorErrors": { "gpu": 2 },
+    "clockSkewSeconds": -42
   },
   "load": { "avg1": 0.42, "avg5": 0.51, "avg15": 0.6 },
   "net": [{ "iface": "eth0", "rxBytes": 193273528320, "txBytes": 96636764160 }],
@@ -233,14 +272,24 @@ are ordered, lossless lists — the server decides what to sum or show.
   archive at its real cadence; the server stays the clock authority.
 - **`dockerError` / `dockerAt`.** Why a container collection failed, and when
   the last _complete_ one ran — a stale list looks old rather than current.
+- **`collectedAt`.** Live samples only: when `disk`, `gpu`, `updates` and
+  `smart` last produced a good reading (RFC3339, seconds, UTC; a key is absent
+  until its first success). Their values are cached between refreshes and kept
+  when one fails, so this is how old they really are.
 - **`updates` / `rebootRequired`.** Absent means unknown (no board display);
   `total: 0` means fully updated. `security` exists only where the platform
   exposes severity. `rebootRequired` is orthogonal and is the loudest state — no
   package check clears a staged kernel.
 - **`agent` self-report.** Version, process uptime, `samplesDropped`,
-  `failedPushes`, `lastError`, nonzero `collectorErrors`. `failedPushes` counts
-  samples delivery _lost_, not retried attempts, so a recovered blip only sets
-  `lastError`; counts reset on restart, so tiny `uptime` means a crash loop.
+  `failedPushes`, `lastError`, nonzero `collectorErrors`, `clockSkewSeconds`.
+  `failedPushes` counts samples delivery _lost_, not retried attempts, so a
+  recovered blip only sets `lastError`; counts reset on restart, so tiny
+  `uptime` means a crash loop.
+- **`clockSkewSeconds`.** Local clock minus the server's, measured from push
+  responses' `Date` header; omitted within ±2s (the header has one-second
+  resolution). The server ignores a `sampledAt` more than five minutes in the
+  future, so a large skew explains backfill landing at receive time. The agent
+  also logs it once per episode (at 30s, cleared below 10s).
 - **`net` / `diskIo`.** Raw cumulative counters, not rates. `net` excludes
   loopback and keeps virtual interfaces (the server excludes them when summing
   card throughput); `diskIo` covers whole disks only, partitions filtered. The
@@ -255,15 +304,26 @@ Server-side token and payload handling is in [api](api.md).
 
 ## Delivery
 
-Sample every `interval_seconds` (default 1) and push through a **disk-backed,
-bounded FIFO** at `buffer_dir`:
+Sample every `interval_seconds` (default 1) and push **from memory**; the
+**disk-backed, bounded FIFO** at `buffer_dir` is the spill path:
 
-- Atomic writes (temp + rename), 0600 in a 0700 directory, until accepted;
-  backend outages and restarts become late history, not missing history, and a
-  prior run's pending samples are recovered at startup.
-- **Oldest-first drain** at ~20 pushes/s (a 50ms gap while backlogged) keeps
-  counter-window and backfill math chronological and avoids hammering the
-  backend on reconnect.
+- A healthy agent never touches the disk: each sample is encoded once and
+  pushed. A sample goes to disk only when its push fails, while a backlog
+  exists (it queues behind it), when the small in-memory queue overflows behind
+  a slow push, or at shutdown (`systemctl stop`/`restart`). Each sample reserves
+  its queue position when it is taken, so one that spills late still drains in
+  order.
+- Spilled samples are written atomically (temp + rename), 0600 in a 0700
+  directory, until accepted; backend outages and restarts become late history,
+  not missing history, and a prior run's pending samples are recovered at
+  startup. A hard kill (SIGKILL, power loss) can lose the one or two samples in
+  flight, as unsynced buffer writes could before.
+- **Oldest-first drain**, paced gently: after an outage the first accepted push
+  is a probe, then the drain waits a **random 0–30s** (a fleet that lost the
+  server together must not start draining together) and sends at most 4
+  pushes/s, slower when the server is slow (the gap is at least twice the last
+  push's latency). Backlog pushes get a 30s timeout; live pushes
+  `max(5s, 2 × interval)`.
 - Capped by `buffer_max_bytes`; when full the **oldest** samples are evicted and
   counted in `samplesDropped`, so an endless outage cannot fill the disk.
 - If the directory is unusable, the agent falls back to an in-memory newest-wins
@@ -272,11 +332,16 @@ bounded FIFO** at `buffer_dir`:
 
 Failures are classified, because retrying the wrong kind wedges a queue:
 
-| Server answer      | Meaning                                                            | Agent response                                                                                                             |
-| ------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| 400, 413           | Server understood and refused the payload; retry fails identically | **Quarantine** under `buffer/quarantine/` (newest 20 kept) and count it lost; the queue keeps draining.                    |
-| 401, 403, 404      | Auth/config problem (unknown or inactive token)                    | Keep the backlog and keep sampling; fix the token and the accumulated history delivers. Logged at most once per 5 minutes. |
-| 5xx, network error | Transient                                                          | Retry the same sample with jittered exponential backoff capped at 30s.                                                     |
+| Server answer           | Meaning                                                    | Agent response                                                                                                                                                                                |
+| ----------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400, 413                | Validation failure or body limit; retry fails identically  | **Quarantine** under `buffer/quarantine/` (newest 20 kept), count it lost, keep draining. At most **10 per minute**: past that the samples stay buffered and the agent backs off instead.     |
+| 401, 403, 404           | Auth/config problem (unknown or inactive token)            | Keep the backlog and keep sampling; fix the token and the accumulated history delivers. Logged at most once per 5 minutes.                                                                    |
+| 429, 503 (Retry-After)  | Rate limit, or a storage failure on the server (transient) | Keep the sample; wait at least `Retry-After` (capped at 5 min) plus up to 50% jitter.                                                                                                         |
+| Other 5xx, network, etc | Transient                                                  | Keep the sample; retry with **full-jitter** exponential backoff (uniform in `[0, min(60s, interval × 2ⁿ)]`, floor 100ms). Logged on the first failure, then every 5 minutes, and on recovery. |
+
+The quarantine cap is a safety valve: a 400 should only ever mean "this payload
+can never be accepted", but if a server bug ever answered 400 for a transient
+failure, the agent would otherwise delete its backlog at drain speed.
 
 **Silence is the signal.** A failed push is never reported locally as
 host-down; the server turns sustained silence into a down state via the
@@ -294,9 +359,10 @@ SMART 6h) are independent of it.
 An update needing a human per host is a fleet of stale root daemons, so the
 agent keeps itself current by default.
 
-- **Trigger.** Two minutes after startup (staggered so a fleet rebooted together
-  does not stampede), then every `self_update_interval_hours` (default 24), the
-  agent asks the server what it ships.
+- **Trigger.** A random 0–60 minutes after startup (a fleet rebooted or
+  redeployed together does not check and download in the same second), then
+  every `self_update_interval_hours` (default 24) ±10%, the agent asks the
+  server what it ships.
 - **Token-gated manifest.** `GET /agent/version?token=<push_token>`. Only a
   provisioned host has a token, so that endpoint is the fleet whitelist and
   self-update needs no extra credential.
@@ -305,13 +371,31 @@ agent keeps itself current by default.
   (`/agent/<file>?token=…`, not a manifest URL) with its **SHA-256 verified**.
   HTTPS is required; plain HTTP is refused unless `allow_insecure` (dev only).
 - **Staged-binary check.** The download must run and report the expected
-  version; a truncated or wrong-architecture binary is discarded.
-- **Detached swap.** A helper — a copy of the _current_ binary, so it survives
-  replacement — is detached with `setsid`, swaps the binary in, and keeps the
-  previous build at `/usr/local/bin/superboard.bak`.
-- **Health window and rollback.** It restarts the service and waits up to **45s**
-  for it to become active; if it does not, `.bak` is restored and restarted, so
-  a bad release rolls back instead of bricking a box.
+  version within 15s; a truncated, hanging or wrong-architecture binary is
+  discarded.
+- **Helper outside the service.** A helper — a copy of the _current_ binary, so
+  it survives replacement — is started as its own transient unit,
+  `systemd-run --unit=superboard-update-<unix time> --collect` (retried without
+  `--collect` on systemd older than 236). It must not live in
+  `superboard.service`'s cgroup: the restart it issues kills the whole cgroup
+  under the default `KillMode`. Only if `systemd-run` is unavailable is it
+  `setsid`'d instead, which survives because the unit sets `KillMode=process`.
+  The helper logs to `/var/lib/superboard/update/apply.log` (and the journal).
+- **Swap.** The previous build is kept at `/usr/local/bin/superboard.bak`; the
+  new one is renamed into place. The new binary's `refresh-unit` rewrites the
+  unit file to the current template before the restart. (An agent started under
+  systemd also does this once at startup, which is what upgrades hosts whose
+  helper was an older binary.)
+- **Health window and rollback.** After the restart the service must be
+  `active` with a main PID within 30s, then keep the **same `MainPID` and
+  `NRestarts` for 45s** — a crash restarted by `Restart=always` shows up as
+  either changing — and the new agent must write
+  `/var/lib/superboard/update/first-push-ok` (its version and PID) after its
+  first **accepted push**. Builds that predate the marker (a permitted
+  downgrade) are judged on stability alone. Anything else restores `.bak` (copy
+  beside the target, then rename — never written into the running binary) and
+  restarts it, so a bad release rolls back instead of bricking a box. A server
+  outage during the window also rolls back; the next scheduled check retries.
 - **Downgrades** are refused unless `self_update_allow_downgrade` is true;
   prerelease suffixes compare equal to the release.
 - **Requirements.** systemd is required: without it the agent cannot restart
@@ -336,8 +420,10 @@ by the fleet.
 | `superboard self-update [--check]`                                                             | Apply a server-shipped release immediately. `--check` only reports what would happen and installs nothing.                                                    |
 | `superboard run [--config PATH]`                                                               | Collect and push forever; this is what the service runs. Not normally invoked by hand.                                                                        |
 
-A hidden `apply-update` entry point is used by the detached swap helper, not by
-operators.
+Hidden entry points are used by the tooling, not by operators: `apply-update`
+(the swap helper), `refresh-unit` (rewrite an installed unit to the current
+template; used by `install.sh --update` and the helper) and `features` (what an
+update helper may rely on in this build).
 
 ## Troubleshooting
 
@@ -349,6 +435,7 @@ operators.
 | `self-update` reports success but the version did not change | No build for this platform, a downgrade with `self_update_allow_downgrade` false, no systemd, or a health-window rollback restored `.bak` | Run `superboard self-update --check` to see what the server ships; check the `self_update*` keys; on non-systemd hosts use `install.sh --update`; inspect `apply.log` under `/var/lib/superboard/update/`. |
 | Push returns 401/403/404                                     | Token missing, inactive, or rotated and not updated on the host                                                                           | Regenerate the monitor's push token server-side, update `push_token` in `/etc/superboard/config.json`, and restart the agent. The backlog is kept while the token is wrong and delivers once it is fixed.  |
 | `docker` shows unavailable, not "no containers"              | No reachable socket (permission, rootless path, exotic `DOCKER_HOST`)                                                                     | Check `dockerError` on the card; confirm the agent can read a Docker socket or that the `docker` CLI is on `PATH`. The agent only reads the socket.                                                        |
+| Backfilled history lands at the wrong time                   | Host clock skew (no NTP, restored VM snapshot)                                                                                            | Check `agent.clockSkewSeconds` on the card or the journal's clock-skew warning; fix time sync. The server ignores `sampledAt` more than 5 min in the future.                                               |
 | Agent uptime is tiny on a long-running host                  | Crash loop                                                                                                                                | Check the journal for `collector panic` or a config error; the self-report's `lastError` and `collectorErrors` name the failing collector.                                                                 |
 
 Deployment topologies and the served installer are in
