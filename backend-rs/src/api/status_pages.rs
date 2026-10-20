@@ -23,7 +23,7 @@ pub async fn resolve_host(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
-) -> Json<Value> {
+) -> Response {
     let mut host = params
         .get("host")
         .map(|host| host.trim().to_lowercase())
@@ -39,7 +39,24 @@ pub async fn resolve_host(
     // Drop any port so "example.com:3001" matches "example.com".
     let host = host.split(':').next().unwrap_or("").to_string();
 
-    let slug = status_pages::resolve_host(&state.pool, &host).await;
+    // A failed lookup is a 503, not "unmapped": the dashboard treats only a
+    // successful `slug: null` as unmapped and retries errors (A15).
+    let slug = match status_pages::resolve_host(&state.pool, &host).await {
+        Ok(slug) => slug,
+        Err(error) => {
+            tracing::error!("status pages api: resolve-host: {error}");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, "5")],
+                Json(json!({
+                    "ok": false,
+                    "error": "unavailable",
+                    "message": "Host lookup failed; retry shortly.",
+                })),
+            )
+                .into_response();
+        }
+    };
 
     Json(json!({
         "ok": true,
@@ -47,6 +64,7 @@ pub async fn resolve_host(
         "slug": slug,
         "matched": slug.is_some(),
     }))
+    .into_response()
 }
 
 /// Cached page payloads (`page`, `heartbeat`, `incident-history`).

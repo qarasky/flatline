@@ -402,11 +402,15 @@ pub async fn incident_history(
 }
 
 /// Resolve a hostname to a page slug from the imported CNAME map.
-pub async fn resolve_host(pool: &SqlitePool, host: &str) -> Option<String> {
+///
+/// `Ok(None)` means the host is genuinely unmapped; a database error is an
+/// `Err`, never "no match" — the dashboard falls back to the operator view
+/// on an unmapped host and retries on an error (A15).
+pub async fn resolve_host(pool: &SqlitePool, host: &str) -> sqlx::Result<Option<String>> {
     let host = host.trim().to_lowercase();
     let host = host.split(':').next().unwrap_or("").to_string();
     if host.is_empty() {
-        return None;
+        return Ok(None);
     }
     // Unpublished pages are not resolvable: the host falls back to the
     // dashboard rather than to a page the public may not see (A14).
@@ -418,8 +422,6 @@ pub async fn resolve_host(pool: &SqlitePool, host: &str) -> Option<String> {
     .bind(host)
     .fetch_optional(pool)
     .await
-    .ok()
-    .flatten()
 }
 
 // ---------------------------------------------------------------------------

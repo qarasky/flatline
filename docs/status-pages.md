@@ -15,7 +15,9 @@ in the dashboard app and are served by the backend on the same origin, under
 `GET /api/status-page/resolve-host?host=…` maps a hostname (with or without
 port) to a page slug; the SPA uses it on a branded domain so one deployment can
 serve several client domains. Unknown hosts — and hosts mapped to an unpublished
-page — match nothing rather than falling back to a default page.
+page — match nothing rather than falling back to a default page. A lookup that
+fails (database error) answers `503` with `error:"unavailable"`, never
+`slug: null`, so a client can tell "unmapped" from "try again".
 
 ## Reading a page (public, no token)
 

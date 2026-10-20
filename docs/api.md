@@ -162,7 +162,8 @@ Pages are provisioned by the importer; this backend exposes reads, not page CRUD
 
 Unpublished pages answer `404` on every route above (as if the slug did not
 exist) unless the request carries a valid operator bearer token, and
-`resolve-host` never maps to them. Gated reads answer `401` until unlocked.
+`resolve-host` never maps to them. `resolve-host` answers `503 unavailable` when the
+lookup fails; `slug: null` always means the host is unmapped. Gated reads answer `401` until unlocked.
 Responses are cached for 10 s; the published flag and password are checked on
 every request. The unlock route accepts JSON
 (`{"password":"..."}`) or a form body and, on success, redirects with a signed

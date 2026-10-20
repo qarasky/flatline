@@ -187,7 +187,10 @@ async fn imports_the_production_shape() {
     let data_dir = dir.path().join("data");
     let report = import::run(&old_path, &data_dir, false).await.unwrap();
 
-    assert_eq!(report.monitors, 5, "http + push + group + ping + legacy zero-timeout");
+    assert_eq!(
+        report.monitors, 5,
+        "http + push + group + ping + legacy zero-timeout"
+    );
     assert!(
         report.skipped_monitors.is_empty(),
         "{:?}",
@@ -269,6 +272,7 @@ async fn imports_the_production_shape() {
     assert_eq!(
         flatline_backend::status_pages::resolve_host(&new, "status.bes.media")
             .await
+            .unwrap()
             .as_deref(),
         Some("clients")
     );

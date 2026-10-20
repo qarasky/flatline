@@ -204,3 +204,40 @@ async fn absurd_badge_durations_are_rejected_or_clamped_never_a_panic() {
     .await;
     assert_eq!(status, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn resolve_host_answers_503_on_a_database_error_not_unmapped() {
+    let h = harness().await;
+    seed_page(&h, "mapped", 1).await;
+
+    let uri = "/api/status-page/resolve-host?host=mapped.example";
+    let (status, body) = send(&h.app, request("GET", uri, None, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["slug"], "mapped");
+
+    // A genuinely unmapped host is a successful null.
+    let (status, body) = send(
+        &h.app,
+        request(
+            "GET",
+            "/api/status-page/resolve-host?host=nobody.example",
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["slug"], serde_json::Value::Null);
+    assert_eq!(body["matched"], false);
+
+    // A failing database is not "unmapped".
+    h.pool.close().await;
+    let (status, body) = send(&h.app, request("GET", uri, None, None)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "unavailable");
+    assert!(
+        body.get("slug").is_none(),
+        "no slug field on an error: {body}"
+    );
+}
