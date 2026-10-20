@@ -23,6 +23,7 @@ pub mod status_pages;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::serve::ListenerExt;
 use sqlx::SqlitePool;
 
 /// Shared application state handed to every handler.
@@ -102,7 +103,9 @@ pub async fn run() -> anyhow::Result<()> {
         .backups
         .start_jobs(tokio_util::sync::CancellationToken::new());
 
-    let listener = tokio::net::TcpListener::bind(&address).await?;
+    let listener = tokio::net::TcpListener::bind(&address)
+        .await?
+        .tap_io(enable_keepalive);
     tracing::info!("flatline-rs listening on {address}");
 
     axum::serve(listener, router(state))
@@ -110,6 +113,18 @@ pub async fn run() -> anyhow::Result<()> {
         .await?;
 
     Ok(())
+}
+
+/// TCP keepalive on every accepted connection, so a peer that vanished
+/// without a FIN (a half-open backup upload, a dropped SSE client) is
+/// detected by the kernel in minutes rather than hours. Best-effort.
+fn enable_keepalive(stream: &mut tokio::net::TcpStream) {
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(std::time::Duration::from_secs(60))
+        .with_interval(std::time::Duration::from_secs(15));
+    if let Err(error) = socket2::SockRef::from(&*stream).set_tcp_keepalive(&keepalive) {
+        tracing::debug!("tcp keepalive not enabled: {error}");
+    }
 }
 
 /// Ctrl-C or SIGTERM; systemd and `docker stop` send the latter.
