@@ -113,17 +113,18 @@ func (b *sampleBuffer) append(payload *Payload) bool {
 
 	tmp := final + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		log.Printf("buffer: write failed: %v", err)
+		bufferWriteLog.fail("write", "buffer: write failed (samples dropped until it recovers): %v", err)
 		_ = os.Remove(tmp)
 		stats.recordDrop()
 		return false
 	}
 	if err := os.Rename(tmp, final); err != nil {
-		log.Printf("buffer: rename failed: %v", err)
+		bufferWriteLog.fail("write", "buffer: rename failed (samples dropped until it recovers): %v", err)
 		_ = os.Remove(tmp)
 		stats.recordDrop()
 		return false
 	}
+	bufferWriteLog.ok("write", "buffer: writes recovered")
 
 	b.mu.Lock()
 	b.entries = append(b.entries, bufferEntry{path: final, size: int64(len(data))})
@@ -251,3 +252,7 @@ func (b *sampleBuffer) pending() int {
 	defer b.mu.Unlock()
 	return len(b.entries)
 }
+
+// bufferWriteLog keeps a full or read-only disk to one journal line per
+// episode instead of one per sample.
+var bufferWriteLog episodeLog

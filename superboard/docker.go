@@ -136,13 +136,15 @@ var dockerStatsCache = struct {
 	last map[string]containerCPUSample
 }{last: make(map[string]containerCPUSample)}
 
-// dockerStatsWarned logs one stats failure per container per process:
-// a container that cannot be measured every ten seconds must not spam the
-// journal, but the first occurrence is worth seeing.
-var dockerStatsWarned = struct {
-	mu   sync.Mutex
-	seen map[string]bool
-}{seen: make(map[string]bool)}
+// dockerStatsLog and dockerInspectLog log one failure per container per
+// episode: a container that cannot be measured or inspected every ten
+// seconds must not spam the journal, but the first occurrence (and the
+// recovery) is worth seeing. Both are pruned with the stats cache, so
+// container churn cannot grow them.
+var (
+	dockerStatsLog   episodeLog
+	dockerInspectLog episodeLog
+)
 
 // containerCPUPercent converts two cumulative CPU reads into Docker's
 // convention: percent of a single core, so a container using four cores
@@ -210,6 +212,9 @@ func buildContainerStats(id string, raw *containerStatsRaw) *ContainerStats {
 // pruneDockerStatsCache forgets containers that no longer appear, so the
 // map cannot grow with churn.
 func pruneDockerStatsCache(seen map[string]bool) {
+	keep := func(id string) bool { return seen[id] }
+	dockerStatsLog.prune(keep)
+	dockerInspectLog.prune(keep)
 	dockerStatsCache.mu.Lock()
 	defer dockerStatsCache.mu.Unlock()
 	for id := range dockerStatsCache.last {
@@ -429,8 +434,9 @@ func collectDockerContainer(ctx context.Context, client *dockerClient, item dock
 
 	var insp dockerInspect
 	if err := client.get(ctx, "/v1.43/containers/"+item.ID+"/json", &insp); err != nil {
-		log.Printf("warning: docker inspect %s failed: %v", name, err)
+		dockerInspectLog.fail(item.ID, "warning: docker inspect %s failed (repeats suppressed): %v", name, err)
 	} else {
+		dockerInspectLog.ok(item.ID, "")
 		// Health is meaningful only while running: a stopped container
 		// keeps its last health status, which would otherwise paint an
 		// exited box as "unhealthy" instead of merely stopped.
@@ -456,13 +462,9 @@ func collectDockerContainer(ctx context.Context, client *dockerClient, item dock
 	if item.State == "running" {
 		if raw, err := client.containerStats(ctx, item.ID); err == nil {
 			c.Stats = buildContainerStats(item.ID, raw)
+			dockerStatsLog.ok(item.ID, "")
 		} else {
-			dockerStatsWarned.mu.Lock()
-			if !dockerStatsWarned.seen[item.ID] {
-				dockerStatsWarned.seen[item.ID] = true
-				log.Printf("warning: docker stats %s failed (will not repeat): %v", name, err)
-			}
-			dockerStatsWarned.mu.Unlock()
+			dockerStatsLog.fail(item.ID, "warning: docker stats %s failed (repeats suppressed): %v", name, err)
 		}
 	}
 
@@ -514,7 +516,7 @@ func collectDockerPS() ([]Container, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, path, "ps", "--no-trunc", "--format", dockerPSFormat).Output()
+	out, err := boundedCommand(ctx, path, "ps", "--no-trunc", "--format", dockerPSFormat).Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker ps: %w", err)
 	}

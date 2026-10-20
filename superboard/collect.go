@@ -149,7 +149,9 @@ func collectDisk() ([]Disk, error) {
 	}
 
 	var out []Disk
+	mounts := make(map[string]bool, len(partitions))
 	for _, p := range partitions {
+		mounts[p.Mountpoint] = true
 		// Skip pseudo-filesystems: they report nonsense totals (/dev at 100%
 		// on a healthy box is the classic false alarm).
 		if strings.HasPrefix(p.Mountpoint, "/snap") ||
@@ -162,9 +164,10 @@ func collectDisk() ([]Disk, error) {
 
 		usage, err := disk.Usage(p.Mountpoint)
 		if err != nil {
-			log.Printf("warning: disk usage for %s unavailable: %v", p.Mountpoint, err)
+			diskUsageLog.fail(p.Mountpoint, "warning: disk usage for %s unavailable: %v", p.Mountpoint, err)
 			continue
 		}
+		diskUsageLog.ok(p.Mountpoint, "disk usage for %s readable again", p.Mountpoint)
 
 		out = append(out, Disk{
 			Mount:   p.Mountpoint,
@@ -174,9 +177,17 @@ func collectDisk() ([]Disk, error) {
 		})
 	}
 
+	// A mount that disappeared ends its episode; a later mount at the same
+	// path starts fresh.
+	diskUsageLog.prune(func(mount string) bool { return mounts[mount] })
 	stats.recordCollectorRecovered("disk")
 	return out, nil
 }
+
+// diskUsageLog keeps one unreadable mount (a stale NFS export, a FUSE mount
+// owned by another user) to one journal line per episode instead of one
+// every 30 seconds.
+var diskUsageLog episodeLog
 
 // gpuHealth rate-limits a persistently broken nvidia-smi.
 //
@@ -269,7 +280,7 @@ func collectGPU() GPU {
 	defer cancel()
 
 	// CSV with exactly the fields we parse, in order.
-	cmd := exec.CommandContext(ctx, path,
+	cmd := boundedCommand(ctx, path,
 		"--query-gpu=name,utilization.gpu,memory.total,memory.used,temperature.gpu",
 		"--format=csv,noheader,nounits")
 	out, err := cmd.Output()
@@ -376,7 +387,7 @@ func collect() (*Payload, error) {
 		Load:   collectLoad(),
 		Net:    collectNet(),
 		DiskIO: collectDiskIO(),
-		Smart:  collectSMART(),
+		Smart:  collectSMART(nil),
 	}
 	if err != nil {
 		payload.DockerError = err.Error()

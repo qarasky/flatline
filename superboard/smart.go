@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -135,7 +136,10 @@ func smartDevices() []string {
 // collectSMART probes every whole disk with smartctl. available:false means
 // "no smartctl or no readable device" — explicit, never absent, so the
 // board can distinguish "no SMART here" from "collector broken".
-func collectSMART() *SMART {
+//
+// prev is the last published reading (nil for one-shot checks): a disk that
+// is asleep keeps its previous entry rather than being woken or dropped.
+func collectSMART(prev *SMART) *SMART {
 	path, err := exec.LookPath("smartctl")
 	if err != nil {
 		return &SMART{Available: false}
@@ -149,7 +153,7 @@ func collectSMART() *SMART {
 	out := &SMART{Available: true, Disks: []SMARTDisk{}}
 	for _, device := range devices {
 		ctx, cancel := context.WithTimeout(context.Background(), smartTimeout)
-		cmd := exec.CommandContext(ctx, path, "-j", "-H", "-A", "/dev/"+device)
+		cmd := boundedCommand(ctx, path, smartctlArgs(device)...)
 		data, _ := cmd.Output() // exit codes are a bitmask; JSON is parsed regardless
 		cancel()
 
@@ -160,10 +164,56 @@ func collectSMART() *SMART {
 		}
 		if parsed, ok := parseSMARTJSON(device, data); ok {
 			out.Disks = append(out.Disks, parsed)
+		} else if smartInStandby(data) {
+			if kept, ok := previousSMARTDisk(prev, device); ok {
+				out.Disks = append(out.Disks, kept)
+			}
 		}
 	}
 	if len(out.Disks) > 0 {
 		stats.recordCollectorRecovered("smart")
 	}
 	return out
+}
+
+// smartctlArgs is the read-only probe for one device. -n standby: never spin
+// up a sleeping disk just to read its health every six hours; smartctl then
+// exits early and the caller keeps the previous reading.
+func smartctlArgs(device string) []string {
+	return []string{"-j", "-n", "standby", "-H", "-A", "/dev/" + device}
+}
+
+// smartInStandby reports whether smartctl skipped the device because of -n
+// standby ("Device is in STANDBY mode, exit(2)"; SLEEP for some drives).
+func smartInStandby(data []byte) bool {
+	var raw struct {
+		Smartctl struct {
+			Messages []struct {
+				String string `json:"string"`
+			} `json:"messages"`
+		} `json:"smartctl"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	for _, m := range raw.Smartctl.Messages {
+		upper := strings.ToUpper(m.String)
+		if strings.Contains(upper, "STANDBY") || strings.Contains(upper, "SLEEP") {
+			return true
+		}
+	}
+	return false
+}
+
+// previousSMARTDisk finds device in the previous reading.
+func previousSMARTDisk(prev *SMART, device string) (SMARTDisk, bool) {
+	if prev == nil {
+		return SMARTDisk{}, false
+	}
+	for _, d := range prev.Disks {
+		if d.Device == device {
+			return d, true
+		}
+	}
+	return SMARTDisk{}, false
 }
