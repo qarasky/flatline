@@ -27,3 +27,21 @@ services:
       - ./data-rust:/app/data
     ports:
       - "${FLATLINE_BIND:-127.0.0.1}:${FLATLINE_PORT:-3101}:3001"
+    # Backend graceful shutdown finishes within ~20 s (streams close, engine
+    # and metrics jobs flush); Docker's default 10 s would SIGKILL it.
+    stop_grace_period: 30s
+    # The backend runs as uid 10001 (see docker/entrypoint.sh). ICMP ping
+    # monitors use unprivileged ICMP sockets, allowed here for every group,
+    # with the ping binary's cap_net_raw as the fallback.
+    sysctls:
+      net.ipv4.ping_group_range: "0 2147483647"
+    # Bounded resources: a leak or runaway fork cannot take the host down.
+    # Normal usage is far below both; check with `docker stats`.
+    mem_limit: 1g
+    pids_limit: 1024
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    # Healthcheck comes from the image: GET /healthz (database + engine).

@@ -5,13 +5,13 @@ import {
     fetchBulkMonitorLinks,
     fetchLatestMetricsBulk,
     fetchAllMonitors,
-    watchLive,
     getToken,
     setToken,
     type MonitorLinks,
     type MonitorSummary,
     type ResolvedMonitorLink,
 } from "@/lib/api";
+import { subscribeLive } from "@/lib/live-hub";
 import { navigate } from "@/lib/router";
 import { TokenGate } from "@/components/TokenGate";
 import { FleetCard, type FleetServer } from "@/components/FleetCard";
@@ -19,7 +19,7 @@ import { RenameDialog, ServerMenu, type MenuAnchor, type MenuItem } from "@/comp
 import { WebsiteLinkDialog } from "@/components/WebsiteLinks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { agentWarningCounts, fleetAttention, matchGroups } from "@/lib/fleet-presentation";
+import { agentWarningCounts, fleetAttention, isPeakFresh, isSampleStale, matchGroups } from "@/lib/fleet-presentation";
 import { fleetPageSize } from "@/lib/fleet-layout";
 import { ServerHistory } from "@/components/ServerHistory";
 
@@ -27,6 +27,13 @@ import { ServerHistory } from "@/components/ServerHistory";
 const MIN_CARD_W = 340;
 const MIN_CARD_H = 420;
 const GAP = 8;
+
+/**
+ * Freshness tick for stale detection and the header counts. Cards only
+ * re-render when their stale flag flips; the "12s ago" labels tick on their
+ * own (FleetCard's SampleAge). The tightest freshness window is 5 s.
+ */
+const FRESHNESS_TICK_MS = 5_000;
 
 /** How long the board stays paused after someone touches it. */
 const IDLE_RESUME_MS = 30_000;
@@ -203,7 +210,7 @@ function Superboard({
             if (!document.hidden) {
                 refreshFreshness(Date.now());
             }
-        }, 1000);
+        }, FRESHNESS_TICK_MS);
         return () => window.clearInterval(timer);
     }, []);
 
@@ -299,7 +306,7 @@ function Superboard({
         // wakes up foregrounded must never flash "no servers" because the
         // first fetch was cancelled by a visibility change. The interval,
         // however, skips hidden ticks — no point polling a board nobody sees.
-        const stop = watchLive({
+        const stop = subscribeLive({
             snapshot: load,
             event: (event) => {
                 if (!alive) {
@@ -316,6 +323,9 @@ function Superboard({
                     }
                 }
                 setServers((previous) => {
+                    // Keep the array (and every untouched card) identical
+                    // when the event concerns nothing on the board, so the
+                    // board does not re-render for unrelated monitors.
                     if (
                         event.type === "metrics" &&
                         !previous.some((s) => s.monitor.id === event.monitorId) &&
@@ -333,7 +343,8 @@ function Superboard({
                             },
                         ].sort(order);
                     }
-                    return previous.map((server) => {
+                    let changed = false;
+                    const updated = previous.map((server) => {
                         let next = server;
                         if (server.monitor.id === event.monitorId) {
                             next =
@@ -362,8 +373,12 @@ function Superboard({
                             );
                             next = { ...next, links };
                         }
+                        if (next !== server) {
+                            changed = true;
+                        }
                         return next;
                     });
+                    return changed ? updated : previous;
                 });
                 setError(null);
             },
@@ -461,7 +476,7 @@ function Superboard({
 
     const down = servers.filter((s) => s.monitor.status === 0).length;
     const attentionCount = servers.filter((s) => {
-        const state = fleetAttention(s.metrics, s.time, s.monitor.interval || 60);
+        const state = fleetAttention(s.metrics, s.time, s.monitor.interval || 60, now);
         const websiteDown = s.links?.some((link) => link.status === 0) ?? false;
         return (
             s.monitor.status === 0 ||
@@ -507,7 +522,8 @@ function Superboard({
                     <FleetCard
                         key={server.monitor.id}
                         server={server}
-                        now={now}
+                        stale={isSampleStale(server.metrics, server.time, server.monitor.interval || 60, now)}
+                        peakFresh={isPeakFresh(server.cpuPeak10m?.at, now)}
                         onOpenHistory={openHistory}
                         onMenu={openMenu}
                     />

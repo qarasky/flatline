@@ -6,6 +6,8 @@
  * token shape an agent uses, which keeps one auth model instead of two.
  */
 
+import type { HeartbeatEntry } from "./heartbeat-log";
+
 const BASE = (import.meta.env?.VITE_FLATLINE_URL as string | undefined) ?? "";
 
 const TOKEN_KEY = "flatline.token";
@@ -141,6 +143,51 @@ export interface MonitorSummary {
     tags?: { id: number; name: string; color: string }[];
 }
 
+/** One operator-recorded archive or restore verification. */
+export interface BackupVerification {
+    runId: string;
+    status: "passed" | "failed";
+    checkedAt: string;
+    summary: string;
+}
+
+/** Backup run metadata shared with the Rust receiver and Go agent. */
+export interface BackupRunSummary {
+    id: string;
+    agentId: string;
+    clientRunId: string;
+    status: "uploading" | "finalizing" | "completed" | "failed" | "expired" | "deleting" | "pruned";
+    exportStartedAt: string;
+    exportFinishedAt: string | null;
+    createdAt: string;
+    completedAt: string | null;
+    totalBytes: number | null;
+    receivedBytes: number;
+    sha256: string | null;
+    sourceSummary: { databaseCount: number; objectCount: number; sourceBytes: number } | null;
+    errorCode: string | null;
+    archiveVerification: BackupVerification | null;
+    restoreVerification: BackupVerification | null;
+}
+
+/** A named backup agent linked (or not) to a monitor. */
+export interface BackupAgentSummary {
+    id: string;
+    name: string;
+    monitorId: number | null;
+    enabled: boolean;
+    credentialActive: boolean;
+    intervalSeconds: number;
+    retentionCount: number;
+    createdAt: string;
+    health: "disabled" | "pending" | "healthy" | "failed" | "overdue";
+    lastErrorCode: string | null;
+    latestRun: BackupRunSummary | null;
+    lastCompletedRun: BackupRunSummary | null;
+    latestArchiveVerification: BackupVerification | null;
+    latestRestoreVerification: BackupVerification | null;
+}
+
 export interface HealthSummary {
     total: number;
     up: number;
@@ -230,6 +277,10 @@ export function watchLive(options: {
     snapshot: (signal?: AbortSignal) => Promise<void>;
     event: (event: LiveEvent) => void;
     error: (error: Error) => void;
+    /** Called after every (re)connect snapshot, for data the snapshot does not cover. */
+    ready?: () => void;
+    /** Backup agents, runs or verifications changed (the event carries no data). */
+    backups?: () => void;
     /** Deadline for one snapshot; overridable for tests. */
     snapshotTimeoutMs?: number;
     /** Abort the stream after this much silence; overridable for tests. */
@@ -364,6 +415,13 @@ export function watchLive(options: {
                         if (event.type === "ready" || event.type === "invalidate") {
                             await untilStreamDies(runSnapshot(), currentController.signal);
                             delay = 1000;
+                            if (event.type === "ready" && !stopped && epoch === generation) {
+                                options.ready?.();
+                            }
+                        } else if (event.type === "backups") {
+                            if (!stopped && epoch === generation) {
+                                options.backups?.();
+                            }
                         } else if (
                             (event.type === "metrics" || event.type === "heartbeat") &&
                             !stopped &&
@@ -474,6 +532,25 @@ export function fetchMonitor(
     signal?: AbortSignal
 ): Promise<{ ok: true; monitor: MonitorSummary & Record<string, unknown> }> {
     return request(`/api/v1/monitors/${id}`, { signal });
+}
+
+/**
+ * Fetch recent heartbeats for a monitor.
+ * @param id Monitor id
+ * @param limit How many to take
+ * @param signal Cancels the request when the caller's deadline fires
+ * @returns Heartbeats newest first, plus the total
+ */
+export async function fetchHeartbeats(
+    id: number,
+    limit = 120,
+    signal?: AbortSignal
+): Promise<{ heartbeats: HeartbeatEntry[]; total: number }> {
+    const body = await request<{ heartbeats?: HeartbeatEntry[]; total?: number }>(
+        `/api/v1/monitors/${id}/heartbeats?limit=${limit}`,
+        { signal }
+    );
+    return { heartbeats: body.heartbeats ?? [], total: body.total ?? 0 };
 }
 
 /**
@@ -848,4 +925,45 @@ export function login(payload: { password: string }): Promise<LoginResult> {
  */
 export function fetchMe(): Promise<{ ok: true; user: AuthUser; scopes: string[] }> {
     return request("/api/v1/auth/me");
+}
+
+/**
+ * Linked backup agents for a monitor, or every agent when no id is given.
+ * @param monitorId Optional monitor link
+ * @param signal Cancels the request
+ */
+export function fetchBackupAgents(
+    monitorId?: number,
+    signal?: AbortSignal
+): Promise<{ ok: true; agents: BackupAgentSummary[]; nextCursor: string | null }> {
+    const suffix = monitorId === undefined ? "" : `?monitorId=${encodeURIComponent(String(monitorId))}`;
+    return request(`/api/v1/backup-agents${suffix}`, { signal });
+}
+
+/**
+ * Newest-first run history for one agent.
+ * @param agentId Agent UUID
+ * @param signal Cancels the request
+ */
+export function fetchBackupRuns(
+    agentId: string,
+    signal?: AbortSignal
+): Promise<{ ok: true; runs: BackupRunSummary[]; nextCursor: string | null }> {
+    return request(`/api/v1/backup-agents/${encodeURIComponent(agentId)}/runs`, { signal });
+}
+
+/**
+ * A single-use URL for one completed bundle. The server binds the ticket to
+ * the run, expires it within minutes and consumes it on first use, so the
+ * browser can stream the bundle to disk with a plain navigation: nothing is
+ * buffered in JavaScript and no long-lived token ever appears in a URL.
+ * @param runId Run UUID
+ * @param signal Cancels the ticket request
+ */
+export async function backupDownloadUrl(runId: string, signal?: AbortSignal): Promise<string> {
+    const result = await request<{ ok: true; runId: string; url: string; expiresAt: string }>(
+        `/api/v1/backup-runs/${encodeURIComponent(runId)}/download-ticket`,
+        { method: "POST", signal }
+    );
+    return `${BASE}${result.url}`;
 }

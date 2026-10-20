@@ -46,6 +46,19 @@ func drainTestServer(t *testing.T, failFirst int) (*httptest.Server, func() []fl
 	}
 }
 
+// testDeliver runs the delivery loop with test pacing: no drain-start
+// jitter and a short gap, so a three-sample backlog drains in milliseconds.
+func testDeliver(ctx context.Context, buffer *sampleBuffer, client pusher, interval time.Duration) error {
+	return newTestDelivery(client, buffer, interval).run(ctx)
+}
+
+func newTestDelivery(client pusher, buffer *sampleBuffer, interval time.Duration) *delivery {
+	d := newDelivery(client, buffer, interval)
+	d.drainJitter = 0
+	d.drainGap = time.Millisecond
+	return d
+}
+
 func waitForDrain(t *testing.T, buffer *sampleBuffer, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -119,7 +132,7 @@ func TestDeliverBufferedQuarantinesRejectedHead(t *testing.T) {
 	cfg := &Config{ServerURL: server.URL, PushToken: "tok", AllowInsecure: true}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- deliverBuffered(ctx, buffer, newPushClient(cfg), 20*time.Millisecond) }()
+	go func() { done <- testDeliver(ctx, buffer, newPushClient(cfg), 20*time.Millisecond) }()
 
 	waitForDrain(t, buffer, 5*time.Second)
 	cancel()
@@ -156,7 +169,7 @@ func TestDeliverBufferedQuarantinesTooLargePayload(t *testing.T) {
 	cfg := &Config{ServerURL: server.URL, PushToken: "tok", AllowInsecure: true}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- deliverBuffered(ctx, buffer, newPushClient(cfg), 20*time.Millisecond) }()
+	go func() { done <- testDeliver(ctx, buffer, newPushClient(cfg), 20*time.Millisecond) }()
 
 	waitForDrain(t, buffer, 5*time.Second)
 	cancel()
@@ -187,7 +200,7 @@ func TestDeliverBufferedKeepsBacklogOnConfigError(t *testing.T) {
 	cfg := &Config{ServerURL: server.URL, PushToken: "tok", AllowInsecure: true}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- deliverBuffered(ctx, buffer, newPushClient(cfg), 20*time.Millisecond) }()
+	go func() { done <- testDeliver(ctx, buffer, newPushClient(cfg), 20*time.Millisecond) }()
 
 	waitForDrain(t, buffer, 5*time.Second)
 	cancel()
@@ -242,7 +255,7 @@ func TestDeliverBufferedDrainsOldestFirst(t *testing.T) {
 	cfg := &Config{ServerURL: server.URL, PushToken: "tok", AllowInsecure: true}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- deliverBuffered(ctx, buffer, newPushClient(cfg), 50*time.Millisecond) }()
+	go func() { done <- testDeliver(ctx, buffer, newPushClient(cfg), 50*time.Millisecond) }()
 
 	waitForDrain(t, buffer, 5*time.Second)
 	cancel()
@@ -269,7 +282,7 @@ func TestDeliverBufferedRetriesSameSample(t *testing.T) {
 	cfg := &Config{ServerURL: server.URL, PushToken: "tok", AllowInsecure: true}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- deliverBuffered(ctx, buffer, newPushClient(cfg), 20*time.Millisecond) }()
+	go func() { done <- testDeliver(ctx, buffer, newPushClient(cfg), 20*time.Millisecond) }()
 
 	waitForDrain(t, buffer, 5*time.Second)
 	cancel()

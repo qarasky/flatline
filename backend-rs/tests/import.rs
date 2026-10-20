@@ -187,7 +187,10 @@ async fn imports_the_production_shape() {
     let data_dir = dir.path().join("data");
     let report = import::run(&old_path, &data_dir, false).await.unwrap();
 
-    assert_eq!(report.monitors, 5, "http + push + group + ping + legacy zero-timeout");
+    assert_eq!(
+        report.monitors, 5,
+        "http + push + group + ping + legacy zero-timeout"
+    );
     assert!(
         report.skipped_monitors.is_empty(),
         "{:?}",
@@ -247,8 +250,8 @@ async fn imports_the_production_shape() {
     assert_eq!(legacy_timeout, 48);
 
     // Imported API keys still verify through the real auth path.
-    assert!(auth::verify_token(&new, "uk7_secret").await);
-    assert!(!auth::verify_token(&new, "wrong").await);
+    assert_eq!(auth::verify_token(&new, "uk7_secret").await, Ok(true));
+    assert_eq!(auth::verify_token(&new, "wrong").await, Ok(false));
     let scheme: String = sqlx::query_scalar("SELECT scheme FROM tokens WHERE id = 7")
         .fetch_one(&new)
         .await
@@ -269,6 +272,7 @@ async fn imports_the_production_shape() {
     assert_eq!(
         flatline_backend::status_pages::resolve_host(&new, "status.bes.media")
             .await
+            .unwrap()
             .as_deref(),
         Some("clients")
     );
@@ -298,4 +302,95 @@ async fn imports_the_production_shape() {
         .await
         .unwrap();
     assert_eq!(monitors, 5);
+}
+
+#[tokio::test]
+async fn import_is_atomic_pages_large_tables_and_skips_bad_times() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_path = dir.path().join("old.db");
+    let old = old_database(&old_path).await;
+
+    // More heartbeats than one importer page, so paging must carry on.
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 12000)
+         INSERT INTO heartbeat (monitor_id, time, status, important)
+         SELECT 46, '2026-10-12 20:00:00', 1, 0 FROM n",
+    )
+    .execute(&old)
+    .await
+    .unwrap();
+    // Metric rows without a usable time: the old default of '' made the
+    // rollup stop forever. They are skipped and reported.
+    for time in ["NULL", "''", "'not a time'"] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO monitor_metric (monitor_id, time, payload) VALUES (46, {time}, '{{}}')"
+        )))
+        .execute(&old)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO monitor_metric_hourly (monitor_id, time, samples) VALUES (46, NULL, 1)",
+    )
+    .execute(&old)
+    .await
+    .unwrap();
+
+    let data_dir = dir.path().join("data");
+    let report = import::run(&old_path, &data_dir, false).await.unwrap();
+    assert_eq!(report.heartbeats, 12003, "every page is imported");
+    assert_eq!(report.metrics_raw, 1);
+    assert_eq!(report.metrics_hourly, 1);
+    assert_eq!(report.bad_time_metrics, 4);
+    assert!(
+        report.warnings.iter().any(|w| w.contains("unparseable time")),
+        "{:?}",
+        report.warnings
+    );
+
+    let new = flatline_backend::db::connect(&data_dir).await.unwrap();
+    let blank: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metrics_raw WHERE time = ''")
+        .fetch_one(&new)
+        .await
+        .unwrap();
+    assert_eq!(blank, 0);
+
+    // Rollup state from the wiped data must not survive a --force import:
+    // the next rollup has to reconcile the imported window in full.
+    sqlx::query("INSERT INTO metrics_rollup_state (name, value) VALUES ('repair_cursor', '2026-10-12 00:00:00.000')")
+        .execute(&new)
+        .await
+        .unwrap();
+    import::run(&old_path, &data_dir, true).await.unwrap();
+    let state: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metrics_rollup_state")
+        .fetch_one(&new)
+        .await
+        .unwrap();
+    assert_eq!(state, 0, "clear() resets the rollup state");
+
+    // A failure part-way (a status-page group pointing at a missing page
+    // violates a foreign key, after monitors and heartbeats were written)
+    // leaves the database exactly as it was: the wipe rolls back too.
+    sqlx::query("INSERT INTO `group` (id, name, weight, public, status_page_id) VALUES (9, 'broken', 1, 1, 999)")
+        .execute(&old)
+        .await
+        .unwrap();
+    old.close().await;
+    let before: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM monitors), (SELECT COUNT(*) FROM heartbeats),
+                (SELECT COUNT(*) FROM tokens)",
+    )
+    .fetch_one(&new)
+    .await
+    .unwrap();
+    assert!(import::run(&old_path, &data_dir, true).await.is_err());
+    let after: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM monitors), (SELECT COUNT(*) FROM heartbeats),
+                (SELECT COUNT(*) FROM tokens)",
+    )
+    .fetch_one(&new)
+    .await
+    .unwrap();
+    assert_eq!(before, after, "a failed import is all-or-nothing");
+    assert_eq!(after.0, 5);
 }

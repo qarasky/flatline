@@ -46,6 +46,12 @@ export interface StatusPageSnapshot {
      * incidents, so history has to be fetched separately.
      */
     history: Incident[];
+    /**
+     * Parts that failed to load and were filled from `options.previous` (or
+     * left empty when there was nothing previous). Absent when everything
+     * loaded, so a caller that ignores it sees the old shape.
+     */
+    degraded?: ("heartbeats" | "history")[];
 }
 
 export interface FetchOptions {
@@ -56,6 +62,12 @@ export interface FetchOptions {
     cookie?: string | null;
     /** Abort long-lived fetches when a render is cancelled. */
     signal?: AbortSignal;
+    /**
+     * Last good snapshot. When the heartbeat or history request fails, its
+     * data is kept instead of being replaced with nothing — a failed
+     * heartbeat fetch used to become `{}` and blank every bar.
+     */
+    previous?: Pick<StatusPageSnapshot, "heartbeats" | "history"> | null;
 }
 
 function joinUrl(base: string, path: string): string {
@@ -108,31 +120,33 @@ export async function fetchStatusPage(
 ): Promise<StatusPageSnapshot> {
     const encoded = encodeURIComponent(slug.toLowerCase());
 
-    // An empty page must still render, so a failing history fetch degrades to
-    // "no recent incidents" rather than a 500.
-    const fallbackHistory: IncidentHistoryPage = {
-        ok: true,
-        incidents: [],
-        total: 0,
-        nextCursor: null,
-        hasMore: false,
-    };
-
+    // An empty page must still render, so a failing heartbeat or history
+    // fetch degrades to the previous data (or none) rather than an error.
+    // `null` marks a failed optional part, distinct from an empty success.
     const [data, heartbeat, history] = await Promise.all([
         readJson<StatusPageData>(joinUrl(baseUrl, `/api/status-page/${encoded}`), options),
         readJson<{ ok: boolean; heartbeatList: Record<string, Heartbeat[]> }>(
             joinUrl(baseUrl, `/api/status-page/heartbeat/${encoded}`),
             options
-        ).catch(() => ({ ok: false, heartbeatList: {} })),
+        ).catch(() => null),
         readJson<IncidentHistoryPage>(joinUrl(baseUrl, `/api/status-page/${encoded}/incident-history`), options).catch(
-            () => fallbackHistory
+            () => null
         ),
     ]);
 
+    const degraded: ("heartbeats" | "history")[] = [];
+    if (!heartbeat) {
+        degraded.push("heartbeats");
+    }
+    if (!history) {
+        degraded.push("history");
+    }
+
     return {
         data,
-        heartbeats: heartbeat.heartbeatList ?? {},
-        history: history.incidents ?? [],
+        heartbeats: heartbeat ? (heartbeat.heartbeatList ?? {}) : (options.previous?.heartbeats ?? {}),
+        history: history ? (history.incidents ?? []) : (options.previous?.history ?? []),
+        ...(degraded.length > 0 ? { degraded } : {}),
     };
 }
 

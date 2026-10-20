@@ -2,13 +2,16 @@
 
 pub mod api_keys;
 pub mod auth;
+pub mod backups;
 pub mod badges;
+pub mod limits;
 pub mod links;
 pub mod metrics;
 pub mod monitors;
 pub mod notifications;
 pub mod openapi;
 pub mod provisioning;
+pub mod public_cache;
 pub mod push;
 pub mod status_pages;
 pub mod stream;
@@ -83,8 +86,16 @@ impl IntoResponse for ApiError {
 /// path), badges, the status-page read API, `robots.txt` and the OpenAPI
 /// document. Everything else under `/api/v1` needs a bearer token. The SPA
 /// fallback answers the remaining GET/HEAD paths when a build exists.
+///
+/// Request budgets are applied per route group (see [`limits`]): most
+/// groups get [`limits::DEFAULT_TIMEOUT`] and a slot from the instance-wide
+/// in-flight cap; the public reads get a shorter timeout and their own,
+/// tighter concurrency limit; the SSE stream and agent binary downloads are
+/// deliberately exempt from the timeout. A new long-running group (uploads)
+/// must be merged with its own budget rather than the default.
 pub fn router(state: AppState) -> Router {
     let public = Router::new()
+        .route("/healthz", get(healthz))
         .route("/api/v1/auth/setup", get(auth::setup_status))
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/openapi.json", get(openapi::document))
@@ -93,11 +104,18 @@ pub fn router(state: AppState) -> Router {
         .route("/llms.txt", get(provisioning::llms))
         .route("/agent/install.sh", get(provisioning::installer))
         .route("/agent/sha256sums", get(provisioning::checksums))
-        .route("/agent/version", get(provisioning::version))
-        // Serves whatever builds the deployment ships (name: superboard-<os>-<arch>).
-        // Static routes above win over this parameter, so version/checksums
-        // and the installer are never shadowed.
-        .route("/agent/{file}", get(provisioning::agent_file))
+        .route("/agent/version", get(provisioning::version));
+
+    // Serves whatever builds the deployment ships (name: superboard-<os>-<arch>).
+    // Static routes above win over this parameter, so version/checksums
+    // and the installer are never shadowed. No timeout: the body streams a
+    // ~10 MB binary to hosts on slow links.
+    let agent_downloads = Router::new().route("/agent/{file}", get(provisioning::agent_file));
+
+    // Status pages and badges: polled by every open page, wall screen and
+    // README; cached (`public_cache`) and capped here so a flood cannot
+    // starve the pool.
+    let public_reads = Router::new()
         .route(
             "/api/status-page/resolve-host",
             get(status_pages::resolve_host),
@@ -144,6 +162,13 @@ pub fn router(state: AppState) -> Router {
     let agent = Router::new()
         .route("/api/push/{pushToken}", get(push::push).post(push::push))
         .layer(DefaultBodyLimit::max(256 * 1024));
+
+    // Backup agents authenticate with their own credential, never an operator
+    // token or a monitor push token; each handler is scoped to the agent
+    // UUID. Transfers (chunks, completion, download) are a separate group so
+    // they can be exempt from request-wide timeouts.
+    let backup_agent = backups::agent_routes(state.clone());
+    let backup_transfers = backups::transfer_routes(state.clone());
 
     let authed = Router::new()
         .route("/api/v1/health", get(health))
@@ -202,15 +227,74 @@ pub fn router(state: AppState) -> Router {
             patch(api_keys::patch).delete(api_keys::delete),
         )
         .route("/api/v1/monitor-types", get(monitor_types))
+        .route(
+            "/api/v1/backup-agents",
+            get(backups::list_agents).post(backups::create_agent),
+        )
+        .route("/api/v1/backup-agents/{id}", patch(backups::patch_agent))
+        .route(
+            "/api/v1/backup-agents/{id}/rotate-token",
+            post(backups::rotate_token),
+        )
+        .route(
+            "/api/v1/backup-agents/{id}/revoke-token",
+            post(backups::revoke_token),
+        )
+        .route("/api/v1/backup-agents/{id}/runs", get(backups::list_runs))
+        .route(
+            "/api/v1/backup-runs/{id}/verification",
+            post(backups::verify_run),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::require_token,
+        ));
+
+    // The SSE stream: authenticated like the rest, but long-lived by
+    // design, so no request timeout.
+    let stream = Router::new()
         .route("/api/v1/events", get(stream::events))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_token,
         ));
 
-    public
-        .merge(agent)
-        .merge(authed)
+    let standard = |router: Router<AppState>| {
+        limits::with_concurrency_limit(
+            limits::with_timeout(router, limits::DEFAULT_TIMEOUT),
+            &limits::GLOBAL_SLOTS,
+            limits::GLOBAL_WAIT,
+            limits::global_busy,
+        )
+    };
+    // Exempt groups still take a global slot, released as soon as the
+    // response head is out (a streaming body does not hold it).
+    let untimed = |router: Router<AppState>| {
+        limits::with_concurrency_limit(
+            router,
+            &limits::GLOBAL_SLOTS,
+            limits::GLOBAL_WAIT,
+            limits::global_busy,
+        )
+    };
+    let public_reads = limits::with_concurrency_limit(
+        limits::with_timeout(public_reads, limits::PUBLIC_TIMEOUT),
+        &limits::PUBLIC_SLOTS,
+        limits::PUBLIC_WAIT,
+        limits::public_busy,
+    );
+
+    standard(public)
+        .merge(public_reads)
+        .merge(untimed(agent_downloads))
+        .merge(standard(agent))
+        .merge(standard(authed))
+        .merge(untimed(stream))
+        // Backup agents: control calls take the normal budget; chunk uploads,
+        // finalization (hashes up to 8 GiB) and downloads enforce their own
+        // body deadlines instead of the request timeout.
+        .merge(standard(backup_agent))
+        .merge(untimed(backup_transfers))
         .fallback(web::fallback)
         .with_state(state)
 }
@@ -229,8 +313,8 @@ struct HealthRow {
 ///
 /// Shape matches the Node backend: `{ok, health: {total, up, down, pending,
 /// maintenance, paused, downMonitors, status}}`.
-async fn health(State(state): State<AppState>) -> impl IntoResponse {
-    let rows: Vec<HealthRow> = sqlx::query_as(
+async fn health(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let rows: Vec<HealthRow> = match sqlx::query_as(
         "SELECT m.id, m.active, m.name, m.url,
                 (SELECT h.status FROM heartbeats h
                   WHERE h.monitor_id = m.id
@@ -239,7 +323,18 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     )
     .fetch_all(&state.pool)
     .await
-    .unwrap_or_default();
+    {
+        Ok(rows) => rows,
+        // A9: a database failure used to read as an empty, healthy fleet.
+        Err(error) => {
+            tracing::error!("health: {error}");
+            return Err(ApiError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                error: "unavailable",
+                message: "Database unavailable.".to_string(),
+            });
+        }
+    };
 
     let mut total = 0;
     let mut up = 0;
@@ -267,7 +362,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         }
     }
 
-    Json(json!({
+    Ok(Json(json!({
         "ok": true,
         "health": {
             "total": total,
@@ -279,7 +374,58 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
             "downMonitors": down_monitors,
             "status": if down > 0 { "down" } else { "up" },
         }
-    }))
+    })))
+}
+
+/// Bound on the `/healthz` database probe.
+const HEALTHZ_DB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// `GET /healthz`: unauthenticated liveness for the container healthcheck.
+///
+/// 200 `{"status":"ok",...}` only when `SELECT 1` answers within 2 s and
+/// the engine is running with a fresh watchdog tick (the watchdog also
+/// supervises the check loops); otherwise 503 with the reason. Cheap: one
+/// trivial query, no table reads, nothing about individual monitors.
+async fn healthz(State(state): State<AppState>) -> Response {
+    let started = std::time::Instant::now();
+    let probe = tokio::time::timeout(
+        HEALTHZ_DB_TIMEOUT,
+        sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&state.pool),
+    )
+    .await;
+    let db = match probe {
+        Ok(Ok(1)) => Ok(()),
+        Ok(Ok(_)) => Err("database probe returned an unexpected value"),
+        Ok(Err(_)) => Err("database error"),
+        Err(_) => Err("database probe timed out"),
+    };
+    let db_ms = started.elapsed().as_millis() as u64;
+
+    let liveness = state.engine.liveness();
+    let engine = liveness.check();
+    let body = |status: &str, reason: Option<&str>| {
+        json!({
+            "status": status,
+            "reason": reason,
+            "db": { "ok": db.is_ok(), "latencyMs": db_ms },
+            "engine": {
+                "ok": engine.is_ok(),
+                "running": liveness.running,
+                "tickAgeMs": liveness.tick_age.map(|age| age.as_millis() as u64),
+                "loops": liveness.loops,
+                "stalled": liveness.stalled,
+            },
+        })
+    };
+
+    match db.and(engine) {
+        Ok(()) => (StatusCode::OK, Json(body("ok", None))).into_response(),
+        Err(reason) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(body("unavailable", Some(reason))),
+        )
+            .into_response(),
+    }
 }
 
 /// Types and writable fields, as the monitor form expects.

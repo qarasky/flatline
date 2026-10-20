@@ -26,9 +26,29 @@ func hasSystemd() bool {
 	return err == nil && info.IsDir()
 }
 
+// unitPath is where install writes the unit.
+const unitPath = "/etc/systemd/system/" + systemdUnitName + ".service"
+
+// unitMarker identifies a unit this tool wrote; refresh-unit leaves any
+// other file alone.
+const unitMarker = "Description=Flatline Superboard agent"
+
 // unitFile renders the systemd unit. Type=simple with Restart=always: the
 // agent is a loop, not a daemon that forks, and a crash should come back.
 func unitFile(binaryPath, configPath string) string {
+	return renderUnit(fmt.Sprintf("%s run --config %s", binaryPath, configPath))
+}
+
+// renderUnit renders the unit around an ExecStart command line.
+//
+// KillMode=process: stopping or restarting the service signals the agent
+// process only. The update helper normally runs in its own transient unit
+// (systemd-run), but on hosts where that is unavailable it is a setsid'd
+// child of the agent, and with the default control-group mode the restart
+// it issues would kill it before it could health-check or roll back. The
+// agent's other children are short collector commands, each bounded by a
+// timeout, so leaving them to finish costs nothing.
+func renderUnit(execStart string) string {
 	return fmt.Sprintf(`[Unit]
 Description=Flatline Superboard agent
 Documentation=https://github.com/artchsh/flatline
@@ -37,15 +57,96 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%s run --config %s
+ExecStart=%s
 Restart=always
 RestartSec=10
+# Only the agent process is signalled on stop/restart, so a self-update
+# helper started as its child survives the restart it performs.
+KillMode=process
+TimeoutStopSec=30
 # The Docker socket is root-owned; the agent only reads from it.
 User=root
 
 [Install]
 WantedBy=multi-user.target
-`, binaryPath, configPath)
+`, execStart)
+}
+
+// refreshedUnit returns the current template for an existing unit file,
+// keeping its ExecStart (binary and config paths are the host's, not ours
+// to guess). ok is false for a file this tool did not write or that has no
+// ExecStart.
+func refreshedUnit(existing string) (string, bool) {
+	if !strings.Contains(existing, unitMarker) {
+		return "", false
+	}
+	for _, line := range strings.Split(existing, "\n") {
+		if cmdline, found := strings.CutPrefix(strings.TrimSpace(line), "ExecStart="); found && cmdline != "" {
+			return renderUnit(cmdline), true
+		}
+	}
+	return "", false
+}
+
+// refreshUnitFile brings an installed unit up to the current template. It
+// reports whether the file changed; the caller reloads systemd.
+func refreshUnitFile(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	want, ok := refreshedUnit(string(data))
+	if !ok {
+		return false, fmt.Errorf("%s was not written by superboard install; leaving it alone", path)
+	}
+	if want == string(data) {
+		return false, nil
+	}
+	tmp := path + ".new"
+	if err := os.WriteFile(tmp, []byte(want), 0o644); err != nil {
+		return false, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return false, err
+	}
+	return true, nil
+}
+
+// cmdRefreshUnit is the hidden `refresh-unit` command: rewrite the unit on
+// an existing host and reload systemd. Installs made by older releases
+// keep their unit file forever otherwise — `install.sh --update` and the
+// self-update path only ever replaced the binary.
+func cmdRefreshUnit() error {
+	if !hasSystemd() {
+		return nil
+	}
+	changed, err := refreshUnitFile(unitPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	log.Printf("superboard: refreshed %s", unitPath)
+	return systemctl("daemon-reload")
+}
+
+// refreshUnitIfManaged runs the refresh from inside the service at
+// startup, which is what upgrades hosts whose update helper is a copy of an
+// older binary that knows nothing about it. Only when running as root under
+// systemd (INVOCATION_ID is set for services); errors are logged, never
+// fatal.
+func refreshUnitIfManaged() {
+	if os.Geteuid() != 0 || os.Getenv("INVOCATION_ID") == "" || !hasSystemd() {
+		return
+	}
+	if err := cmdRefreshUnit(); err != nil {
+		log.Printf("superboard: unit refresh skipped: %v", err)
+	}
 }
 
 // cmdInstall writes config, installs the service, and starts it.
@@ -95,8 +196,6 @@ func cmdInstall(configPath, server, token string, interval int, insecure bool) e
 }
 
 func installSystemd(binaryPath, configPath string) error {
-	unitPath := "/etc/systemd/system/" + systemdUnitName + ".service"
-
 	if err := os.WriteFile(unitPath, []byte(unitFile(binaryPath, configPath)), 0o644); err != nil {
 		return fmt.Errorf("write unit: %w", err)
 	}
@@ -178,7 +277,7 @@ func cmdUninstall(configPath string) error {
 				log.Printf("superboard: systemctl %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 			}
 		}
-		if err := os.Remove("/etc/systemd/system/" + systemdUnitName + ".service"); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove unit: %w", err)
 		}
 		if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {

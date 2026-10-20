@@ -41,6 +41,14 @@ and no way to restrict a token. `GET /api/v1/api-keys` reports
 stored as SHA-256 hashes and plaintext is shown once at mint time; keys imported
 from the previous deployment's bcrypt hashes keep verifying.
 
+Imported (bcrypt) keys are the slow path, so it is fenced: a `flatline_` token is
+only ever checked by SHA-256, a verified imported key is cached for 10 minutes
+(its row is still read on every request, so revoking or expiring it applies at
+once), a token that failed is rejected without bcrypt for a minute, and more
+than 30 failed bcrypt checks a minute instance-wide answer `429` for further
+unknown non-`flatline_` tokens until the minute is up. `last_used_at` is updated
+at most once a minute per token.
+
 **Push token (agents).** A push token is a **second, independent credential**,
 created automatically with each `push` monitor (`pushToken` in the monitor JSON,
 also returned by `POST /api/v1/monitors`). It is not a bearer token and cannot
@@ -58,22 +66,38 @@ Success responses carry `"ok": true` plus endpoint data, for example
 `{"ok":true,"monitors":[...],"count":n,"pagination":{...}}`. Failures use
 `{"ok":false,"error":"bad_request","message":"..."}`, where `error` is a stable
 machine token (`bad_request`, `not_found`, `unauthorized`, `server_error`,
-`stream_limit`) and `message` is human text. Exceptions: the push endpoint uses
+`stream_limit`, `unavailable`, `rate_limited`, `timeout`, `busy`) and `message`
+is human text. Exceptions: the push endpoint uses
 `{"ok":false,"msg":"..."}`; badges answer `{"status":"fail","msg":...}` for a
-bad id; a gated status page answers `401` with `error:"password_required"` and a
+bad id or duration; a gated status page answers `401` with `error:"password_required"` and a
 missing page is plain-text `404`.
 
 | Code      | Meaning                                                                      | Where it occurs                                                      |
 | --------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | 200 / 201 | Success / Created                                                            | Reads and updates; `POST` monitors and API keys                      |
-| 400       | Validation failure; on push, "metrics dropped"                               | Bad type/`name`/range, bad `hours`/`ids`, invalid metrics            |
+| 400       | Validation failure; on push, "metrics dropped"; invalid badge duration       | Bad type/`name`/range, bad `hours`/`ids`, invalid metrics            |
 | 401       | Missing/invalid/inactive/expired token; locked status page                   | Any `/api/v1` route; gated status-page reads                         |
 | 403       | Invalid badge id                                                             | `/api/badge/{id}/...` with a non-numeric or non-positive id          |
 | 404       | Unknown resource, unknown/paused push monitor, no metrics, out-of-range ping | `.../{id}`, `POST /api/push/{pushToken}`                             |
+| 404       | Unpublished status page (without an operator token)                          | Every `/api/status-page/...` read and the unlock route               |
 | 409       | Not emitted today                                                            | A duplicate `pushToken` hits the unique index but is reported as 500 |
 | 413       | Body over the 256 KB limit                                                   | `POST /api/push/{pushToken}`                                         |
 | 429       | Too many live SSE connections                                                | `GET /api/v1/events` (`stream_limit`)                                |
-| 500       | Storage failure                                                              | Any handler                                                          |
+| 429       | Too many failed imported-key checks; public reads saturated (`rate_limited`) | Token-checked routes; status-page and badge routes (`Retry-After`)   |
+| 500       | Storage failure                                                              | Any handler except the push endpoint                                 |
+| 503       | Token store unreadable (`unavailable`); budget exceeded (`timeout`, `busy`)  | Token-checked routes; any timed route (`Retry-After`)                |
+| 503       | Storage failure on push (transient), with `Retry-After`                      | `POST /api/push/{pushToken}`                                         |
+| 503       | `/healthz`: database or check engine unhealthy (`reason`)                    | `GET /healthz`                                                       |
+
+A `503 unavailable` says nothing about the token: clients must retry rather than
+sign out. Only a `401` means the token is wrong.
+
+**Request budgets.** API, provisioning and push requests must produce a response
+within 30 s and share an in-flight cap of 256 (`503 timeout` / `503 busy`).
+Status-page and badge reads have a 15 s budget and their own cap of 16 in-flight
+requests (a request waits up to 2 s for a slot, then `429`). The cap is
+instance-wide, not per IP: behind the tunnel every request has the same source.
+The SSE stream and agent binary downloads have no timeout.
 
 ## Endpoint reference
 
@@ -138,7 +162,12 @@ Pages are provisioned by the importer; this backend exposes reads, not page CRUD
 | GET    | `/api/status-page/{slug}/badge`                    | Aggregate page badge (SVG)                  |
 | POST   | `/api/v1/status-pages/unlock/{slug}`               | Submit the password; sets the unlock cookie |
 
-Gated reads answer `401` until unlocked. The unlock route accepts JSON
+Unpublished pages answer `404` on every route above (as if the slug did not
+exist) unless the request carries a valid operator bearer token, and
+`resolve-host` never maps to them. `resolve-host` answers `503 unavailable` when the
+lookup fails; `slug: null` always means the host is unmapped. Gated reads answer `401` until unlocked.
+Responses are cached for 10 s; the published flag and password are checked on
+every request. The unlock route accepts JSON
 (`{"password":"..."}`) or a form body and, on success, redirects with a signed
 cookie.
 
@@ -153,7 +182,11 @@ cookie.
 | GET    | `/api/badge/{id}/response`                                     | Latest heartbeat ping             |
 
 Badges honour `label`, `prefix`/`suffix`, `color` and `style`; only monitors on
-a public status-page group get real values, and everything else is grey `N/A`.
+a public group of a published status page get real values, and everything else
+is grey `N/A`. A `{duration}` is a positive number with an optional unit (`m`,
+`h`, `d`, `w`, `M`, `y`; hours by default); an unparseable or unrepresentable one
+answers `400`, and any window is clamped to the heartbeat retention (365 days
+when retention is off). Values are cached for 10 s.
 
 ### Provisioning and agent downloads
 
@@ -173,9 +206,21 @@ Outside `/api/v1`, authenticated by an operator token or a push token.
 
 | Method    | Path                    | Purpose                                           |
 | --------- | ----------------------- | ------------------------------------------------- |
+| GET       | `/healthz`              | Liveness, no token (see below)                    |
 | GET       | `/api/v1/health`        | Totals: up/down/pending/paused and `downMonitors` |
 | GET       | `/api/v1/events`        | SSE stream; `?metrics=0` drops metrics events     |
 | GET, POST | `/api/push/{pushToken}` | Agent heartbeat plus optional metrics             |
+
+`GET /healthz` needs no token and is cheap (one `SELECT 1`, no table reads). It
+answers `200` with `{"status":"ok","reason":null,"db":{...},"engine":{...}}`
+only when the database answers within 2 s and the check engine is running with
+a watchdog tick younger than 30 s; otherwise `503` with `"status":"unavailable"`
+and a `reason` (`database error`, `database probe timed out`, `engine not
+running`, `engine watchdog stalled`). `engine` reports `running`, `tickAgeMs`,
+`loops` and `stalled`. `/api/v1/health` answers `503`
+(`{"ok":false,"error":"unavailable"}`) when its query fails, instead of an
+empty fleet reported as up. SSE streams end when the server shuts down; clients
+reconnect as they do after the 15-minute lifetime.
 
 ## The push contract
 
@@ -188,12 +233,31 @@ active monitor by token in the path; a missing or paused monitor answers `404`.
   limited to 64 KB; the whole body is limited to 256 KB (`413` beyond that).
 - A legacy POST/GET records a heartbeat, then stores metrics. If the metrics are
   rejected the answer is `400` with "Heartbeat recorded, metrics dropped: ..." —
-  the heartbeat stands.
+  the heartbeat stands. A non-empty body that is not valid JSON is rejected the
+  same way (it used to be accepted with `{"ok":true}` and its metrics silently
+  lost); an empty or whitespace-only body is a plain heartbeat.
 - `?telemetry=1` (POST with metrics) takes a fast path: while the previous beat
   is UP and the heartbeat spacing (one third of the interval, clamped to 1–30s)
   has not elapsed, the sample is stored **without** a heartbeat row and the
   answer is `{"ok":true}`. A metrics failure here answers `400` ("Metrics
   dropped: ...") because no heartbeat was written.
+
+Push status codes are a contract with the agent, which treats them differently:
+
+| Code | Meaning                                                    | Sender should                                 |
+| ---- | ---------------------------------------------------------- | --------------------------------------------- |
+| 200  | Stored                                                     | Move on                                       |
+| 400  | Validation failure only: invalid metrics, body is not JSON | Not retry; the same payload fails identically |
+| 404  | Unknown or paused monitor, out-of-range ping               | Fix the token or monitor; keep the backlog    |
+| 413  | Body over 256 KB                                           | Not retry                                     |
+| 503  | Storage or database failure (lock timeout, disk full, ...) | Keep the sample and retry after `Retry-After` |
+
+A `503` carries `Retry-After: <seconds>` (5–30, jittered so a fleet does not
+retry in lockstep) and `{"ok":false,"msg":...}`. It is answered whether the
+heartbeat, the metrics or the token lookup failed; when only the metrics write
+failed the message says the heartbeat was recorded. A storage failure is never
+a `400` or a `404`: those would make the agent drop the sample or treat a
+database hiccup as a bad token.
 
 ## Monitor types and fields
 
@@ -232,8 +296,8 @@ post its whole payload. `interval` must be at least 20 and a bad value is a
   `pending`, `maintenance`); `active` is `true`/`false`; `q` matches `name` or
   `url` (first 100 chars). The response carries a `pagination` object with
   `page`, `perPage`, `total`, `totalPages` and `hasMore`.
-- **Heartbeats** — `limit` defaults to 100 and is capped at 1000; `total` is the
-  true stored count.
+- **Heartbeats** — `limit` defaults to 100 and is capped at 1000; rows are newest
+  first by `time` (then `id`); `total` is the true stored count.
 - **Bulk latest metrics** — `ids` is comma-separated, at most 200.
 - **Metrics summary** — `hours` defaults to 1 and may reach 17520 (two years).
   Windows up to 168h read raw ~30s snapshots; longer windows read hourly

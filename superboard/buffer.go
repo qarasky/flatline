@@ -6,10 +6,12 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,11 +40,22 @@ type sampleBuffer struct {
 	// wake is signalled (non-blocking, capacity one) whenever a sample is
 	// appended, so an idle sender does not poll.
 	wake chan struct{}
+
+	// writes counts samples written to disk, so tests can prove the healthy
+	// path never touches it.
+	writes atomic.Uint64
 }
 
 type bufferEntry struct {
 	path string
 	size int64
+	seq  uint64
+}
+
+// seqFromPath recovers the sequence number from a buffer file name.
+func seqFromPath(path string) uint64 {
+	v, _ := strconv.ParseUint(strings.TrimSuffix(filepath.Base(path), ".json"), 10, 64)
+	return v
 }
 
 // openSampleBuffer prepares the directory and recovers pending samples from
@@ -71,7 +84,7 @@ func openSampleBuffer(dir string, maxBytes int64) (*sampleBuffer, error) {
 		if err != nil {
 			continue
 		}
-		b.entries = append(b.entries, bufferEntry{path: path, size: info.Size()})
+		b.entries = append(b.entries, bufferEntry{path: path, size: info.Size(), seq: seqFromPath(path)})
 		b.bytes += info.Size()
 	}
 
@@ -96,8 +109,21 @@ func openSampleBuffer(dir string, maxBytes int64) (*sampleBuffer, error) {
 	return b, nil
 }
 
-// append writes one sample to disk. A write failure is logged and counted:
-// a full disk must degrade to lost samples, never to a stopped agent.
+// reserveSeq hands out the next position in the queue. The live path
+// reserves one when a sample is taken, before it knows whether the sample
+// will ever touch disk, so a sample that spills late (its push failed while
+// newer samples were already spilling) still sorts into its true place.
+func (b *sampleBuffer) reserveSeq() uint64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	seq := b.seq
+	b.seq++
+	return seq
+}
+
+// append writes one sample to disk, at its reserved position when it has
+// one. A write failure is logged and counted: a full disk must degrade to
+// lost samples, never to a stopped agent.
 func (b *sampleBuffer) append(payload *Payload) bool {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -106,27 +132,34 @@ func (b *sampleBuffer) append(payload *Payload) bool {
 		return false
 	}
 
-	b.mu.Lock()
-	final := filepath.Join(b.dir, fmt.Sprintf("%012d.json", b.seq))
-	b.seq++
-	b.mu.Unlock()
+	seq, reserved := payload.seq, payload.seqSet
+	if !reserved {
+		seq = b.reserveSeq()
+	}
+	final := filepath.Join(b.dir, fmt.Sprintf("%012d.json", seq))
 
 	tmp := final + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		log.Printf("buffer: write failed: %v", err)
+		bufferWriteLog.fail("write", "buffer: write failed (samples dropped until it recovers): %v", err)
 		_ = os.Remove(tmp)
 		stats.recordDrop()
 		return false
 	}
 	if err := os.Rename(tmp, final); err != nil {
-		log.Printf("buffer: rename failed: %v", err)
+		bufferWriteLog.fail("write", "buffer: rename failed (samples dropped until it recovers): %v", err)
 		_ = os.Remove(tmp)
 		stats.recordDrop()
 		return false
 	}
+	bufferWriteLog.ok("write", "buffer: writes recovered")
+
+	b.writes.Add(1)
 
 	b.mu.Lock()
-	b.entries = append(b.entries, bufferEntry{path: final, size: int64(len(data))})
+	entry := bufferEntry{path: final, size: int64(len(data)), seq: seq}
+	// Sorted insert by sequence; almost always the tail.
+	i := sort.Search(len(b.entries), func(i int) bool { return b.entries[i].seq > seq })
+	b.entries = slices.Insert(b.entries, i, entry)
 	b.bytes += int64(len(data))
 	b.enforceCapLocked()
 	b.mu.Unlock()
@@ -218,6 +251,26 @@ func (b *sampleBuffer) quarantine(entry bufferEntry) {
 	b.discard(entry.path)
 }
 
+// quarantinePayload keeps a rejected sample that never reached the queue (a
+// live sample sent from memory) as evidence, best-effort and bounded.
+func (b *sampleBuffer) quarantinePayload(payload *Payload) {
+	dir := filepath.Join(b.dir, "quarantine")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.Printf("buffer: quarantine dir unavailable (%v); rejected sample dropped", err)
+		return
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	target := filepath.Join(dir, fmt.Sprintf("%d-live.json", time.Now().UnixNano()))
+	if err := os.WriteFile(target, data, 0o600); err != nil {
+		log.Printf("buffer: quarantine write failed: %v", err)
+		return
+	}
+	b.trimQuarantine(dir)
+}
+
 // trimQuarantine keeps the newest quarantineMaxFiles rejected payloads.
 func (b *sampleBuffer) trimQuarantine(dir string) {
 	names, err := filepath.Glob(filepath.Join(dir, "*.json"))
@@ -251,3 +304,7 @@ func (b *sampleBuffer) pending() int {
 	defer b.mu.Unlock()
 	return len(b.entries)
 }
+
+// bufferWriteLog keeps a full or read-only disk to one journal line per
+// episode instead of one per sample.
+var bufferWriteLog episodeLog

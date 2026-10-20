@@ -15,6 +15,8 @@ import {
     formatDuration,
     formatRate,
     groupSlug,
+    isPeakFresh,
+    isSampleStale,
     matchGroups,
     percentage,
     sampleAgeMs,
@@ -320,4 +322,18 @@ test("container freshness: old container lists are reported as old, never as cur
     assert.equal(containerAgeMs({}, sampledAt), null, "older agents carry no dockerAt");
     assert.equal(containerAgeMs({ dockerAt: "not a time" }, sampledAt), null);
     assert.equal(containerAgeMs(fresh, ""), null, "an unusable sample time says nothing");
+});
+
+test("card freshness flags match fleetAttention and only flip at the window edge", () => {
+    const t = "2026-10-09 11:59:50"; // 10 s before `now`
+    // Agent sampling every 2 s: window max(5, 6) = 6 s.
+    assert.equal(isSampleStale({ sampleInterval: 2 }, t, 60, now), true);
+    assert.equal(isSampleStale({ sampleInterval: 4 }, t, 60, now), false);
+    // No sample interval: the monitor interval, at least 60 s.
+    assert.equal(isSampleStale({}, t, 30, now), false);
+    assert.equal(isSampleStale({}, "2026-10-09 11:58:00", 30, now), true);
+    assert.equal(fleetAttention({ sampleInterval: 2 }, t, 60, now).stale, true);
+    assert.equal(isPeakFresh("2026-10-09 11:51:00", now), true);
+    assert.equal(isPeakFresh("2026-10-09 11:49:00", now), false);
+    assert.equal(isPeakFresh(null, now), false);
 });

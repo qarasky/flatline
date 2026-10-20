@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { historyPath } from "../src/lib/history-chart.ts";
+import { historyPath, historyRefreshMs, historyTimeoutMs } from "../src/lib/history-chart.ts";
 
 test("history charts preserve gaps instead of plotting missing samples as zero", () => {
     const from = "2026-10-09T00:00:00Z",
@@ -23,4 +23,16 @@ test("history charts preserve gaps instead of plotting missing samples as zero",
     assert.equal((path.match(/L/g) || []).length, 1);
     assert.ok(!path.includes("NaN"));
     assert.equal(historyPath([], "cpu", from, to, 30), "");
+});
+
+test("long history ranges refresh rarely and every request has a deadline", () => {
+    assert.equal(historyRefreshMs(1 / 6), 30_000);
+    assert.equal(historyRefreshMs(1), 30_000);
+    assert.equal(historyRefreshMs(24), 60_000);
+    assert.equal(historyRefreshMs(168), 300_000);
+    assert.equal(historyRefreshMs(720), 900_000);
+    assert.equal(historyRefreshMs(8760), 900_000);
+    for (const hours of [1, 24, 168, 8760]) {
+        assert.ok(historyTimeoutMs(hours) > 0 && historyTimeoutMs(hours) < historyRefreshMs(hours) + 60_000);
+    }
 });

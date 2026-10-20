@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -64,9 +65,10 @@ func TestPushRejectsAreNotRetried(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{ServerURL: server.URL, PushToken: "tok", IntervalSeconds: 60, AllowInsecure: true}
-	err := pushWithBackoff(newPushClient(cfg), &Payload{}, 0)
-	if err == nil {
-		t.Fatal("expected rejection error")
+	err := newPushClient(cfg).push(&Payload{})
+	var rejected *pushRejectedError
+	if !errors.As(err, &rejected) {
+		t.Fatalf("expected a rejection error, got %v", err)
 	}
 	if calls != 1 {
 		t.Fatalf("400 was retried %d times; deterministic failures must not retry", calls)

@@ -14,9 +14,12 @@
 //!   upserted on (monitor_id, time), so re-runs are idempotent.
 //! - Late samples also leave a dirty-hour marker at ingest. Buffered agents
 //!   can deliver a sample more than two hours after it was taken; the marker
-//!   forces the hour to be re-folded and is cleared once a run looked at it.
-//!   Markers for hours whose raw rows were pruned are dropped without
-//!   touching the bucket.
+//!   forces the hour to be re-folded and is cleared once a run looked at it —
+//!   only the markers that run actually read (by id), so a marker written
+//!   while the run works survives for the next one. Markers for hours whose
+//!   raw rows were pruned are dropped without touching the bucket.
+//! - A raw row whose time does not parse can never be folded or read; it is
+//!   skipped (never allowed to stop the job) and dropped by the raw prune.
 //! - Work is chunked by elapsed time (a gap splits a chunk rather than
 //!   stretching it) and each chunk is folded page by page, so no single
 //!   query materializes a long stretch of raw payloads; a first run
@@ -238,14 +241,17 @@ pub async fn reset_rollup_state(pool: &SqlitePool) -> sqlx::Result<()> {
 /// `cycle_floor` is the oldest hour with any raw evidence: hours below the
 /// retention boundary may hold survivors whose bucket is missing, and those
 /// must stay reachable.
+///
+/// Returns `(start, end, next_cursor)`. The caller persists `next_cursor`
+/// only after the window's fold succeeded: persisting it up front meant a
+/// failed run skipped its window until the sweep cycled back a month later.
 async fn next_repair_window(
     pool: &SqlitePool,
     cycle_floor: i64,
     newest_hour: i64,
-) -> sqlx::Result<(i64, i64)> {
+) -> sqlx::Result<(i64, i64, i64)> {
     let Some(cursor) = read_repair_cursor(pool).await? else {
-        write_repair_cursor(pool, newest_hour).await?;
-        return Ok((cycle_floor, newest_hour));
+        return Ok((cycle_floor, newest_hour, newest_hour));
     };
 
     let start = cycle_floor.max(cursor - REPAIR_WINDOW_HOURS * 3_600_000);
@@ -255,8 +261,47 @@ async fn next_repair_window(
     } else {
         start
     };
-    write_repair_cursor(pool, next).await?;
-    Ok((start, end))
+    Ok((start, end, next))
+}
+
+/// Upper bound on distinct unparseable `time` values skipped while looking
+/// for the oldest raw row; past it the scan starts at the retention boundary.
+const MAX_BAD_TIMES: usize = 64;
+
+/// The hour of the oldest raw row whose time parses.
+///
+/// `MIN(time)` alone let one unparseable row (an import defaulted `time` to
+/// `""`) end every run before the fold and the raw prune, forever. Rows are
+/// walked in time order on `metrics_raw_time_idx`, skipping bad values; each
+/// step is one index seek.
+async fn oldest_raw_hour(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Option<i64>> {
+    let mut after: Option<String> = None;
+    for _ in 0..MAX_BAD_TIMES {
+        let time: Option<String> = match &after {
+            None => {
+                sqlx::query_scalar("SELECT time FROM metrics_raw ORDER BY time LIMIT 1")
+                    .fetch_optional(pool)
+                    .await?
+            }
+            Some(previous) => {
+                sqlx::query_scalar(
+                    "SELECT time FROM metrics_raw WHERE time > ? ORDER BY time LIMIT 1",
+                )
+                .bind(previous)
+                .fetch_optional(pool)
+                .await?
+            }
+        };
+        let Some(time) = time else {
+            return Ok(None);
+        };
+        if let Some(ms) = metric_time(&time) {
+            return Ok(Some(hour_start(ms)));
+        }
+        tracing::warn!("rollup: skipping raw rows with unparseable time {time:?}");
+        after = Some(time);
+    }
+    Ok(Some(raw_boundary_hour(now_ms)))
 }
 
 /// Grouped raw counts per (monitor, hour) inside one window.
@@ -346,27 +391,43 @@ fn aggregate_chunk(rows: &[(i64, String, String)]) -> HashMap<(i64, i64), Bucket
 /// a crash or restart mid-backfill resumes rather than duplicating or losing
 /// hours.
 pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<RollupResult> {
+    rollup_run(pool, now_ms, async || {}).await
+}
+
+/// [`rollup_metrics`] with a hook that runs after the fold, before the run's
+/// bookkeeping is written: the window in which concurrent ingest used to
+/// lose dirty markers (tests drive it).
+async fn rollup_run<F: AsyncFnOnce()>(
+    pool: &SqlitePool,
+    now_ms: i64,
+    mid_run: F,
+) -> sqlx::Result<RollupResult> {
     let last_complete_hour = hour_start(now_ms) - 3_600_000;
 
+    // Markers up to this id existed before anything below was read; only
+    // they may be consumed by this run (ids are AUTOINCREMENT, and ingest
+    // re-inserts a marker with REPLACE, so a marker written mid-run always
+    // has a larger id).
+    let marker_snapshot: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM metrics_rollup_dirty")
+            .fetch_one(pool)
+            .await?;
+
     // The oldest raw sample defines how far back there is anything to fold.
-    let oldest: Option<String> = sqlx::query_scalar("SELECT MIN(time) FROM metrics_raw")
-        .fetch_one(pool)
-        .await?;
-    let oldest_hour = oldest.as_deref().and_then(metric_time).map(hour_start);
-    let Some(oldest_hour) = oldest_hour else {
+    let oldest_hour = oldest_raw_hour(pool, now_ms).await?;
+    let Some(oldest_hour) = oldest_hour.filter(|hour| *hour <= last_complete_hour) else {
+        // Nothing complete to fold. The verified prune still runs: it only
+        // deletes what is proven folded (plus unreadable rows), so an
+        // early return can never let the raw table grow without bound.
+        let raw = prune_raw(pool, now_ms, crate::metrics::METRICS_RETENTION_DAYS).await?;
         let pruned = prune_hourly(pool, now_ms).await?;
         return Ok(RollupResult {
             pruned,
+            pruned_raw: raw.deleted,
+            skipped_raw: raw.skipped,
             ..Default::default()
         });
     };
-    if oldest_hour > last_complete_hour {
-        let pruned = prune_hourly(pool, now_ms).await?;
-        return Ok(RollupResult {
-            pruned,
-            ..Default::default()
-        });
-    }
 
     // Raw rows are stamped inside their hour, so the window ends at the next
     // hour start; bucket keys are stamped at the hour start itself.
@@ -397,12 +458,15 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
     // sample is folded without looking at any other hour. A marker whose raw
     // rows were pruned, or whose hour predates the boundary, is dropped at
     // the end of the run without touching its bucket.
-    let dirty: Vec<(i64, String)> =
-        sqlx::query_as("SELECT monitor_id, hour FROM metrics_rollup_dirty WHERE hour >= ? AND hour <= ?")
-            .bind(&from)
-            .bind(sql_time_millis(last_complete_hour))
-            .fetch_all(pool)
-            .await?;
+    let dirty: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT monitor_id, hour FROM metrics_rollup_dirty
+         WHERE id <= ? AND hour >= ? AND hour <= ?",
+    )
+    .bind(marker_snapshot)
+    .bind(&from)
+    .bind(sql_time_millis(last_complete_hour))
+    .fetch_all(pool)
+    .await?;
     for (monitor_id, hour) in &dirty {
         let Some(hour) = metric_time(hour).map(hour_start) else {
             continue;
@@ -434,7 +498,8 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
     // still found within a cycle.
     let cycle_floor = oldest_hour.min(boundary_hour);
     let newest_hour = last_complete_hour + 3_600_000;
-    let (sweep_start, sweep_end) = next_repair_window(pool, cycle_floor, newest_hour).await?;
+    let (sweep_start, sweep_end, next_cursor) =
+        next_repair_window(pool, cycle_floor, newest_hour).await?;
     let sweep_rows = counts_in(pool, sweep_start, sweep_end).await?;
     mark_due_from_counts(
         &sweep_rows,
@@ -538,12 +603,19 @@ pub async fn rollup_metrics(pool: &SqlitePool, now_ms: i64) -> sqlx::Result<Roll
         }
     }
 
-    // Every marker inside the processed range has been considered: re-folded
-    // or dropped as evidence-free. A marker written while this run was
-    // working is safe either way: if its raw row landed before the count
-    // query it was folded, and if it landed after, the next run's count
-    // comparison sees the new row.
-    sqlx::query("DELETE FROM metrics_rollup_dirty WHERE hour <= ?")
+    mid_run().await;
+
+    // The sweep window is folded: only now may the cursor move past it.
+    write_repair_cursor(pool, next_cursor).await?;
+
+    // Every marker this run read has been considered: re-folded or dropped
+    // as evidence-free. Markers older than the oldest raw row were in the
+    // snapshot too and have no evidence left. A marker written while this
+    // run was working has a larger id and stays for the next run — deleting
+    // by hour used to drop it, leaving its hour stale until the sweep came
+    // back around.
+    sqlx::query("DELETE FROM metrics_rollup_dirty WHERE id <= ? AND hour <= ?")
+        .bind(marker_snapshot)
         .bind(sql_time_millis(last_complete_hour))
         .execute(pool)
         .await?;
@@ -670,8 +742,10 @@ pub async fn prune_raw(
         .collect();
 
     let mut outcome = RawPruneOutcome::default();
+    let mut unreadable: HashSet<&str> = HashSet::new();
     for (monitor_id, hour, samples) in &expired {
         let Some(hour) = metric_time(hour).map(hour_start) else {
+            unreadable.insert(hour.as_str());
             continue;
         };
         let stored_samples = covered.get(&(*monitor_id, hour)).copied();
@@ -691,6 +765,35 @@ pub async fn prune_raw(
         .execute(pool)
         .await?;
         outcome.deleted += 1;
+    }
+
+    // Rows whose time does not parse sort below the cutoff but belong to no
+    // hour: nothing can fold or read them, and keeping them meant they were
+    // re-grouped on every run forever. Drop them in bounded statements and
+    // say so.
+    let mut dropped = 0;
+    for key in unreadable {
+        loop {
+            let result = sqlx::query(
+                "DELETE FROM metrics_raw WHERE id IN (
+                     SELECT id FROM metrics_raw
+                     WHERE time < ? AND substr(replace(time, 'T', ' '), 1, 13) || ':00:00' = ?
+                     LIMIT ?
+                 )",
+            )
+            .bind(sql_time_millis(cutoff_hour))
+            .bind(key)
+            .bind(ROWS_PER_PAGE)
+            .execute(pool)
+            .await?;
+            dropped += result.rows_affected();
+            if result.rows_affected() < ROWS_PER_PAGE as u64 {
+                break;
+            }
+        }
+    }
+    if dropped > 0 {
+        tracing::warn!("rollup: dropped {dropped} raw row(s) with an unparseable time");
     }
 
     if outcome.skipped > 0 {
@@ -1312,6 +1415,146 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(avg, 33.0, "the sweep repaired the missing bucket");
+    }
+
+    #[tokio::test]
+    async fn marker_written_mid_run_survives_for_the_next_run() {
+        // S3: markers were deleted by `hour <= last_complete_hour` at the end
+        // of a run, including one written while the run was folding; that
+        // hour then stayed stale until the sweep cycled back.
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::connect(&dir.keep()).await.unwrap();
+        let (monitor_id,): (i64,) =
+            sqlx::query_as("INSERT INTO monitors (name, type) VALUES ('m', 'push') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let metrics = crate::metrics::Metrics::new(pool.clone(), crate::events::Events::new());
+
+        let now = chrono::Utc::now().timestamp_millis();
+        // Old enough that the overlap does not cover it, and the sweep cursor
+        // is primed to end right at it: only the marker can bring it back.
+        let hour = hour_start(now) - 6 * 3_600_000;
+        metrics
+            .store(monitor_id, &sql_time_millis(hour + 60_000), &json!({ "cpu": { "percent": 10.0 } }), false)
+            .await
+            .unwrap();
+        write_repair_cursor(&pool, hour).await.unwrap();
+
+        // A second late sample for the same hour lands after the fold read
+        // the hour, before the run cleans up.
+        let late = sql_time_millis(hour + 120_000);
+        let result = rollup_run(&pool, now, async || {
+            metrics
+                .store(monitor_id, &late, &json!({ "cpu": { "percent": 30.0 } }), false)
+                .await
+                .unwrap();
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.rolled_up, 1);
+
+        let markers: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM metrics_rollup_dirty WHERE monitor_id = ? AND hour = ?",
+        )
+        .bind(monitor_id)
+        .bind(sql_time_millis(hour))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(markers, 1, "the mid-run marker is not consumed by this run");
+
+        write_repair_cursor(&pool, hour).await.unwrap();
+        rollup_metrics(&pool, now).await.unwrap();
+        let (samples, avg): (i64, f64) = sqlx::query_as(
+            "SELECT samples, cpu_avg FROM metrics_hourly WHERE monitor_id = ? AND time = ?",
+        )
+        .bind(monitor_id)
+        .bind(sql_time_millis(hour))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((samples, avg), (2, 20.0), "the next run folds the late sample");
+    }
+
+    #[tokio::test]
+    async fn failed_run_does_not_advance_the_repair_cursor() {
+        // S10: the cursor was persisted before the sweep, so a failed run
+        // skipped its window until the next full cycle.
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::connect(&dir.keep()).await.unwrap();
+        let (monitor_id,): (i64,) =
+            sqlx::query_as("INSERT INTO monitors (name, type) VALUES ('m', 'push') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let now = crate::metrics::metric_time("2026-10-10 12:30:00").unwrap();
+        let cursor = hour_start(now) - 5 * 24 * 3_600_000;
+        sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, '{}')")
+            .bind(monitor_id)
+            .bind(sql_time_millis(cursor - 3 * 3_600_000 + 60_000))
+            .execute(&pool)
+            .await
+            .unwrap();
+        write_repair_cursor(&pool, cursor).await.unwrap();
+
+        sqlx::query(
+            "CREATE TRIGGER fail_fold BEFORE INSERT ON metrics_hourly
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(rollup_metrics(&pool, now).await.is_err());
+        assert_eq!(read_repair_cursor(&pool).await.unwrap(), Some(cursor));
+
+        sqlx::query("DROP TRIGGER fail_fold").execute(&pool).await.unwrap();
+        let result = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(result.rolled_up, 1, "the retried window is folded");
+        assert_eq!(
+            read_repair_cursor(&pool).await.unwrap(),
+            Some(cursor - REPAIR_WINDOW_HOURS * 3_600_000),
+            "and only then does the cursor move on"
+        );
+    }
+
+    #[tokio::test]
+    async fn unparseable_time_never_stops_the_job() {
+        // S8: one `MIN(time)` that does not parse (the importer defaulted
+        // `time` to "") made every run return before folding or pruning.
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::connect(&dir.keep()).await.unwrap();
+        let (monitor_id,): (i64,) =
+            sqlx::query_as("INSERT INTO monitors (name, type) VALUES ('m', 'push') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        for time in [
+            String::new(),
+            "garbage".to_string(),
+            sql_time_millis(hour_start(now) - 3_600_000 + 60_000),
+        ] {
+            sqlx::query("INSERT INTO metrics_raw (monitor_id, time, payload) VALUES (?, ?, ?)")
+                .bind(monitor_id)
+                .bind(time)
+                .bind(json!({ "cpu": { "percent": 5.0 } }).to_string())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let result = rollup_metrics(&pool, now).await.unwrap();
+        assert_eq!(result.rolled_up, 1, "the valid hour still folds");
+        let left: Vec<String> = sqlx::query_scalar("SELECT time FROM metrics_raw ORDER BY time")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(
+            !left.iter().any(String::is_empty),
+            "the unreadable row below the cutoff is dropped: {left:?}"
+        );
+        assert_eq!(left.len(), 2, "the valid row and the one sorting above the cutoff stay");
     }
 
     #[tokio::test]

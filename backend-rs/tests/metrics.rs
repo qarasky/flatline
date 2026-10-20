@@ -650,9 +650,12 @@ async fn metrics_sse_event_carries_the_sample_and_peak() {
 
     // The first telemetry push also records a heartbeat, so drain until the
     // metrics event arrives.
-    let mut event = receiver.try_recv().expect("events must publish");
+    let mut event = receiver.try_recv().expect("events must publish").json();
     while event["type"] != "metrics" {
-        event = receiver.try_recv().expect("a metrics event must publish");
+        event = receiver
+            .try_recv()
+            .expect("a metrics event must publish")
+            .json();
     }
     assert_eq!(event["monitorId"], id);
     assert_eq!(event["metrics"]["cpu"]["percent"], 77.0);

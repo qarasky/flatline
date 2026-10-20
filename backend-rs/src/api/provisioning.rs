@@ -11,6 +11,9 @@
 //! every command in the served document is copy-paste ready.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::SystemTime;
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -49,7 +52,8 @@ struct AgentAsset {
     /// Target id derived from the file name, e.g. "linux-amd64".
     platform: String,
     file: String,
-    bytes: Vec<u8>,
+    size: u64,
+    sha256: String,
 }
 
 /// Whether a path segment names an agent build (and nothing else).
@@ -63,12 +67,69 @@ fn is_agent_file(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Identity of a file version: a replaced binary changes size or mtime.
+#[derive(Clone, PartialEq, Eq)]
+struct FileStamp {
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
+impl FileStamp {
+    fn of(metadata: &std::fs::Metadata) -> Self {
+        Self {
+            modified: metadata.modified().ok(),
+            len: metadata.len(),
+        }
+    }
+}
+
+/// SHA-256 of each agent binary, keyed by path and invalidated by mtime and
+/// size, so `/agent/version` and `/agent/sha256sums` hash a ~10 MB build
+/// once per deploy rather than once per request.
+static DIGESTS: LazyLock<Mutex<HashMap<PathBuf, (FileStamp, String)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The SHA-256 hex of a file, from the cache when its stamp is unchanged.
+/// Hashing runs on the blocking pool, off the async workers.
+async fn file_digest(path: &Path, stamp: &FileStamp) -> Option<String> {
+    if let Some((cached_stamp, digest)) = DIGESTS.lock().unwrap().get(path)
+        && cached_stamp == stamp
+    {
+        return Some(digest.clone());
+    }
+
+    let owned = path.to_path_buf();
+    let digest = tokio::task::spawn_blocking(move || -> std::io::Result<String> {
+        use std::io::Read;
+        let mut file = std::fs::File::open(&owned)?;
+        let mut hasher = Sha256::new();
+        let mut buffer = vec![0u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+        Ok(hex::encode(hasher.finalize()))
+    })
+    .await
+    .ok()?
+    .ok()?;
+
+    DIGESTS
+        .lock()
+        .unwrap()
+        .insert(path.to_path_buf(), (stamp.clone(), digest.clone()));
+    Some(digest)
+}
+
 /// Every agent build on disk, named `superboard-<os>-<arch>`.
 ///
 /// The platform is derived from the file name rather than a hardcoded list,
 /// so an image (or a developer machine, which builds only its own target)
 /// serves whatever it actually ships.
-async fn agent_assets(dir: &std::path::Path) -> Vec<AgentAsset> {
+async fn agent_assets(dir: &Path) -> Vec<AgentAsset> {
     let mut out = Vec::new();
     let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
         return out;
@@ -78,13 +139,22 @@ async fn agent_assets(dir: &std::path::Path) -> Vec<AgentAsset> {
         if !is_agent_file(&file) {
             continue;
         }
-        let Ok(bytes) = tokio::fs::read(entry.path()).await else {
+        let path = entry.path();
+        let Ok(metadata) = tokio::fs::metadata(&path).await else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let stamp = FileStamp::of(&metadata);
+        let Some(sha256) = file_digest(&path, &stamp).await else {
             continue;
         };
         out.push(AgentAsset {
             platform: file.trim_start_matches(AGENT_PREFIX).to_string(),
             file,
-            bytes,
+            size: stamp.len,
+            sha256,
         });
     }
     out.sort_by(|a, b| a.file.cmp(&b.file));
@@ -96,33 +166,36 @@ async fn agent_assets(dir: &std::path::Path) -> Vec<AgentAsset> {
 /// Two credentials are accepted: an operator API key (what the runbook links
 /// use) and a monitor push token (what a provisioned agent carries). The
 /// push-token path is what makes self-update possible without handing every
-/// host an operator key.
+/// host an operator key. Push tokens are checked first: they are what agents
+/// poll with, and the lookup is a single indexed query.
+///
+/// Called once per request. `Err` carries the response to send: 401 for a
+/// missing or invalid token, 503/429 when the token could not be checked.
+#[allow(clippy::result_large_err)]
 async fn authorize(
     state: &AppState,
     params: &HashMap<String, String>,
     headers: &HeaderMap,
-) -> Option<String> {
+) -> Result<String, Response> {
     let token = params
         .get("token")
         .map(String::as_str)
         .filter(|token| !token.is_empty())
+        .or_else(|| crate::auth::bearer(headers))
         .map(str::to_string)
-        .or_else(|| {
-            headers
-                .get(header::AUTHORIZATION)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.strip_prefix("Bearer "))
-                .map(str::trim)
-                .filter(|token| !token.is_empty())
-                .map(str::to_string)
-        })?;
+        .ok_or_else(crate::auth::unauthorized)?;
 
-    if crate::auth::verify_token(&state.pool, &token).await
-        || crate::auth::verify_push_token(&state.pool, &token).await
-    {
-        return Some(token);
+    let checks = async {
+        if crate::auth::verify_push_token(&state.pool, &token).await? {
+            return Ok(true);
+        }
+        crate::auth::verify_token(&state.pool, &token).await
+    };
+    match checks.await {
+        Ok(true) => Ok(token),
+        Ok(false) => Err(crate::auth::unauthorized()),
+        Err(error) => Err(crate::auth::verify_error_response(&error)),
     }
-    None
 }
 
 /// Public origin for rendered links: the configured `FLATLINE_PUBLIC_URL`
@@ -205,8 +278,9 @@ pub async fn runbook(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(token) = authorize(&state, &params, &headers).await else {
-        return crate::auth::unauthorized();
+    let token = match authorize(&state, &params, &headers).await {
+        Ok(token) => token,
+        Err(response) => return response,
     };
     let version = agent_version(&state)
         .await
@@ -221,8 +295,9 @@ pub async fn llms(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(token) = authorize(&state, &params, &headers).await else {
-        return crate::auth::unauthorized();
+    let token = match authorize(&state, &params, &headers).await {
+        Ok(token) => token,
+        Err(response) => return response,
     };
     let body = render(LLMS, &state, &headers, &token, "unknown");
     text_response("text/plain; charset=utf-8", body)
@@ -234,10 +309,13 @@ pub async fn installer(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(token) = authorize(&state, &params, &headers).await else {
-        return crate::auth::unauthorized();
+    let token = match authorize(&state, &params, &headers).await {
+        Ok(token) => token,
+        Err(response) => return response,
     };
-    let version = agent_version(&state).await.unwrap_or_else(|| "unknown".to_string());
+    let version = agent_version(&state)
+        .await
+        .unwrap_or_else(|| "unknown".to_string());
     let body = render(INSTALLER, &state, &headers, &token, &version);
     text_response("text/x-shellscript; charset=utf-8", body)
 }
@@ -248,8 +326,8 @@ pub async fn checksums(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    if authorize(&state, &params, &headers).await.is_none() {
-        return crate::auth::unauthorized();
+    if let Err(response) = authorize(&state, &params, &headers).await {
+        return response;
     }
     let assets = agent_assets(&state.config.agent_dir).await;
     if assets.is_empty() {
@@ -257,7 +335,7 @@ pub async fn checksums(
     }
     let body = assets
         .iter()
-        .map(|asset| format!("{}  {}\n", hex::encode(Sha256::digest(&asset.bytes)), asset.file))
+        .map(|asset| format!("{}  {}\n", asset.sha256, asset.file))
         .collect::<String>();
     text_response("text/plain; charset=utf-8", body)
 }
@@ -269,31 +347,49 @@ pub async fn agent_file(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    if authorize(&state, &params, &headers).await.is_none() {
-        return crate::auth::unauthorized();
+    if let Err(response) = authorize(&state, &params, &headers).await {
+        return response;
     }
     if !is_agent_file(&file) {
         return missing_agent();
     }
-    agent_binary(&state, &params, &headers, &file).await
+    agent_binary(&state, &file).await
 }
 
-async fn agent_binary(
-    state: &AppState,
-    params: &HashMap<String, String>,
-    headers: &HeaderMap,
-    file: &str,
-) -> Response {
-    if authorize(state, params, headers).await.is_none() {
-        return crate::auth::unauthorized();
+/// Stream one agent build. The caller has already authorized the request.
+async fn agent_binary(state: &AppState, file: &str) -> Response {
+    let path = state.config.agent_dir.join(file);
+    let Ok(handle) = tokio::fs::File::open(&path).await else {
+        return missing_agent();
+    };
+    let Ok(metadata) = handle.metadata().await else {
+        return missing_agent();
+    };
+    if !metadata.is_file() {
+        return missing_agent();
     }
-
-    let bytes = match tokio::fs::read(state.config.agent_dir.join(file)).await {
-        Ok(bytes) => bytes,
-        Err(_) => return missing_agent(),
+    let stamp = FileStamp::of(&metadata);
+    let Some(digest) = file_digest(&path, &stamp).await else {
+        return missing_agent();
     };
 
-    let digest = hex::encode(Sha256::digest(&bytes));
+    // Stream in 64 KiB chunks instead of reading the whole build into memory.
+    let body = async_stream::stream! {
+        use tokio::io::AsyncReadExt;
+        let mut handle = handle;
+        let mut buffer = vec![0u8; 64 * 1024];
+        loop {
+            match handle.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(read) => yield Ok::<_, std::io::Error>(axum::body::Bytes::copy_from_slice(&buffer[..read])),
+                Err(error) => {
+                    yield Err(error);
+                    break;
+                }
+            }
+        }
+    };
+
     (
         [
             (header::CONTENT_TYPE, "application/octet-stream".to_string()),
@@ -301,10 +397,11 @@ async fn agent_binary(
                 header::CONTENT_DISPOSITION,
                 format!("attachment; filename=\"{file}\""),
             ),
+            (header::CONTENT_LENGTH, stamp.len.to_string()),
             (header::ETAG, format!("\"{digest}\"")),
             (header::CACHE_CONTROL, "no-store".to_string()),
         ],
-        bytes,
+        axum::body::Body::from_stream(body),
     )
         .into_response()
 }
@@ -315,8 +412,8 @@ pub async fn version(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    if authorize(&state, &params, &headers).await.is_none() {
-        return crate::auth::unauthorized();
+    if let Err(response) = authorize(&state, &params, &headers).await {
+        return response;
     }
 
     let origin = origin(&state, &headers);
@@ -327,8 +424,8 @@ pub async fn version(
             json!({
                 "platform": asset.platform,
                 "file": asset.file,
-                "size": asset.bytes.len(),
-                "sha256": hex::encode(Sha256::digest(&asset.bytes)),
+                "size": asset.size,
+                "sha256": asset.sha256,
                 "url": format!("{origin}/agent/{}", asset.file),
             })
         })

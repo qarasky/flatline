@@ -8,7 +8,7 @@
 
 use axum::Json;
 use axum::extract::State;
-use axum::http::{HeaderMap, header};
+use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
 use crate::AppState;
@@ -27,7 +27,7 @@ pub async fn setup_status() -> Json<Value> {
 pub async fn login(
     State(state): State<AppState>,
     Json(body): Json<Value>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Response, ApiError> {
     let password = body
         .get("password")
         .and_then(Value::as_str)
@@ -35,40 +35,28 @@ pub async fn login(
         .trim()
         .to_string();
 
-    if auth::verify_token(&state.pool, &password).await {
-        return Ok(Json(json!({
+    match auth::verify_token(&state.pool, &password).await {
+        Ok(true) => Ok(Json(json!({
             "ok": true,
             "token": password,
             "user": { "id": "token", "username": null, "name": "Operator" },
-        })));
+        }))
+        .into_response()),
+        Ok(false) => Err(ApiError {
+            status: axum::http::StatusCode::UNAUTHORIZED,
+            error: "unauthorized",
+            message: "That token is not valid.".to_string(),
+        }),
+        // A busy database is not a wrong token: 503 (or 429), never 401.
+        Err(error) => Ok(auth::verify_error_response(&error)),
     }
-
-    Err(ApiError {
-        status: axum::http::StatusCode::UNAUTHORIZED,
-        error: "unauthorized",
-        message: "That token is not valid.".to_string(),
-    })
 }
 
 /// GET /api/v1/auth/me — token-authenticated.
-pub async fn me(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .unwrap_or_default();
-
-    if !auth::verify_token(&state.pool, token).await {
-        return Err(ApiError {
-            status: axum::http::StatusCode::UNAUTHORIZED,
-            error: "unauthorized",
-            message: "Missing or invalid token.".to_string(),
-        });
-    }
-
+///
+/// Mounted behind `require_token`, which already verified the bearer token;
+/// verifying it again here would only repeat the work.
+pub async fn me() -> Result<Json<Value>, ApiError> {
     Ok(Json(json!({
         "ok": true,
         "user": { "id": "token", "username": null, "name": "Operator" },

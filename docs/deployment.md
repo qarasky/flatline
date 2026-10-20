@@ -13,14 +13,16 @@ how a release goes out, and how to get back.
 | Compose file       | `/home/office/flatline/compose.rust.yaml` (repository copy: `docker/compose.rust.yaml`)                 |
 | Environment        | `/home/office/flatline/.env` — `FLATLINE_PORT=3001`, `FLATLINE_PUBLIC_URL=https://uptime.mediaboost.kz` |
 | Data               | `/home/office/flatline/data-rust/flatline.db` (plus `initial-token.txt`, `status-page-secret`)          |
-| Backups            | `/home/office/flatline/backups/`                                                                        |
+| Backups            | `/home/office/flatline/backups/` (nightly copies in `backups/nightly/`)                                 |
 | Source tree        | `/home/office/flatline-src` — the tree the image is built from                                          |
 | Provisioning token | `/home/office/flatline/provisioning-token.txt` (0600, root)                                             |
 | Stack name         | `flatline-rust` (container `flatline-rust-flatline-1`)                                                  |
 
-Docker runs **rootful** on this host: every docker command goes through `sudo`,
-and files under `data-rust/` are root-owned. The published port is loopback-only,
-so the tunnel is the only way in from outside.
+Docker runs **rootful** on this host: every docker command goes through `sudo`.
+Inside the container the backend runs as the unprivileged `flatline` user (uid
+and gid 10001), which owns `data-rust/` — see [the non-root image](#the-non-root-image).
+The published port is loopback-only, so the tunnel is the only way in from
+outside.
 
 The office's `.env` supplies `FLATLINE_PUBLIC_URL`, which is what the
 provisioning documents and installer use to render absolute URLs. Without it they
@@ -46,44 +48,84 @@ Keep the source tree in sync (fetch the commit tarball or pull), and remember
 that the tree is briefly stale until it is replaced: a build always reflects
 what is on disk.
 
+### The non-root image
+
+The image runs the backend as `flatline` (uid/gid 10001). Its entrypoint
+(`docker/entrypoint.sh`) starts as root only long enough to make sure
+`/app/data` belongs to that user, then drops privileges with `setpriv` and
+execs the backend (still PID 1, still handling SIGTERM itself).
+
+- **Existing root-owned data needs no manual step.** On the first start of a
+  non-root image the entrypoint finds the root-owned files in `data-rust/` and
+  re-owns them (`entrypoint: handing /app/data to flatline` in the log); later
+  starts find nothing to do. The manual equivalent, if ever wanted, is
+  `sudo chown -R 10001:10001 /home/office/flatline/data-rust`.
+- Host-side tools still work: root reads the 10001-owned files (backups,
+  `initial-token.txt`), and a file root restores is handed back on the next
+  start.
+- ICMP monitors run `ping` without root. The image gives the binary
+  `cap_net_raw` (permitted only), and the compose files set
+  `net.ipv4.ping_group_range` so unprivileged ICMP sockets work even with
+  `NET_RAW` dropped. A ping monitor failing with `Operation not permitted`
+  means both were removed.
+- The compose files also bound the container: `mem_limit: 1g`,
+  `pids_limit: 1024` (threads count), `stop_grace_period: 30s` (the backend's
+  graceful shutdown takes up to ~20 s) and json-file log rotation
+  (`10m` × 5). The office copy of `compose.rust.yaml` must be updated from the
+  repository copy for these to apply — the image alone does not carry them.
+
 ## Releasing
 
 ```bash
-# 1. Back up the database, consistently (SQLite backup API, not cp).
-BM=/home/office/flatline/backups/pre-$(date -u +%Y%m%d-%H%M%S).db
-python3 - "$BM" <<'PY'
-import sqlite3, sys
-live = sqlite3.connect("file:/home/office/flatline/data-rust/flatline.db?mode=ro", uri=True)
-copy = sqlite3.connect(sys.argv[1])
-with copy:
-    live.backup(copy)
-print(copy.execute("PRAGMA integrity_check").fetchone()[0])
-PY
-chmod 600 "$BM"
+# One timestamp for the whole release: it names the image tag and the backup,
+# and never collides with an earlier release the same day.
+REL=$(date -u +%Y%m%d-%H%M%S)
 
-# 2. Keep the running image under a distinct tag.
-sudo docker tag artchsh/flatline-rust:office-live \
-    artchsh/flatline-rust:office-prev-$(date -u +%Y%m%d)
-
-# 3. Build the new image (to a scratch tag first, so a failure changes nothing).
+# 1. Build the new image (to a scratch tag first, so a failure changes nothing).
+#    This takes minutes; nothing below runs until it has succeeded.
 cd /home/office/flatline-src
 sudo docker build --platform linux/amd64 -f docker/rust.dockerfile \
     -t artchsh/flatline-rust:office-new .
 sudo docker run --rm --entrypoint cat artchsh/flatline-rust:office-new /app/agent/VERSION
 
-# 4. Promote and recreate.
+# 2. Keep the running image under a distinct, timestamped tag.
+sudo docker tag artchsh/flatline-rust:office-live artchsh/flatline-rust:office-prev-$REL
+
+# 3. Back up the database right before the recreate, consistently (SQLite
+#    backup API, not cp), so the copy misses only seconds of data.
+BM=/home/office/flatline/backups/pre-$REL.db
+sudo python3 - "$BM" <<'PY'
+import sqlite3, sys
+live = sqlite3.connect("file:/home/office/flatline/data-rust/flatline.db?mode=ro", uri=True)
+copy = sqlite3.connect(sys.argv[1])
+with copy:
+    live.backup(copy)
+result = copy.execute("PRAGMA integrity_check").fetchone()[0]
+print(result)
+sys.exit(0 if result == "ok" else 1)
+PY
+sudo chmod 600 "$BM"
+
+# 4. Promote and recreate (only once the backup printed ok).
 sudo docker tag artchsh/flatline-rust:office-new artchsh/flatline-rust:office-live
 cd /home/office/flatline && sudo docker compose -f compose.rust.yaml up -d
+echo "rollback tag: office-prev-$REL  backup: $BM"
 ```
 
+Run it as one block (or keep `REL` set) so the tag and the backup share the
+timestamp; that pairing is what a rollback needs. Prune old `office-prev-*`
+tags now and then (`sudo docker image ls artchsh/flatline-rust`).
+
 Migrations run at startup, so the recreate is the whole database step. Recreate
-is a few seconds of downtime on the public origin.
+is a few seconds of downtime on the public origin, plus up to ~20 s while the old
+container shuts down gracefully (`stop_grace_period: 30s`).
 
 ### Verifying a release
 
 ```bash
 sudo docker compose -f /home/office/flatline/compose.rust.yaml ps   # healthy, restarts 0
 TOKEN=$(sudo cat /home/office/flatline/data-rust/initial-token.txt)
+curl -fsS localhost:3001/healthz
 curl -fsS -H "Authorization: Bearer $TOKEN" localhost:3001/api/v1/health
 curl -fsS "localhost:3001/agent/version?token=$TOKEN"
 curl -fsS "localhost:3001/add-push-server.md?token=$TOKEN" | sed -n '8,10p'
@@ -91,7 +133,7 @@ curl -fsS "localhost:3001/add-push-server.md?token=$TOKEN" | sed -n '8,10p'
 
 Check by hand, in order:
 
-1. Container `healthy`, zero restarts.
+1. Container `healthy`, zero restarts; `/healthz` returns 200.
 2. `/api/v1/health`: `total` equals the expected monitor count, `down` equals the
    monitors you expect to be down (usually zero).
 3. The new migrations are applied — `SELECT version FROM _sqlx_migrations ORDER BY version`
@@ -111,13 +153,16 @@ that does not know a migration the database has applied, so the database has to
 go back with the code.
 
 ```bash
-sudo docker tag artchsh/flatline-rust:office-prev-<date> artchsh/flatline-rust:office-live
+sudo docker tag artchsh/flatline-rust:office-prev-<REL> artchsh/flatline-rust:office-live
 # stop the stack, restore the backup over data-rust/flatline.db, then:
 sudo docker compose -f compose.rust.yaml up -d
 ```
 
-Restore the pre-release backup whenever migrations shipped in the release you
-are backing out of. If the release only changed code, the image swap alone is
+Restore the pre-release backup (`backups/pre-<REL>.db`, same timestamp as the
+tag) whenever migrations shipped in the release you are backing out of. Rolling
+back to an image from before the non-root change also works: it runs as root,
+which can use the 10001-owned files, and the next non-root start re-owns
+anything it wrote. If the release only changed code, the image swap alone is
 enough. The Node-era rollback path no longer exists — see
 [history](history.md).
 
@@ -167,10 +212,39 @@ Each release is also recorded in [history](history.md) with the defects it fixed
 
 ## Notes and known warts
 
-- `data-rust/flatline.db` is mode 0644 inside a 0755 directory. Harmless with a
-  single operator account; tighten it if other shell users ever appear.
+- `data-rust/` is owned by uid 10001 (the container's `flatline` user), and
+  `flatline.db` is mode 0644 inside a 0755 directory. Harmless with a single
+  operator account; tighten it if other shell users ever appear.
+- Docker does not restart an `unhealthy` container on its own; the off-host
+  `/healthz` probe in [operations](operations.md#watching-the-watcher) is what
+  notices an outage of the monitor itself.
 - The image is built locally, so the office needs network access to the registry
   and to the Go/npm/Rust module mirrors on a cold cache. A warm cache rebuild is
   a couple of minutes.
 - The old `uptime-kuma` container is stopped but not removed, and its data
   directory is untouched. It is no longer a rollback path.
+
+## Backup storage (opt-in)
+
+Named backup agents need a dedicated mount, separate from `data-rust/`:
+
+```bash
+sudo install -d -m 0700 /mnt/mirror/flatline-backups
+uuidgen | tr 'A-Z' 'a-z' | sudo tee /mnt/mirror/flatline-backups/.flatline-backup-storage >/dev/null
+sudo chmod 0600 /mnt/mirror/flatline-backups/.flatline-backup-storage
+```
+
+Then start the stack with the opt-in override:
+
+```bash
+cd /home/office/flatline
+sudo docker compose -f compose.rust.yaml \
+  -f /home/office/flatline-src/docker/compose.backups.yaml up -d
+```
+
+The override sets `FLATLINE_BACKUP_DIR=/app/backups` and refuses to create the
+host path. Confirm `/mnt/mirror` is the RAID1 mount (`findmnt /mnt/mirror`)
+before enabling it. Without the override, uploads answer 503; the service never
+falls back to the container filesystem. Migrations 0012 and 0013 are additive
+and apply at startup. Back up `data-rust/flatline.db` with SQLite's online
+backup API before the first migration.

@@ -45,6 +45,23 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" \
     && /out/superboard-linux-amd64 version | cut -d' ' -f2 > /out/VERSION \
     && cd /out && sha256sum superboard-linux-amd64 superboard-linux-arm64 > sha256sums
 
+# Backup agent build: a separate Go module and binary family. These live
+# under /app/backup-agent and never replace the telemetry agent's VERSION or
+# sha256sums.
+FROM golang:1.27-trixie AS backup-agent
+WORKDIR /src
+
+COPY backup-agent/go.mod backup-agent/go.sum ./
+RUN go mod download
+
+COPY backup-agent ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" \
+        -o /out/flatline-backup-linux-amd64 . \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" \
+        -o /out/flatline-backup-linux-arm64 . \
+    && /out/flatline-backup-linux-amd64 version | cut -d' ' -f2 > /out/VERSION-BACKUP \
+    && cd /out && sha256sum flatline-backup-linux-amd64 flatline-backup-linux-arm64 > sha256sums-backup
+
 # Rust build. Dependencies are cached against a dummy crate so source edits
 # do not rebuild the world.
 FROM rust:1.99-trixie AS build
@@ -68,9 +85,21 @@ RUN touch src/main.rs src/lib.rs && cargo build --release
 # iputils-ping for the ICMP checker.
 FROM debian:trixie-slim AS release
 
+# The backend runs as `flatline` (uid/gid 10001), not root. ICMP checks shell
+# out to iputils ping, which needs either CAP_NET_RAW or an unprivileged ICMP
+# socket allowed by net.ipv4.ping_group_range. Both are provided: the binary
+# gets the file capability here (Docker's default capability set includes
+# NET_RAW), and the compose files set ping_group_range for the container.
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl iputils-ping \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install --yes --no-install-recommends ca-certificates curl iputils-ping libcap2-bin \
+    && ping_bin="$(readlink -f "$(command -v ping)")" \
+    && chmod u-s "$ping_bin" \
+    && setcap cap_net_raw+p "$ping_bin" \
+    && apt-get purge --yes --auto-remove libcap2-bin \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 flatline \
+    && useradd --system --uid 10001 --gid flatline --home-dir /app/data --no-create-home \
+        --shell /usr/sbin/nologin flatline
 
 WORKDIR /app
 
@@ -83,14 +112,20 @@ ENV UPTIME_KUMA_IS_CONTAINER=1 \
 COPY --from=build /app/target/release/flatline-backend /usr/local/bin/flatline-backend
 COPY --from=web /app/apps/dashboard/dist /app/dashboard
 COPY --from=agent /out /app/agent
+COPY docker/entrypoint.sh /usr/local/bin/flatline-entrypoint
+COPY --from=backup-agent /out /app/backup-agent
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && chown flatline:flatline /app/data
 
 EXPOSE 3001
-# The public setup endpoint answers without a token; any 200 means the
-# server is up. Startup is immediate, unlike the Node image's 180s grace.
-HEALTHCHECK --interval=60s --timeout=30s --start-period=15s --retries=5 \
-    CMD curl -fsS http://127.0.0.1:3001/api/v1/auth/setup >/dev/null || exit 1
+# /healthz answers 200 only when the database and the check engine are
+# healthy (503 otherwise), without a token. Docker itself never restarts an
+# unhealthy container; see docs/operations.md for the external watcher.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -fsS --max-time 8 http://127.0.0.1:3001/healthz >/dev/null || exit 1
 
-# The binary handles SIGTERM itself (graceful shutdown), so no init shim.
+# The entrypoint hands /app/data to `flatline` (once, for volumes written by
+# the old root image) and drops privileges with setpriv; it execs, so the
+# backend is PID 1 and handles SIGTERM itself (graceful shutdown).
+ENTRYPOINT ["flatline-entrypoint"]
 CMD ["flatline-backend"]

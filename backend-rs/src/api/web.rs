@@ -7,8 +7,17 @@
 //!   client-side routes survive a reload.
 //! - API paths (`/api`, `/upload`, `/metrics`, `/.well-known`) are never
 //!   answered by the SPA; their JSON 404s stay JSON.
+//!
+//! Filesystem checks are async, and file bytes are cached in memory
+//! (bounded, invalidated by size and mtime), so a reload storm does not
+//! re-read the build or block runtime workers (A12).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::SystemTime;
+
+use axum::body::Bytes;
 
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode, header};
@@ -53,7 +62,13 @@ pub async fn fallback(State(state): State<AppState>, request: Request) -> Respon
 
     let dist = state.config.web_dist.clone();
     let index = dist.join("index.html");
-    if !index.exists() {
+    // Async metadata: a sync `exists`/`canonicalize` blocked a runtime
+    // worker on every SPA request.
+    if !tokio::fs::metadata(&index)
+        .await
+        .map(|meta| meta.is_file())
+        .unwrap_or(false)
+    {
         // No build: keep the pure API behaviour.
         return not_found();
     }
@@ -62,7 +77,7 @@ pub async fn fallback(State(state): State<AppState>, request: Request) -> Respon
     let relative = path.trim_start_matches('/');
     let candidate = dist.join(relative);
 
-    if let Some(file) = resolve(&dist, &candidate) {
+    if let Some(file) = resolve(&dist, &candidate).await {
         return file_response(&file, &path, is_head).await;
     }
 
@@ -76,18 +91,67 @@ pub async fn fallback(State(state): State<AppState>, request: Request) -> Respon
 
 /// Canonicalise and confine the candidate to the build directory, so a
 /// crafted path cannot escape it.
-fn resolve(dist: &Path, candidate: &Path) -> Option<PathBuf> {
-    let dist = dist.canonicalize().ok()?;
-    let resolved = candidate.canonicalize().ok()?;
-    if resolved.starts_with(&dist) && resolved.is_file() {
+async fn resolve(dist: &Path, candidate: &Path) -> Option<PathBuf> {
+    let dist = tokio::fs::canonicalize(dist).await.ok()?;
+    let resolved = tokio::fs::canonicalize(candidate).await.ok()?;
+    let is_file = tokio::fs::metadata(&resolved).await.ok()?.is_file();
+    if resolved.starts_with(&dist) && is_file {
         Some(resolved)
     } else {
         None
     }
 }
 
+/// Files at most this large are kept in memory once read.
+const CACHE_FILE_MAX: u64 = 2 * 1024 * 1024;
+/// Total bytes the file cache may hold.
+const CACHE_TOTAL_MAX: u64 = 64 * 1024 * 1024;
+
+/// Bytes of a file version, identified by size and mtime.
+struct CachedFile {
+    modified: Option<SystemTime>,
+    len: u64,
+    bytes: Bytes,
+}
+
+/// Build files served from memory: the shell and hashed assets are read
+/// once per deploy instead of on every request. A rebuilt file changes
+/// size or mtime and is re-read.
+static FILES: LazyLock<Mutex<HashMap<PathBuf, CachedFile>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+async fn read_cached(file: &Path) -> Option<Bytes> {
+    let meta = tokio::fs::metadata(file).await.ok()?;
+    let modified = meta.modified().ok();
+    let len = meta.len();
+    if let Some(hit) = FILES.lock().unwrap().get(file)
+        && hit.len == len
+        && hit.modified == modified
+    {
+        return Some(hit.bytes.clone());
+    }
+
+    let bytes = Bytes::from(tokio::fs::read(file).await.ok()?);
+    if len <= CACHE_FILE_MAX {
+        let mut files = FILES.lock().unwrap();
+        let held: u64 = files.values().map(|cached| cached.len).sum();
+        if held + len > CACHE_TOTAL_MAX {
+            files.clear();
+        }
+        files.insert(
+            file.to_path_buf(),
+            CachedFile {
+                modified,
+                len,
+                bytes: bytes.clone(),
+            },
+        );
+    }
+    Some(bytes)
+}
+
 async fn file_response(file: &Path, request_path: &str, is_head: bool) -> Response {
-    let Ok(bytes) = tokio::fs::read(file).await else {
+    let Some(bytes) = read_cached(file).await else {
         return not_found();
     };
     let content_type = content_type(file);
@@ -97,17 +161,18 @@ async fn file_response(file: &Path, request_path: &str, is_head: bool) -> Respon
         "public, max-age=0"
     };
 
+    let length = bytes.len();
     let body = if is_head {
         axum::body::Body::empty()
     } else {
-        axum::body::Body::from(bytes.clone())
+        axum::body::Body::from(bytes)
     };
 
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, cache)
-        .header(header::CONTENT_LENGTH, bytes.len())
+        .header(header::CONTENT_LENGTH, length)
         .body(body)
         .unwrap_or_else(|_| not_found())
 }

@@ -42,6 +42,18 @@ type liveCollector struct {
 	// smart caches disk health, refreshed every few hours. Nil until the
 	// first worker run; available:false is explicit when smartctl is absent.
 	smart *SMART
+	// collectedAt is the last good refresh of each slow collector.
+	collectedAt CollectedAt
+}
+
+// collectorLog keeps the live collectors' persistent failures to one
+// journal line per episode.
+var collectorLog episodeLog
+
+// collectedNow is the timestamp format for CollectedAt: second precision is
+// plenty for collectors that refresh every 5s to 6h.
+func collectedNow() time.Time {
+	return time.Now().UTC().Truncate(time.Second)
 }
 
 // runCollector runs one collector pass, turning a panic into a logged error.
@@ -122,11 +134,13 @@ func newLiveCollector(ctx context.Context) (*liveCollector, error) {
 	go refreshLoop(ctx, 30*time.Second, "disk", func() {
 		disks, err := collectDisk()
 		if err != nil {
-			log.Printf("disk: %v", err)
+			collectorLog.fail("disk", "disk: %v (repeats suppressed)", err)
 			return
 		}
+		collectorLog.ok("disk", "disk: recovered")
 		c.mu.Lock()
 		c.disk = disks
+		c.collectedAt.Disk = collectedNow()
 		c.mu.Unlock()
 	})
 	go refreshLoop(ctx, 30*time.Second, "temp", func() {
@@ -139,12 +153,17 @@ func newLiveCollector(ctx context.Context) (*liveCollector, error) {
 		gpu := collectGPU()
 		c.mu.Lock()
 		c.gpu = gpu
+		if gpu.Available {
+			c.collectedAt.GPU = collectedNow()
+		}
 		c.mu.Unlock()
 	})
 	go refreshLoop(ctx, 10*time.Second, "docker", func() {
 		containers, err := collectDocker()
 		if err != nil {
-			log.Printf("docker: %v", err)
+			collectorLog.fail("docker", "docker: %v (repeats suppressed until it recovers)", err)
+		} else {
+			collectorLog.ok("docker", "docker: recovered")
 		}
 		c.applyDocker(containers, err)
 	})
@@ -156,12 +175,19 @@ func newLiveCollector(ctx context.Context) (*liveCollector, error) {
 		}
 		c.mu.Lock()
 		c.updates = updates
+		c.collectedAt.Updates = collectedNow()
 		c.mu.Unlock()
 	})
 	go refreshLoop(ctx, smartRefreshInterval, "smart", func() {
-		smart := collectSMART()
+		c.mu.RLock()
+		prev := c.smart
+		c.mu.RUnlock()
+		smart := collectSMART(prev)
 		c.mu.Lock()
 		c.smart = smart
+		if smart.Available {
+			c.collectedAt.Smart = collectedNow()
+		}
 		c.mu.Unlock()
 	})
 	return c, nil
@@ -173,9 +199,10 @@ func newLiveCollector(ctx context.Context) (*liveCollector, error) {
 func (c *liveCollector) refreshCPU() {
 	total, perCore, err := readCPUCounters()
 	if err != nil {
-		log.Printf("cpu: %v", err)
+		collectorLog.fail("cpu", "cpu: %v (repeats suppressed)", err)
 		return
 	}
+	collectorLog.ok("cpu", "cpu: recovered")
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -281,6 +308,9 @@ func (c *liveCollector) sample() (*Payload, error) {
 		Updates: c.updates, Agent: agentInfoSnapshot(),
 		Load: collectLoad(), Net: collectNet(), DiskIO: collectDiskIO(),
 		Smart: c.smart}
+	if at := c.collectedAt; at != (CollectedAt{}) {
+		payload.CollectedAt = &at
+	}
 	stampSample(payload)
 	return payload, nil
 }

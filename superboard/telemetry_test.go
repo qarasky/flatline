@@ -95,18 +95,18 @@ func TestAgentInfoTruncatesLongErrors(t *testing.T) {
 	stats.recordPushOk()
 }
 
-func TestOfferLatestCountsDrops(t *testing.T) {
-	samples := make(chan *Payload, 1)
+func TestMemoryOnlyOfferCountsDrops(t *testing.T) {
+	d := newDelivery(nil, nil, time.Second)
 	before := agentInfoSnapshot().SamplesDropped
 
-	offerLatest(samples, &Payload{CPU: CPU{Percent: 1}}) // fills the queue: no drop
-	offerLatest(samples, &Payload{CPU: CPU{Percent: 2}}) // replaces: one drop
-	offerLatest(samples, &Payload{CPU: CPU{Percent: 3}}) // replaces: another drop
+	d.offer(&Payload{CPU: CPU{Percent: 1}}) // fills the slot: no drop
+	d.offer(&Payload{CPU: CPU{Percent: 2}}) // replaces: one drop
+	d.offer(&Payload{CPU: CPU{Percent: 3}}) // replaces: another drop
 
 	if got := agentInfoSnapshot().SamplesDropped - before; got != 2 {
 		t.Fatalf("drops = %d, want 2", got)
 	}
-	if (<-samples).CPU.Percent != 3 {
+	if d.popLive().CPU.Percent != 3 {
 		t.Fatal("latest sample must survive")
 	}
 }
