@@ -106,6 +106,7 @@ async fn harness_inner(storage: Option<(Arc<dyn FreeSpace>, Arc<dyn FaultInjecto
         metrics,
         backups,
         status_page_secret: std::sync::Arc::new(status_page_secret),
+        strips: std::sync::Arc::new(flatline_backend::api::strips::StripCache::new()),
     };
 
     Harness {
