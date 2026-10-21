@@ -99,3 +99,29 @@ test("never polls faster than the interval", async () => {
     assert.equal(log.waits.length, log.polls.length);
     assert.ok(log.waits.every((ms) => ms >= POLL_INTERVAL_MS));
 });
+
+import { abortableWait } from "../src/lib/device-poll.ts";
+
+/** A signal stand-in that counts live listeners. */
+function countingSignal(aborted = false) {
+    const listeners = new Set();
+    return {
+        aborted,
+        listeners,
+        addEventListener: (_type, fn) => listeners.add(fn),
+        removeEventListener: (_type, fn) => listeners.delete(fn),
+    };
+}
+
+test("abortableWait leaves no abort listener behind once the timer fires", async () => {
+    const signal = countingSignal();
+    await abortableWait(1, signal);
+    assert.equal(signal.listeners.size, 0);
+});
+
+test("abortableWait resolves at once for a signal that is already aborted", async () => {
+    const signal = countingSignal(true);
+    const started = Date.now();
+    await abortableWait(5000, signal);
+    assert.ok(Date.now() - started < 500);
+});

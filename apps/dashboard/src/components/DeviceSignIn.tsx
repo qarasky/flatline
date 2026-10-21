@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pollDeviceSignIn, setToken, startDeviceSignIn } from "@/lib/api";
 import { qrSvg } from "@/lib/device-auth";
-import { runDeviceSignIn, type DeviceSignInStatus } from "@/lib/device-poll";
+import { abortableWait, runDeviceSignIn, type DeviceSignInStatus } from "@/lib/device-poll";
 
 function formatRemaining(ms: number): string {
     const seconds = Math.max(0, Math.ceil(ms / 1000));
@@ -33,18 +33,7 @@ export function DeviceSignIn({ onSaved }: { onSaved: () => void }) {
             now: Date.now,
             start: startDeviceSignIn,
             poll: (requestCode, secret) => pollDeviceSignIn(requestCode, secret, controller.signal),
-            wait: (ms) =>
-                new Promise<void>((resolve) => {
-                    const done = window.setTimeout(resolve, ms);
-                    controller.signal.addEventListener(
-                        "abort",
-                        () => {
-                            window.clearTimeout(done);
-                            resolve();
-                        },
-                        { once: true }
-                    );
-                }),
+            wait: (ms) => abortableWait(ms, controller.signal),
             onCode: setCode,
             onStatus: setStatus,
         }).then((token) => {

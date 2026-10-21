@@ -1,4 +1,5 @@
 import qrcode from "qrcode-generator";
+import { ApiError } from "./api";
 
 /** Quiet zone around the symbol, in modules. The QR specification asks for four. */
 const QUIET_ZONE = 4;
@@ -66,4 +67,12 @@ export function qrSvg(text: string): string {
  */
 export function hostMismatch(publicUrl: string | null, origin: string): boolean {
     return Boolean(publicUrl) && trimSlashes(publicUrl as string) !== trimSlashes(origin);
+}
+
+/**
+ * Whether a request failed because the stored token is no longer valid
+ * (revoked, or never was). The phone page then returns to the sign-in gate.
+ */
+export function isSignedOut(error: unknown): boolean {
+    return error instanceof ApiError && error.status === 401;
 }

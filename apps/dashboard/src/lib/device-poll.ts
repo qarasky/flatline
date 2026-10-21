@@ -8,6 +8,31 @@ const DENIED_PAUSE_MS = 3000;
 /** Pause before retrying when the server cannot be reached to start a request. */
 const START_RETRY_MS = 5000;
 
+/**
+ * Sleep that ends early on abort and leaves no listener behind either way,
+ * so a screen waiting for days does not accumulate them.
+ */
+export function abortableWait(
+    ms: number,
+    signal: Pick<AbortSignal, "aborted" | "addEventListener" | "removeEventListener">
+): Promise<void> {
+    return new Promise((resolve) => {
+        if (signal.aborted) {
+            resolve();
+            return;
+        }
+        const onAbort = () => {
+            clearTimeout(timer);
+            resolve();
+        };
+        const timer = setTimeout(() => {
+            signal.removeEventListener("abort", onAbort);
+            resolve();
+        }, ms);
+        signal.addEventListener("abort", onAbort, { once: true });
+    });
+}
+
 export type DeviceSignInStatus = "waiting" | "denied" | "error";
 
 export interface DeviceSignInDeps {

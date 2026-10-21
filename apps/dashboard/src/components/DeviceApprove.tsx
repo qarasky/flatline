@@ -4,10 +4,11 @@ import {
     approveDeviceRequest,
     denyDeviceRequest,
     getToken,
+    setToken,
     lookupDeviceRequest,
     type DeviceRequestInfo,
 } from "@/lib/api";
-import { codeFromHash, hostMismatch } from "@/lib/device-auth";
+import { codeFromHash, hostMismatch, isSignedOut } from "@/lib/device-auth";
 import { TokenGate } from "@/components/TokenGate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,9 +60,17 @@ export function DeviceApprove() {
                 }
             })
             .catch((e) => {
-                if (!cancelled) {
-                    setView({ kind: "failed", message: failure(e) });
+                if (cancelled) {
+                    return;
                 }
+                if (isSignedOut(e)) {
+                    // A revoked or stale token: back to the gate. The code is
+                    // in the URL fragment, so it survives signing in again.
+                    setToken(null);
+                    setAuthed(false);
+                    return;
+                }
+                setView({ kind: "failed", message: failure(e) });
             });
         return () => {
             cancelled = true;
@@ -86,7 +95,13 @@ export function DeviceApprove() {
                 setView({ kind: "done", message: "Denied." });
             }
         } catch (e) {
-            setView({ kind: "failed", message: failure(e) });
+            if (isSignedOut(e)) {
+                setToken(null);
+                setAuthed(false);
+                setView({ kind: "loading" });
+            } else {
+                setView({ kind: "failed", message: failure(e) });
+            }
         } finally {
             setBusy(false);
         }

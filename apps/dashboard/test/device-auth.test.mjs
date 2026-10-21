@@ -38,3 +38,12 @@ test("hostMismatch is true only when the public URL differs from the origin", ()
     assert.equal(hostMismatch("https://kuma.example/", "https://kuma.example"), false);
     assert.equal(hostMismatch("https://kuma.example", "http://192.168.1.5:3001"), true);
 });
+
+test("isSignedOut is true only for a 401 from the server", async () => {
+    const { ApiError } = await import("../src/lib/api.ts");
+    const { isSignedOut } = await import("../src/lib/device-auth.ts");
+    assert.equal(isSignedOut(new ApiError(401, "unauthorized", "no")), true);
+    assert.equal(isSignedOut(new ApiError(409, "not_pending", "no")), false);
+    assert.equal(isSignedOut(new ApiError(404, "not_found", "no")), false);
+    assert.equal(isSignedOut(new Error("offline")), false);
+});
