@@ -243,6 +243,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
                                 <th className="py-2 pr-4 font-medium">Scopes</th>
                                 <th className="py-2 font-medium">Status</th>
                                 <th className="py-2 pr-4 text-right font-medium">Created</th>
+                                <th className="py-2 pr-4 text-right font-medium">Last used</th>
                                 <th className="py-2 pr-4 text-right font-medium" />
                             </tr>
                         </thead>
@@ -278,6 +279,9 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
                                     </td>
                                     <td className="tnum py-2 pr-4 text-right text-xs text-quiet">
                                         {key.createdDate ? key.createdDate.slice(0, 10) : "—"}
+                                    </td>
+                                    <td className="tnum py-2 pr-4 text-right text-xs text-quiet">
+                                        {key.lastUsedAt ? key.lastUsedAt.slice(0, 10) : "never"}
                                     </td>
                                     <td className="py-2 pr-4 text-right">
                                         <Button

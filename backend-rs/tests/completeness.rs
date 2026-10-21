@@ -66,6 +66,54 @@ async fn seed_beat(
 }
 
 #[tokio::test]
+async fn api_key_list_reports_when_a_key_was_last_used() {
+    let h = harness().await;
+    let (_, body) = send(
+        &h.app,
+        request(
+            "POST",
+            "/api/v1/api-keys",
+            Some(&h.token),
+            Some(json!({ "name": "kitchen-tv" })),
+        ),
+    )
+    .await;
+    let minted = body["token"].as_str().unwrap().to_string();
+    let key_id = body["apiKey"]["id"].as_i64().unwrap();
+    assert!(body["apiKey"]["lastUsedAt"].is_null());
+
+    let find = |body: &Value| {
+        body["apiKeys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|key| key["id"] == key_id)
+            .cloned()
+            .unwrap()
+    };
+
+    let (_, listed) = get_json(&h.app, "/api/v1/api-keys", &h.token).await;
+    assert!(find(&listed)["lastUsedAt"].is_null(), "never used yet");
+
+    let (status, _) = get_json(&h.app, "/api/v1/health", &minted).await;
+    assert_eq!(status, 200);
+
+    // The stamp is written off the request path, so give it a moment.
+    let mut listed = Value::Null;
+    for _ in 0..50 {
+        (_, listed) = get_json(&h.app, "/api/v1/api-keys", &h.token).await;
+        if find(&listed)["lastUsedAt"].is_string() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        find(&listed)["lastUsedAt"].is_string(),
+        "using the key stamps it: {listed}"
+    );
+}
+
+#[tokio::test]
 async fn api_keys_lifecycle_and_auth_effects() {
     let h = harness().await;
 

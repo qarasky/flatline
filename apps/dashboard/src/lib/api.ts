@@ -875,6 +875,8 @@ export interface ApiKeySummary {
     createdDate: string;
     active: boolean;
     expires: string | null;
+    /** When the token last authenticated a request (UTC), or null if never. */
+    lastUsedAt: string | null;
     status: "active" | "inactive" | "expired";
     scopes: string[];
 }
