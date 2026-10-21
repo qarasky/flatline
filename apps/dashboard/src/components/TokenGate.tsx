@@ -24,11 +24,12 @@ function errorMessage(e: unknown, fallback: string): string {
  * can instead show a QR code that a signed-in phone approves; that screen then
  * gets its own token. Pasting a token stays available as the fallback.
  */
-export function TokenGate({ onSaved }: { onSaved: () => void }) {
+export function TokenGate({ onSaved, pasteFirst = false }: { onSaved: () => void; pasteFirst?: boolean }) {
     const [value, setValue] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
-    const [pasting, setPasting] = useState(false);
+    // The phone that approves a screen cannot scan itself, so it starts on paste.
+    const [pasting, setPasting] = useState(pasteFirst);
 
     async function submit(event: SyntheticEvent) {
         event.preventDefault();

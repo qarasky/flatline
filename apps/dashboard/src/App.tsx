@@ -3,7 +3,7 @@ import { getToken } from "@/lib/api";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { UpdateWatcher } from "@/components/UpdateWatcher";
 import { usePath } from "@/lib/router";
-import { boardRouteFrom, statusSlugFromPath } from "@/lib/routes";
+import { boardRouteFrom, isDeviceApprovePath, statusSlugFromPath } from "@/lib/routes";
 
 /*
  * Each top-level route is its own chunk: a status-page visitor downloads the
@@ -12,6 +12,9 @@ import { boardRouteFrom, statusSlugFromPath } from "@/lib/routes";
  */
 const Dashboard = lazy(() => import("@/components/Dashboard").then((m) => ({ default: m.Dashboard })));
 const SuperboardApp = lazy(() => import("@/components/Superboard").then((m) => ({ default: m.SuperboardApp })));
+const DeviceApprove = lazy(() =>
+    import("@/components/DeviceApprove").then((m) => ({ default: m.DeviceApprove }))
+);
 const StatusPageApp = lazy(() =>
     import("@/components/status/StatusPageApp").then((m) => ({ default: m.StatusPageApp }))
 );
@@ -49,7 +52,8 @@ function RootRoute() {
  * Routes: the operator dashboard at "/" (unless the host maps to a status
  * page), public status pages at "/status/:slug", the wall board at
  * "/superboard" (optionally group-scoped), and the chrome-free board at
- * "/superboard/kiosk". The route is resolved before either view mounts, so the
+ * "/superboard/kiosk", and the phone's "approve this screen" page at
+ * "/device". The route is resolved before either view mounts, so the
  * dashboard's polling never runs while the board or a status page is open.
  *
  * Every route sits in its own error boundary: the kiosk and status pages
@@ -72,6 +76,17 @@ export default function App() {
             <RouteErrorBoundary resetKey={path} autoReload={board.kiosk}>
                 <Suspense fallback={<RouteLoading />}>
                     <SuperboardApp kiosk={board.kiosk} filter={board.filter} />
+                </Suspense>
+            </RouteErrorBoundary>
+        );
+    } else if (isDeviceApprovePath(path)) {
+        // A phone mid-approval: a reload would be harmless (the code is in
+        // the URL) but a prompt never blocks it.
+        updates = "prompt";
+        content = (
+            <RouteErrorBoundary resetKey={path}>
+                <Suspense fallback={<RouteLoading />}>
+                    <DeviceApprove />
                 </Suspense>
             </RouteErrorBoundary>
         );
