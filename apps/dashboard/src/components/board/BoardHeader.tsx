@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import type { Density } from "@/lib/board-url";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Popover } from "./Popover";
 
 function DensityToggle({ density, onChange }: { density: Density; onChange: (d: Density) => void }) {
     const option = (value: Density, label: string, lines: number) => (
@@ -37,6 +38,49 @@ function DensityToggle({ density, onChange }: { density: Density; onChange: (d: 
     );
 }
 
+/** Secondary actions, folded into a menu below the xl breakpoint. */
+function MoreMenu(props: {
+    onSuperboard: () => void;
+    onAgents: () => void;
+    onNewGroup: () => void;
+    onDisconnect: () => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const close = useCallback(() => setOpen(false), []);
+    const item = (label: string, run: () => void) => (
+        <button
+            type="button"
+            className="block w-full rounded px-3 py-1.5 text-left text-sm transition-colors hover:bg-surface-hover"
+            onClick={() => {
+                close();
+                run();
+            }}
+        >
+            {label}
+        </button>
+    );
+    return (
+        <div className="relative xl:hidden">
+            <button
+                type="button"
+                aria-haspopup="dialog"
+                aria-expanded={open}
+                aria-label="More actions"
+                onClick={() => setOpen((v) => !v)}
+                className="inline-flex h-8 items-center rounded-md border border-border px-3 text-xs font-medium transition-colors hover:bg-surface-hover"
+            >
+                More
+            </button>
+            <Popover open={open} onClose={close} label="More actions" align="right" className="w-44 p-1">
+                {item("Superboard", props.onSuperboard)}
+                {item("Agents", props.onAgents)}
+                {item("New group", props.onNewGroup)}
+                {item("Disconnect", props.onDisconnect)}
+            </Popover>
+        </div>
+    );
+}
+
 /**
  * Board header: brand, search, filter/views controls, density, pause and the
  * operator actions.
@@ -68,7 +112,7 @@ export function BoardHeader(props: {
                     onChange={(e) => props.onQuery(e.target.value)}
                     placeholder="Search monitors  ( / )"
                     aria-label="Search monitors"
-                    className="h-8 w-64 pr-14"
+                    className="h-8 w-48 pr-14 xl:w-64"
                 />
                 <kbd
                     aria-hidden
@@ -88,6 +132,7 @@ export function BoardHeader(props: {
             <button
                 type="button"
                 aria-pressed={props.paused}
+                aria-label={props.paused ? "Resume live updates" : "Pause live updates"}
                 onClick={props.onTogglePaused}
                 title={props.paused ? "Resume live updates" : "Pause live updates"}
                 className={`inline-flex h-8 items-center gap-2 rounded-md border px-3 text-xs font-medium transition-colors hover:bg-surface-hover ${
@@ -95,23 +140,32 @@ export function BoardHeader(props: {
                 }`}
             >
                 <span aria-hidden>{props.paused ? "▶" : "❚❚"}</span>
-                {props.paused ? "Resume" : "Pause"}
+                <span className="hidden xl:inline">{props.paused ? "Resume live" : "Pause live"}</span>
             </button>
 
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-                <Button size="sm" variant="outline" onClick={props.onSuperboard}>
-                    Superboard
-                </Button>
-                <Button size="sm" variant="outline" onClick={props.onAgents}>
-                    Agents
-                </Button>
-                <Button size="sm" variant="outline" onClick={props.onNewGroup}>
-                    New group
-                </Button>
+            <div className="ml-auto flex items-center gap-2">
+                <div className="hidden items-center gap-2 xl:flex">
+                    <Button size="sm" variant="outline" onClick={props.onSuperboard}>
+                        Superboard
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={props.onAgents}>
+                        Agents
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={props.onNewGroup}>
+                        New group
+                    </Button>
+                </div>
+                <MoreMenu {...props} />
                 <Button size="sm" onClick={props.onNewMonitor}>
                     New monitor
                 </Button>
-                <Button variant="ghost" size="sm" title="Forget token" onClick={props.onDisconnect}>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Forget token"
+                    className="hidden xl:inline-flex"
+                    onClick={props.onDisconnect}
+                >
                     Disconnect
                 </Button>
             </div>

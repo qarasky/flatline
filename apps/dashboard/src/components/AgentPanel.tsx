@@ -4,6 +4,7 @@ import { ApiError, createApiKey, deleteApiKey, fetchApiKeys, setApiKeyActive, ty
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const BASE = (import.meta.env.VITE_FLATLINE_URL as string | undefined) ?? "";
 
@@ -178,11 +179,10 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
                     <div className="mb-1 text-xs font-medium text-muted-foreground">Scopes</div>
                     {availableScopes.map((scope) => (
                         <label key={scope} className="mb-1 flex cursor-pointer items-start gap-2 text-sm">
-                            <input
-                                type="checkbox"
+                            <Checkbox
                                 checked={scopes.has(scope)}
                                 onChange={() => toggleScope(scope)}
-                                className="mt-0.5 size-3.5 accent-[var(--primary)]"
+                                className="mt-0.5"
                             />
                             <span>
                                 <span className="font-mono text-xs">{scope}</span>

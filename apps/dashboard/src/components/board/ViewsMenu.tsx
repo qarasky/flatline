@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { isFilterActive, type FilterState, type SortKey } from "@/lib/board-model";
 import { addView, removeView, setDefaultView, type SavedView, type SavedViews } from "@/lib/board-url";
 import { Popover } from "./Popover";
+import { Input } from "@/components/ui/input";
 
 /**
  * Saved views: named filter + sort combinations kept in this browser, one of
@@ -96,14 +97,14 @@ export function ViewsMenu({
                         setName("");
                     }}
                 >
-                    <input
+                    <Input
                         value={name}
                         onChange={(event) => setName(event.target.value)}
                         placeholder={canSave ? "Name this view" : "Set a filter or sort first"}
                         disabled={!canSave}
                         aria-label="View name"
                         maxLength={40}
-                        className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm placeholder:text-quiet focus-visible:outline-none disabled:opacity-50"
+                        className="min-w-0 flex-1 disabled:opacity-50"
                     />
                     <button
                         type="submit"

@@ -8,6 +8,7 @@ import { HIGHLIGHT_MS, curve } from "@/lib/motion";
 import { useBoardActions } from "./board-context";
 import { HeartbeatStrip } from "./HeartbeatStrip";
 import { StatusDot, statusTone } from "./StatusDot";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const FLASH: Record<string, string> = {
     down: "color-mix(in srgb, var(--color-bad) 22%, transparent)",
@@ -87,12 +88,11 @@ export const MonitorRow = memo(function MonitorRow({
                 />
             ) : null}
 
-            <input
-                type="checkbox"
+            <Checkbox
                 checked={selected}
                 onChange={() => actions.toggleSelect(monitor.id)}
                 aria-label={`Select ${monitor.name}`}
-                className="board-reveal size-3.5 cursor-pointer accent-[var(--primary)]"
+                className="board-reveal"
                 data-selecting={selecting || undefined}
             />
             <StatusDot status={status} />

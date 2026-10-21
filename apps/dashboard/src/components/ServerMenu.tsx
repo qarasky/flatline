@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, updateMonitor, type MonitorSummary } from "@/lib/api";
 import { clampMenuPosition, cleanMonitorName } from "@/lib/fleet-presentation";
 import type { GroupOption } from "@/lib/groups";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export interface MenuAnchor {
     x: number;
@@ -156,21 +159,15 @@ export function MoveDialog({
                 <label className="mb-1 block text-xs text-quiet" htmlFor="monitor-move-select">
                     Group
                 </label>
-                <select
+                <Select
                     id="monitor-move-select"
                     value={parent}
                     disabled={saving}
                     autoFocus
-                    onChange={(e) => setParent(e.target.value)}
-                    className="mb-3 h-9 w-full rounded-md border border-input bg-surface px-2 text-sm"
-                >
-                    <option value="">— none (top level)</option>
-                    {options.map((option) => (
-                        <option key={option.value} value={option.value}>
-                            {option.label}
-                        </option>
-                    ))}
-                </select>
+                    onChange={setParent}
+                    className="mb-3 h-9"
+                    options={[{ value: "", label: "— none (top level)" }, ...options]}
+                />
                 {error ? (
                     <p className="mb-3 text-xs text-bad" role="alert">
                         {error}
@@ -266,12 +263,11 @@ export function DeleteGroupDialog({
                     {rows === 1 ? "monitor" : "monitors"} inside the whole subtree.
                 </p>
                 <label className="mb-3 flex items-start gap-2 text-sm">
-                    <input
-                        type="checkbox"
+                    <Checkbox
                         checked={purge}
                         disabled={busy}
                         onChange={(e) => setPurge(e.target.checked)}
-                        className="mt-0.5 size-3.5 accent-[var(--primary)]"
+                        className="mt-0.5"
                     />
                     <span>
                         Also delete everything inside
@@ -390,7 +386,7 @@ export function RenameDialog({
                 <label className="mb-1 block text-xs text-quiet" htmlFor="server-rename-input">
                     Display name
                 </label>
-                <input
+                <Input
                     id="server-rename-input"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
@@ -398,7 +394,7 @@ export function RenameDialog({
                     maxLength={255}
                     autoFocus
                     autoComplete="off"
-                    className="mb-3 w-full rounded-md border border-input bg-surface px-3 py-2 text-sm focus-visible:outline-none"
+                    className="mb-3 h-9"
                 />
                 {error ? (
                     <p className="mb-3 text-xs text-bad" role="alert">

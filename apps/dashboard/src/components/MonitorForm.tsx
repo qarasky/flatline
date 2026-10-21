@@ -25,6 +25,9 @@ import { LinkPicker } from "@/components/WebsiteLinks";
 import type { GroupOption } from "@/lib/groups";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 
 /** Select sentinel that swaps the picker for free-text input. */
 const CUSTOM_PROVIDER = "__custom__";
@@ -41,12 +44,7 @@ function FieldInput({
     if (field.kind === "boolean") {
         return (
             <label className="flex items-center gap-2 text-sm">
-                <input
-                    type="checkbox"
-                    checked={Boolean(value ?? false)}
-                    onChange={(e) => onChange(e.target.checked)}
-                    className="size-3.5 accent-[var(--primary)]"
-                />
+                <Checkbox checked={Boolean(value ?? false)} onChange={(e) => onChange(e.target.checked)} />
                 <span>{field.label}</span>
             </label>
         );
@@ -56,17 +54,11 @@ function FieldInput({
         return (
             <label className="block">
                 <span className="mb-1 block text-xs font-medium text-muted-foreground">{field.label}</span>
-                <select
+                <Select
                     value={String(value ?? field.default ?? "")}
-                    onChange={(e) => onChange(e.target.value)}
-                    className="h-8 w-full rounded-md border border-border bg-surface-2 px-2 text-sm"
-                >
-                    {(field.options ?? []).map((o) => (
-                        <option key={o.value} value={o.value}>
-                            {o.label}
-                        </option>
-                    ))}
-                </select>
+                    onChange={onChange}
+                    options={(field.options ?? []).map((o) => ({ value: String(o.value), label: o.label }))}
+                />
             </label>
         );
     }
@@ -75,12 +67,11 @@ function FieldInput({
         return (
             <label className="block">
                 <span className="mb-1 block text-xs font-medium text-muted-foreground">{field.label}</span>
-                <textarea
+                <Textarea
                     value={typeof value === "string" ? value : Array.isArray(value) ? value.join("\n") : ""}
                     onChange={(e) => onChange(e.target.value)}
                     placeholder={field.placeholder}
                     rows={3}
-                    className="w-full rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-sm"
                 />
             </label>
         );
@@ -162,10 +153,9 @@ function ProviderField({ value, onChange }: { value: unknown; onChange: (value: 
         <div>
             <span className="mb-1 block text-xs font-medium text-muted-foreground">Provider</span>
             <div className="flex gap-2">
-                <select
+                <Select
                     value={customMode ? CUSTOM_PROVIDER : knownId}
-                    onChange={(e) => {
-                        const next = e.target.value;
+                    onChange={(next) => {
                         if (next === CUSTOM_PROVIDER) {
                             setCustomMode(true);
                             onChange(custom === "" ? null : custom);
@@ -174,16 +164,12 @@ function ProviderField({ value, onChange }: { value: unknown; onChange: (value: 
                             onChange(next === "" ? null : next);
                         }
                     }}
-                    className="h-8 w-full rounded-md border border-border bg-surface-2 px-2 text-sm"
-                >
-                    <option value="">— none —</option>
-                    {PROVIDERS.map((p) => (
-                        <option key={p.id} value={p.id}>
-                            {p.label}
-                        </option>
-                    ))}
-                    <option value={CUSTOM_PROVIDER}>Other…</option>
-                </select>
+                    options={[
+                        { value: "", label: "— none —" },
+                        ...PROVIDERS.map((p) => ({ value: p.id, label: p.label })),
+                        { value: CUSTOM_PROVIDER, label: "Other…" },
+                    ]}
+                />
                 {customMode ? (
                     <Input
                         value={custom}
@@ -392,18 +378,12 @@ export function MonitorForm({
             <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                     <span className="mb-1 block text-xs font-medium text-muted-foreground">Type</span>
-                    <select
+                    <Select
                         value={type}
                         disabled={isEdit}
-                        onChange={(e) => handleTypeChange(e.target.value)}
-                        className="h-8 w-full rounded-md border border-border bg-surface-2 px-2 text-sm disabled:opacity-60"
-                    >
-                        {typeOptions.map((t) => (
-                            <option key={t} value={t}>
-                                {TYPE_SCHEMAS[t]?.label ?? t}
-                            </option>
-                        ))}
-                    </select>
+                        onChange={handleTypeChange}
+                        options={typeOptions.map((t) => ({ value: t, label: TYPE_SCHEMAS[t]?.label ?? t }))}
+                    />
                 </label>
                 <div className="flex items-end pb-0.5 text-xs text-quiet">{schema.summary}</div>
             </div>

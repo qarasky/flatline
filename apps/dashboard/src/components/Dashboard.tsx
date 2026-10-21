@@ -58,6 +58,7 @@ import {
     type BoardActions,
     type BoardView,
 } from "@/components/board/board-context";
+import { Select } from "@/components/ui/select";
 import { DetailPane, WIDE_QUERY } from "@/components/board/DetailPane";
 import { FilterPopover } from "@/components/board/FilterPopover";
 import { MotionProvider } from "@/components/board/MotionProvider";
@@ -638,17 +639,17 @@ export function Dashboard() {
                                         ) : null}
                                         <label className="ml-auto flex items-center gap-2 text-xs text-quiet">
                                             Sort
-                                            <select
+                                            <Select
+                                                size="sm"
+                                                aria-label="Sort"
+                                                className="w-36"
                                                 value={sort}
-                                                onChange={(e) => setSort(e.target.value as SortKey)}
-                                                className="h-7 rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground focus-visible:outline-offset-1"
-                                            >
-                                                {SORT_KEYS.map((option) => (
-                                                    <option key={option.key} value={option.key}>
-                                                        {option.label}
-                                                    </option>
-                                                ))}
-                                            </select>
+                                                onChange={(next) => setSort(next as SortKey)}
+                                                options={SORT_KEYS.map((option) => ({
+                                                    value: option.key,
+                                                    label: option.label,
+                                                }))}
+                                            />
                                         </label>
                                     </div>
 

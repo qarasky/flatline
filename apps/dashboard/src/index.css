@@ -1256,3 +1256,149 @@ body {
 .board-list[data-strips="off"] .board-row {
     grid-template-columns: 20px 12px minmax(0, 1fr) 92px 176px 64px 28px;
 }
+
+/* ---- Form controls (ui/checkbox, ui/select) ---- */
+.ui-checkbox {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    width: 16px;
+    height: 16px;
+}
+.ui-checkbox > input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+.ui-checkbox-box {
+    pointer-events: none;
+    display: flex;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: transparent;
+    transition:
+        background-color 100ms ease-out,
+        border-color 100ms ease-out,
+        color 100ms ease-out;
+}
+.ui-checkbox-box svg {
+    width: 12px;
+    height: 12px;
+}
+.ui-checkbox:hover > input:not(:disabled) + .ui-checkbox-box {
+    border-color: color-mix(in srgb, var(--foreground) 40%, var(--border));
+}
+.ui-checkbox > input:checked + .ui-checkbox-box {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: var(--primary-foreground);
+}
+.ui-checkbox > input:focus-visible + .ui-checkbox-box {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+.ui-checkbox > input:disabled {
+    cursor: not-allowed;
+}
+.ui-checkbox > input:disabled + .ui-checkbox-box {
+    opacity: 0.5;
+}
+
+.ui-select {
+    display: inline-flex;
+    width: 100%;
+    height: 32px;
+    align-items: center;
+    gap: 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    padding: 0 10px;
+    font-size: 14px;
+    color: var(--foreground);
+    transition:
+        border-color 100ms ease-out,
+        background-color 100ms ease-out;
+}
+.ui-select-sm {
+    height: 28px;
+    padding: 0 8px;
+    font-size: 12px;
+}
+.ui-select:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--foreground) 35%, var(--border));
+}
+.ui-select:focus-visible,
+.ui-select[aria-expanded="true"] {
+    outline: 2px solid color-mix(in srgb, var(--primary) 70%, transparent);
+    outline-offset: 1px;
+}
+.ui-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+.ui-select-chevron {
+    flex: none;
+    color: var(--quiet);
+}
+.ui-select-list {
+    position: fixed;
+    z-index: 80;
+    max-height: 260px;
+    overflow-y: auto;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.4);
+    animation: ui-select-in 125ms cubic-bezier(0, 0, 0.38, 0.9);
+}
+.ui-select-option {
+    display: flex;
+    cursor: pointer;
+    align-items: center;
+    gap: 8px;
+    border-radius: 5px;
+    padding: 6px 8px;
+    font-size: 13px;
+    color: var(--foreground);
+}
+.ui-select-option[data-active] {
+    background: var(--surface-hover);
+}
+.ui-select-option[aria-selected="true"] {
+    color: var(--primary);
+}
+@keyframes ui-select-in {
+    from {
+        opacity: 0;
+        transform: scale(0.97);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ui-select-list {
+        animation: none;
+    }
+}
+
+/* number inputs: drop the native spinners */
+input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}

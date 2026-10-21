@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { SyntheticEvent } from "react";
 import { ApiError, fetchAllMonitors, fetchMonitorLinks, replaceMonitorLinks, type MonitorSummary } from "@/lib/api";
 import { buildLinkCandidates, linkTone, type LinkCandidate } from "@/lib/links";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 
 /** Colored dot for a monitor status, shared with the card chips. */
 export function LinkStatusDot({ status }: { status: number }) {
@@ -37,14 +39,14 @@ export function LinkPicker({
 
     return (
         <div>
-            <input
+            <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 disabled={disabled}
                 placeholder="Filter websites and groups…"
                 aria-label="Filter websites and groups"
                 autoComplete="off"
-                className="mb-2 h-9 w-full rounded-md border border-input bg-surface px-2 text-sm"
+                className="mb-2 h-9"
             />
             <div
                 className="max-h-60 overflow-y-auto rounded-md border border-border"
@@ -59,12 +61,10 @@ export function LinkPicker({
                             key={candidate.id}
                             className="flex cursor-pointer items-center gap-2 border-b border-border/60 px-3 py-1.5 text-sm last:border-0 hover:bg-surface"
                         >
-                            <input
-                                type="checkbox"
+                            <Checkbox
                                 checked={selected.has(candidate.id)}
                                 disabled={disabled}
                                 onChange={() => onToggle(candidate.id)}
-                                className="size-3.5 accent-[var(--primary)]"
                             />
                             <LinkStatusDot status={candidate.status} />
                             <span className="min-w-0 flex-1 truncate">{candidate.label}</span>
