@@ -269,3 +269,13 @@ export function chunkIds(ids: number[], size = 200): number[][] {
     }
     return chunks;
 }
+
+/** An empty strip shaped like `like`, ending in the bucket containing `nowMs`. */
+export function blankStrip(like: Strip, nowMs: number): Strip {
+    return {
+        startMs: windowStart(nowMs, like.bucketMs, like.cells.length),
+        bucketMs: like.bucketMs,
+        cells: like.cells.map(() => null),
+        fresh: 0,
+    };
+}
