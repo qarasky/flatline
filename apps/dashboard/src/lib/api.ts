@@ -961,6 +961,64 @@ export function login(payload: { password: string }): Promise<LoginResult> {
     });
 }
 
+export interface DeviceSignInStart {
+    code: string;
+    pollSecret: string;
+    /** Seconds until the request expires. */
+    expiresIn: number;
+    /** The instance's configured public URL, when it has one. */
+    publicUrl: string | null;
+}
+
+export type DeviceSignInPoll = { status: "pending" | "denied" | "expired" } | { status: "approved"; token: string };
+
+export interface DeviceRequestInfo {
+    userAgent: string;
+    ageSeconds: number;
+    suggestedName: string;
+    publicUrl: string | null;
+}
+
+/**
+ * Ask to sign this screen in with a QR code. Public: no token needed.
+ */
+export function startDeviceSignIn(): Promise<DeviceSignInStart> {
+    return request("/api/v1/auth/device/start", { method: "POST", body: JSON.stringify({}) });
+}
+
+/**
+ * Check whether a phone approved this screen. Public; the poll secret proves
+ * this is the screen that started the request.
+ */
+export function pollDeviceSignIn(code: string, pollSecret: string, signal?: AbortSignal): Promise<DeviceSignInPoll> {
+    return request("/api/v1/auth/device/poll", {
+        method: "POST",
+        body: JSON.stringify({ code, pollSecret }),
+        signal,
+    });
+}
+
+/**
+ * Describe a waiting screen before approving it. Needs a signed-in phone.
+ */
+export function lookupDeviceRequest(code: string): Promise<DeviceRequestInfo> {
+    return request("/api/v1/auth/device/lookup", { method: "POST", body: JSON.stringify({ code }) });
+}
+
+/**
+ * Approve a waiting screen; it receives its own operator token under `name`.
+ */
+export async function approveDeviceRequest(code: string, name: string): Promise<void> {
+    await request("/api/v1/auth/device/approve", { method: "POST", body: JSON.stringify({ code, name }) });
+}
+
+/**
+ * Turn a waiting screen away.
+ */
+export async function denyDeviceRequest(code: string): Promise<void> {
+    await request("/api/v1/auth/device/deny", { method: "POST", body: JSON.stringify({ code }) });
+}
+
 /**
  * The current token's identity and scopes.
  */
