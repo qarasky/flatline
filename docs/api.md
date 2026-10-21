@@ -140,21 +140,47 @@ The SSE stream and agent binary downloads have no timeout.
 
 ### Monitors, heartbeats and links
 
-| Method | Path                                         | Purpose                                          |
-| ------ | -------------------------------------------- | ------------------------------------------------ |
-| GET    | `/api/v1/monitor-types`                      | Supported types and `writableFields`             |
-| GET    | `/api/v1/monitors`                           | List; `page`, `perPage`, `status`, `active`, `q` |
-| POST   | `/api/v1/monitors`                           | Create a monitor                                 |
-| GET    | `/api/v1/monitors/{id}`                      | One monitor with live status and uptime          |
-| PATCH  | `/api/v1/monitors/{id}`                      | Partial update (type is immutable)               |
-| DELETE | `/api/v1/monitors/{id}?deleteChildren=true`  | Delete, optionally a group subtree               |
-| GET    | `/api/v1/monitors/{id}/heartbeats?limit=`    | Recent heartbeats, newest first                  |
-| POST   | `/api/v1/monitors/{id}/push-failures/clear`  | Acknowledge `failedPushes`                       |
-| POST   | `/api/v1/monitors/{id}/agent-warnings/clear` | Acknowledge all agent warning counters           |
-| GET    | `/api/v1/monitors/links?ids=1,2,3`           | Bulk links for many monitors (max 200)           |
-| GET    | `/api/v1/monitors/{id}/links`                | Raw and resolved links                           |
-| PUT    | `/api/v1/monitors/{id}/links`                | Replace; body `{"linkedMonitorIds":[1,2]}`       |
-| DELETE | `/api/v1/monitors/{id}/links`                | Clear all links                                  |
+| Method | Path                                                     | Purpose                                          |
+| ------ | -------------------------------------------------------- | ------------------------------------------------ |
+| GET    | `/api/v1/monitor-types`                                  | Supported types and `writableFields`             |
+| GET    | `/api/v1/monitors`                                       | List; `page`, `perPage`, `status`, `active`, `q` |
+| POST   | `/api/v1/monitors`                                       | Create a monitor                                 |
+| GET    | `/api/v1/monitors/{id}`                                  | One monitor with live status and uptime          |
+| PATCH  | `/api/v1/monitors/{id}`                                  | Partial update (type is immutable)               |
+| DELETE | `/api/v1/monitors/{id}?deleteChildren=true`              | Delete, optionally a group subtree               |
+| GET    | `/api/v1/monitors/{id}/heartbeats?limit=`                | Recent heartbeats, newest first                  |
+| POST   | `/api/v1/monitors/{id}/push-failures/clear`              | Acknowledge `failedPushes`                       |
+| POST   | `/api/v1/monitors/{id}/agent-warnings/clear`             | Acknowledge all agent warning counters           |
+| GET    | `/api/v1/monitors/links?ids=1,2,3`                       | Bulk links for many monitors (max 200)           |
+| GET    | `/api/v1/monitors/heartbeat-strips?ids=&hours=&buckets=` | Bucketed status strips (max 200 ids)             |
+| GET    | `/api/v1/monitors/{id}/links`                            | Raw and resolved links                           |
+| PUT    | `/api/v1/monitors/{id}/links`                            | Replace; body `{"linkedMonitorIds":[1,2]}`       |
+| DELETE | `/api/v1/monitors/{id}/links`                            | Clear all links                                  |
+
+#### Heartbeat strips
+
+`GET /api/v1/monitors/heartbeat-strips?ids=1,2,3&hours=24&buckets=48` returns one compact status strip per monitor, for dashboards.
+`ids` is optional (omitted = the first 200 monitors by id; more than 200 ids or a malformed id is a 400), `hours` is 1-168 (default 24), `buckets` is 1-120 (default 48).
+`hours * 3600 / buckets` must be a whole number of seconds and at least 60, otherwise 400.
+
+```json
+{
+  "ok": true,
+  "hours": 24,
+  "buckets": 48,
+  "bucketSeconds": 1800,
+  "start": "2026-10-21T10:30:00.000Z",
+  "strips": { "7": [[1, 90, 0], null, [0, 90, 61]] }
+}
+```
+
+Each strip has exactly `buckets` entries, oldest first. An entry is `[worstStatus, beats, failedBeats]` or `null` when the bucket has no heartbeats.
+Status codes are the heartbeat codes (0 down, 1 up, 2 pending, 3 maintenance); the worst status wins by severity down > pending > maintenance > up.
+`beats` counts heartbeat rows in the bucket and `failedBeats` those with status 0. Unknown ids are absent from `strips`; groups are included.
+
+**Bucket alignment.** Buckets are aligned to multiples of `bucketSeconds` since the Unix epoch: the bucket index of a time is `floor(epochSeconds / bucketSeconds)`.
+The last entry is the bucket containing the server's "now", and `start` is the UTC start of the first one, so a client can place a live beat at
+`floor((beatEpochSeconds - startEpochSeconds) / bucketSeconds)` without asking again. Results are cached on the server for about 10 seconds, never across a bucket boundary.
 
 ### Metrics
 

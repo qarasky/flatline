@@ -1,6 +1,6 @@
 # Dashboard
 
-The operator UI at `/` — a grouped monitor table with live status, the control
+The operator UI at `/` — a grouped monitor board with live status, the control
 surface for monitors, groups and tokens, and the entry point to the Superboard
 and the status pages. It is a React + Vite app in `apps/dashboard/`; the backend
 serves the built output, so in production there is no separate frontend origin.
@@ -9,7 +9,7 @@ serves the built output, so in production there is no separate frontend origin.
 
 | Path                                 | Shows                                                   |
 | ------------------------------------ | ------------------------------------------------------- |
-| `/`                                  | Token gate, then the monitor table.                     |
+| `/`                                  | Token gate, then the monitor board.                     |
 | `/superboard`, `/superboard/kiosk/…` | The wall board ([superboard](superboard.md)).           |
 | `/status/:slug`                      | A public status page ([status pages](status-pages.md)). |
 | any other path                       | The dashboard, so a deep link never 404s.               |
@@ -19,7 +19,8 @@ The router is ~40 lines in `src/lib/router.ts` (path parsing in
 
 - **Code splitting.** `App.tsx` is only the router: the dashboard, the Superboard
   and the status page are separate chunks loaded with `React.lazy`, so a status
-  page visitor never downloads the operator UI.
+  page visitor never downloads the operator UI. The `motion` library lives in the
+  dashboard chunk only.
 - **Error boundaries.** Each route has its own (`RouteErrorBoundary`). On the
   kiosk board and public status pages — screens nobody is sitting at — an
   error is shown and the page reloads itself after 30 s. Operator routes show
@@ -44,28 +45,85 @@ token has full permission. The **Agents** panel mints additional named tokens
 (shown once, then only their hash is stored) so an integration can have its own
 revocable credential.
 
-## The monitor table
+## The monitor board
 
-- Monitors are shown as a tree: group rows with subtree counts, children
-  indented and collapsible, following the same `parent`/`weight` ordering the
-  Superboard uses.
-- Each row carries a status dot, the monitor name, its response time and when it
-  was last checked. Group rows aggregate their children (worst-of; paused
-  children ignored).
-- **Search** filters as you type; `/` focuses the field.
-- Selecting rows enables bulk actions: **Pause**, **Resume** and **Delete**.
-- Header actions: **New monitor**, **New group**, **Superboard**, **Agents**.
-- Every group row and monitor row has a `⋯` menu (right-click works too):
-  monitors get Rename and Move to group; groups get New subgroup, Rename, Move
-  and Delete.
-- Deleting a group offers two modes: children move up to the group's parent (so
-  nothing is orphaned), or the whole subtree is deleted with its history.
+Design: [main board redesign](superpowers/specs/2026-10-21-main-board-redesign-design.md).
+Motion: [dashboard motion](dashboard-motion.md).
 
-Status updates arrive over the SSE stream, so the table re-renders as checks
-finish rather than polling.
+From top to bottom:
+
+- **Header:** search (`/` focuses it), a **Filter** button with an active-count badge, **Views**,
+  a comfortable/compact **density** toggle, **Pause** (live updates), and the actions: **Superboard**,
+  **Agents**, **New group**, **New monitor**, **Disconnect**.
+- **Status summary:** the fleet state in words ("All 33 monitors up" / "2 monitors need attention")
+  and up / down / pending / maintenance / paused counts. The counts are status filters.
+- **Needs attention:** shown only when something is wrong. Items: down, pending (retrying),
+  flapping (at least 4 status changes in 6 h, read from the strip), a push monitor silent for more
+  than 3x its interval, agent warnings and failed or overdue backups. Each shows what is wrong and
+  for how long, and opens the monitor in one click. Agent warnings come from one bulk metrics read
+  for push monitors and backups from `/api/v1/backup-agents`, both loaded with each live-stream
+  snapshot (and on backup events); they are not polled, so they refresh on reconnect rather than
+  on every beat.
+- **The list:** the group tree, following the same `parent`/`weight` ordering as the Superboard.
+  A row is `[status dot] name (target in quiet text) | status word | 24 h strip | uptime`.
+  Ping, last check and type replace the target text on hover or focus. The checkbox and the `⋯` menu
+  appear on hover, focus, or whenever something is selected. Group rows show a worst-of dot and
+  up/down counts, so a collapsed group still shows trouble. Status is a dot **and** a word, and the
+  dot's shape differs per status.
+- **Detail:** opening a monitor shows it beside the list at 1280 px and wider, and as a sheet below
+  that. The open row keeps an accent edge, `Esc` closes it, and the monitor is in the URL (`?m=ID`).
+
+### The 24 h strip
+
+48 half-hour buckets, each coloured by its worst beat (down, pending, maintenance, up; empty
+buckets muted; down cells are also taller). Hovering shows the bucket's time range, check count and
+failures. The data is one bulk request per snapshot,
+`GET /api/v1/monitors/heartbeat-strips?ids=&hours=24&buckets=48`, with explicit ids in chunks of
+200; live `heartbeat` events update the newest bucket locally, and a resnapshot reloads the
+strips. If the endpoint is missing or fails, rows render without a strip and no error is shown.
+
+### Sorting, filters and views
+
+- **Sort:** worst first (default: down, pending, then the rest, then the group order you set), name,
+  uptime (lowest first) or last change. Sorting applies inside each group, and a group holding a
+  worse child rises. "Last change" comes from the strip and from flips seen live, so it is empty for
+  monitors that did not change in the last 24 h.
+- **Filters:** status chips, type, tags and a "needs attention" preset, plus search (name, URL,
+  host, type; a matching group name keeps its whole group). A group is shown when any child
+  matches, and groups open while a filter is active.
+- **URL:** filters, sort and the open monitor live in the query string (`?status=down&sort=name&m=12`),
+  so a board can be linked.
+- **Saved views:** name the current filters and sort, apply them later, and mark one as the default
+  (applied when the URL carries no board state). Views and the density choice are stored per browser.
+
+### Keyboard
+
+| Key       | Action                                                       |
+| --------- | ------------------------------------------------------------ |
+| `/`       | Focus search                                                 |
+| `j` / `k` | Move down / up the rows                                      |
+| `Enter`   | Open the monitor (toggle a group)                            |
+| `x`       | Select the row for bulk actions                              |
+| `Esc`     | Close the detail, then clear the selection, then the filters |
+
+Shortcuts never fire while typing in a field, and `Esc` leaves menus and dialogs to close
+themselves first.
+
+### Bulk actions, menus and live updates
+
+- Selecting rows shows a floating bar with **Pause**, **Resume**, **Delete** and **Clear**.
+- Every group row and monitor row has a `⋯` menu (right-click works too): monitors get Rename and
+  Move to group; groups get New subgroup, Rename, Move and Delete.
+- Deleting a group offers two modes: children move up to the group's parent (so nothing is
+  orphaned), or the whole subtree is deleted with its history.
+- **Live updates** arrive over the shared SSE stream and are applied in one render per ~250 ms.
+  **Pause** buffers them (a banner says so) and applies them on resume. While the pointer is over the
+  list, a selection exists or a menu is open, status changes do not reorder the rows; the order
+  catches up afterwards. After 5 minutes without input the board calms down (no highlights or
+  layout animation). The motion rules are in [dashboard motion](dashboard-motion.md).
 
 A tab holds **one** live stream however many views want it (`src/lib/live-hub.ts`):
-the table, the monitor detail view and the Superboard subscribe to the shared
+the board, the monitor detail view and the Superboard subscribe to the shared
 connection rather than opening their own (the backend allows 8 per token). On
 connect, reconnect and `invalidate` every subscriber resnapshots; between those
 the detail view appends each live beat to its recent-checks list instead of

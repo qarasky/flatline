@@ -762,6 +762,36 @@ export function fetchLatestMetricsBulk(
     return request(`/api/v1/monitors/metrics/latest?ids=${ids.join(",")}`, { signal });
 }
 
+/**
+ * Fetch 24 h heartbeat strips for many monitors at once.
+ *
+ * Always pass explicit ids (at most 200 per request; callers chunk): an omitted
+ * `ids` returns only the first 200 monitors. The endpoint may not exist on an
+ * older backend, so callers treat any failure as "no strips".
+ * @param ids Monitor ids (1..200)
+ * @param signal Cancels the request
+ * @returns Epoch-aligned buckets per monitor id
+ */
+export function fetchHeartbeatStrips(
+    ids: number[],
+    options: { hours?: number; buckets?: number } = {},
+    signal?: AbortSignal
+): Promise<{
+    ok: true;
+    hours: number;
+    buckets: number;
+    bucketSeconds: number;
+    start: string;
+    strips: Record<string, ([number, number, number] | null)[]>;
+}> {
+    const query = new URLSearchParams({
+        ids: ids.join(","),
+        hours: String(options.hours ?? 24),
+        buckets: String(options.buckets ?? 48),
+    });
+    return request(`/api/v1/monitors/heartbeat-strips?${query.toString()}`, { signal });
+}
+
 /** A raw stored link: an ordinary monitor, or a group to expand on the card. */
 export interface MonitorLinkTarget {
     linkedMonitorId: number;
