@@ -70,7 +70,7 @@ export function AttentionSection({
                                             type="button"
                                             disabled={item.monitorId === null}
                                             onClick={() => item.monitorId !== null && onOpen(item.monitorId)}
-                                            className="grid w-full grid-cols-[12px_112px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-2 text-left transition-colors hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
+                                            className="grid w-full grid-cols-[12px_112px_minmax(160px,300px)_minmax(0,1fr)] items-center gap-3 px-5 py-2 text-left transition-colors hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
                                         >
                                             <KindMark kind={item.kind} />
                                             <span
@@ -79,7 +79,9 @@ export function AttentionSection({
                                                 {item.title}
                                             </span>
                                             <span className="truncate text-sm font-medium">{item.name}</span>
-                                            <span className="tnum truncate text-xs text-muted">{item.detail}</span>
+                                            <span className="tnum truncate text-left text-xs text-muted">
+                                                {item.detail}
+                                            </span>
                                         </button>
                                     </m.li>
                                 ))}

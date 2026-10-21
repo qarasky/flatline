@@ -1130,10 +1130,14 @@ body {
 /* Target text rests under the name; ping, last check and type replace it on
    hover or focus without changing the row's height. */
 .board-meta {
+    display: block;
     position: relative;
     min-width: 0;
-    flex: 1 1 0;
+    flex: 0 0 1.125rem;
     height: 1.125rem;
+}
+.board-list[data-density="compact"] .board-meta {
+    flex: 1 1 0;
 }
 .board-meta > span {
     position: absolute;
@@ -1246,4 +1250,9 @@ body {
     padding: 0 5px;
     font-family: inherit;
     color: var(--muted);
+}
+
+/* Without strips (older backend) the strip column only has to hold group counts. */
+.board-list[data-strips="off"] .board-row {
+    grid-template-columns: 20px 12px minmax(0, 1fr) 92px 176px 64px 28px;
 }

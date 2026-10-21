@@ -657,6 +657,7 @@ export function Dashboard() {
                                             <div
                                                 className="board-list border-t border-border"
                                                 data-density={density}
+                                                data-strips={data.strips.size > 0 ? "on" : "off"}
                                                 data-selecting={selected.size > 0 || undefined}
                                                 onPointerEnter={() => setPointerOverList(true)}
                                                 onPointerLeave={() => setPointerOverList(false)}
