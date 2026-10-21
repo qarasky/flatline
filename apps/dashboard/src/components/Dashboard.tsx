@@ -1,17 +1,13 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    ApiError,
     deleteMonitor,
-    fetchAllMonitors,
-    updateMonitor,
     getToken,
     pauseMonitor,
     resumeMonitor,
     setToken,
-    type HealthSummary,
+    updateMonitor,
     type MonitorSummary,
 } from "@/lib/api";
-import { subscribeLive } from "@/lib/live-hub";
 import { MonitorForm } from "@/components/MonitorForm";
 import { MonitorDetail } from "@/components/MonitorDetail";
 import {
@@ -27,585 +23,110 @@ import { buildLinkCandidates } from "@/lib/links";
 import { AgentPanel } from "@/components/AgentPanel";
 import { TokenGate } from "@/components/TokenGate";
 import { navigate } from "@/lib/router";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { healthFromMonitors } from "@/lib/live-state";
+import { attentionMonitorIds, deriveAttention } from "@/lib/attention";
+import {
+    EMPTY_FILTER,
+    SORT_KEYS,
+    boardTotals,
+    buildBoard,
+    filterFacets,
+    isFilterActive,
+    visibleRowIds,
+    type FilterState,
+    type SortKey,
+    type StatusKey,
+} from "@/lib/board-model";
+import {
+    DENSITY_KEY,
+    loadDensity,
+    loadViews,
+    parseBoardQuery,
+    serializeBoardQuery,
+    storeViews,
+    type Density,
+    type SavedView,
+    type SavedViews,
+} from "@/lib/board-url";
+import { shouldHoldReorder } from "@/lib/motion";
+import { AttentionSection } from "@/components/board/AttentionSection";
+import { BoardHeader } from "@/components/board/BoardHeader";
+import { BoardSkeleton, EmptyBoard, LoadFailed, NoMatches } from "@/components/board/BoardStates";
+import { BoardTree } from "@/components/board/BoardTree";
+import {
+    BoardActionsContext,
+    BoardViewContext,
+    type BoardActions,
+    type BoardView,
+} from "@/components/board/board-context";
+import { DetailPane, WIDE_QUERY } from "@/components/board/DetailPane";
+import { FilterPopover } from "@/components/board/FilterPopover";
+import { MotionProvider } from "@/components/board/MotionProvider";
+import { SelectionBar } from "@/components/board/SelectionBar";
+import { StatusSummary } from "@/components/board/StatusSummary";
+import { useBoardData } from "@/components/board/useBoardData";
+import { useIdleCalm } from "@/components/board/useIdleCalm";
+import { ViewsMenu } from "@/components/board/ViewsMenu";
+
+const COLLAPSED_KEY = "flatline.collapsedGroups";
+
+function readCollapsed(): Set<number> {
+    try {
+        const raw = window.localStorage.getItem(COLLAPSED_KEY);
+        return new Set(raw ? (JSON.parse(raw) as number[]) : []);
+    } catch {
+        return new Set();
+    }
+}
+
+/** Where the board starts: the URL if it carries board state, else the default saved view. */
+function initialBoardState(): { filter: FilterState; sort: SortKey; open: number | null } {
+    const fromUrl = parseBoardQuery(window.location.search);
+    if (fromUrl.hasParams) {
+        return fromUrl;
+    }
+    const views = loadViews(window.localStorage);
+    const def = views.views.find((v) => v.id === views.defaultId);
+    return def ? { filter: def.filter, sort: def.sort, open: null } : fromUrl;
+}
+
+function useMedia(query: string): boolean {
+    const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+    useEffect(() => {
+        const list = window.matchMedia(query);
+        const onChange = () => setMatches(list.matches);
+        list.addEventListener("change", onChange);
+        onChange();
+        return () => list.removeEventListener("change", onChange);
+    }, [query]);
+    return matches;
+}
 
 /**
- * Map a numeric monitor status onto a label and a badge tone.
+ * The operator dashboard: token gate, then the board.
  *
- * Status is never colour alone; a word always accompanies it.
- */
-function statusOf(status: number): { label: string; tone: "up" | "down" | "degraded" | "maintenance" | "neutral" } {
-    switch (status) {
-        case 1:
-            return { label: "Up", tone: "up" };
-        case 0:
-            return { label: "Down", tone: "down" };
-        case 2:
-            return { label: "Pending", tone: "degraded" };
-        case 3:
-            return { label: "Maintenance", tone: "maintenance" };
-        default:
-            return { label: "Unknown", tone: "neutral" };
-    }
-}
-
-function formatUptime(value: number | null): string {
-    if (value === null || value === undefined) {
-        return "—";
-    }
-    // The API returns a 0..1 ratio.
-    return `${(value * 100).toFixed(value >= 0.9999 ? 2 : 1)}%`;
-}
-
-function formatPing(value: number | null): string {
-    return value === null || value === undefined ? "—" : `${Math.round(value)}ms`;
-}
-
-/**
- * Relative age of a timestamp, e.g. "12s".
- */
-function ageOf(value: string | null): string {
-    if (!value) {
-        return "—";
-    }
-
-    const then = new Date(value.replace(" ", "T") + (value.includes("Z") ? "" : "Z")).getTime();
-    if (Number.isNaN(then)) {
-        return "—";
-    }
-
-    const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
-    if (seconds < 60) {
-        return `${seconds}s`;
-    }
-    if (seconds < 3600) {
-        return `${Math.round(seconds / 60)}m`;
-    }
-    if (seconds < 86400) {
-        return `${Math.round(seconds / 3600)}h`;
-    }
-    return `${Math.round(seconds / 86400)}d`;
-}
-
-/**
- * One-line health strip.
- *
- * Dense on purpose: the operator's question is "is anything broken", and it
- * should be answerable without reading five equal-weight cards.
- */
-function HealthStrip({ health }: { health: HealthSummary }) {
-    const items: Array<{ label: string; value: number; tone: string }> = [
-        { label: "up", value: health.up, tone: "text-ok" },
-        { label: "down", value: health.down, tone: health.down > 0 ? "text-bad font-semibold" : "text-quiet" },
-        { label: "pending", value: health.pending, tone: health.pending > 0 ? "text-warn" : "text-quiet" },
-        { label: "maintenance", value: health.maintenance, tone: health.maintenance > 0 ? "text-maint" : "text-quiet" },
-        { label: "paused", value: health.paused, tone: "text-quiet" },
-    ];
-
-    return (
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-border px-4 py-3">
-            <span
-                className={`inline-flex items-center gap-2 text-sm font-semibold ${
-                    health.down > 0 ? "text-bad" : "text-ok"
-                }`}
-            >
-                <span className="size-2 rounded-full bg-current" />
-                {health.down > 0 ? "Degraded" : "Operational"}
-            </span>
-
-            {items.map((item) => (
-                <span key={item.label} className="text-xs">
-                    <span className={`tnum font-semibold ${item.tone}`}>{item.value}</span>{" "}
-                    <span className="text-quiet">{item.label}</span>
-                </span>
-            ))}
-
-            <span className="ml-auto text-xs text-quiet">
-                <span className="tnum">{health.total}</span> monitors
-            </span>
-        </div>
-    );
-}
-
-/**
- * Sort key for roster order: heavier floats up, ties break by name so the
- * list never reshuffles between refreshes. Matches the server's canonical
- * ordering (weight DESC, name).
- */
-function byWeightThenName(a: MonitorSummary, b: MonitorSummary): number {
-    return (b.weight ?? 0) - (a.weight ?? 0) || a.name.localeCompare(b.name);
-}
-
-/**
- * One node of the group tree: a group, its subgroups and its direct monitors.
- *
- * Groups nest: a group whose `parent` is another group becomes its child, so
- * the operator can model "client → site → monitors" without flattening it.
- * Group monitors never render as rows themselves.
- */
-interface GroupNode {
-    id: number;
-    name: string;
-    weight: number;
-    groups: GroupNode[];
-    monitors: MonitorSummary[];
-    /** The group monitor itself, for menus and dialogs. */
-    group: MonitorSummary;
-}
-
-/**
- * Build the group tree from the roster.
- *
- * Anything whose parent is missing or not a group lands in Ungrouped, so a
- * broken link can never hide a monitor.
- * @param monitors Full roster
- * @returns Root groups plus parentless monitors
- */
-function groupTree(monitors: MonitorSummary[]): { roots: GroupNode[]; ungrouped: MonitorSummary[] } {
-    const groups = monitors.filter((m) => m.type === "group");
-    const nodes = new Map<number, GroupNode>(
-        groups.map((group) => [
-            group.id,
-            { id: group.id, name: group.name, weight: group.weight ?? 0, groups: [], monitors: [], group },
-        ])
-    );
-
-    const roots: GroupNode[] = [];
-    for (const group of groups) {
-        const node = nodes.get(group.id) as GroupNode;
-        const parent = group.parent != null ? nodes.get(group.parent) : undefined;
-        if (parent) {
-            parent.groups.push(node);
-        } else {
-            roots.push(node);
-        }
-    }
-
-    const ungrouped: MonitorSummary[] = [];
-    for (const monitor of monitors) {
-        if (monitor.type === "group") {
-            continue;
-        }
-        const parent = monitor.parent != null ? nodes.get(monitor.parent) : undefined;
-        if (parent) {
-            parent.monitors.push(monitor);
-        } else {
-            ungrouped.push(monitor);
-        }
-    }
-
-    const byNodeOrder = (a: { weight: number; name: string }, b: { weight: number; name: string }): number =>
-        b.weight - a.weight || a.name.localeCompare(b.name);
-    const sortNode = (node: GroupNode) => {
-        node.monitors.sort(byWeightThenName);
-        node.groups.sort(byNodeOrder);
-        node.groups.forEach(sortNode);
-    };
-    roots.sort(byNodeOrder);
-    roots.forEach(sortNode);
-
-    return { roots, ungrouped };
-}
-
-/**
- * Monitor and down counts for a node's whole subtree, so a parent header
- * reports what is actually inside it.
- * @param node Group node
- * @returns Totals including subgroups
- */
-function nodeTotals(node: GroupNode): { count: number; down: number } {
-    let count = node.monitors.length;
-    let down = node.monitors.filter((m) => m.status === 0).length;
-    for (const child of node.groups) {
-        const totals = nodeTotals(child);
-        count += totals.count;
-        down += totals.down;
-    }
-    return { count, down };
-}
-
-/**
- * What to show next to the name: the check target for each type.
- *
- * Ping monitors are checked by hostname, and the old schema left a bare
- * "https://" in their url column — showing that was pure noise. Push
- * monitors have no target; their last message ("OK") is the honest thing.
- * @param monitor Monitor row
- * @returns Target string
- */
-function monitorTarget(monitor: MonitorSummary): string {
-    if (monitor.type === "ping") {
-        return monitor.hostname?.trim() || "ICMP";
-    }
-    const url = monitor.url?.trim();
-    if (url && url !== "https://" && url !== "http://") {
-        return url;
-    }
-    return monitor.lastMessage?.trim() || "—";
-}
-
-/**
- * One monitor row. Status is never colour alone; a word always accompanies it.
- */
-function MonitorRow({
-    monitor,
-    indent = 0,
-    selected,
-    onToggle,
-    onEdit,
-    onContextMenu,
-}: {
-    monitor: MonitorSummary;
-    indent?: number;
-    selected: Set<number>;
-    onToggle: (id: number) => void;
-    onEdit: (id: number) => void;
-    onContextMenu?: (monitor: MonitorSummary, x: number, y: number) => void;
-}) {
-    const status = statusOf(monitor.status);
-    const isSelected = selected.has(monitor.id);
-
-    return (
-        <tr
-            key={monitor.id}
-            data-selected={isSelected || undefined}
-            className="border-b border-border/60 last:border-0 hover:bg-surface data-[selected]:bg-surface"
-            onContextMenu={(event) => {
-                if (!onContextMenu) {
-                    return;
-                }
-                event.preventDefault();
-                onContextMenu(monitor, event.clientX, event.clientY);
-            }}
-        >
-            <td className="py-2 pl-4">
-                <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => onToggle(monitor.id)}
-                    aria-label={`Select ${monitor.name}`}
-                    className="size-3.5 accent-[var(--primary)]"
-                />
-            </td>
-            <td className="py-2 pr-4 pl-1" style={{ paddingLeft: `${4 + indent * 18}px` }}>
-                {/* Name and target on one line: this view is for
-                    scanning many rows, so vertical space in a row
-                    is the scarce resource. */}
-                <div className="flex items-baseline gap-2 truncate">
-                    <button
-                        type="button"
-                        onClick={() => onEdit(monitor.id)}
-                        className="truncate font-medium hover:text-primary hover:underline"
-                    >
-                        {monitor.name}
-                    </button>
-                    <span className="truncate text-xs text-quiet">{monitorTarget(monitor)}</span>
-                </div>
-            </td>
-            <td className="py-2 whitespace-nowrap">
-                <Badge tone={status.tone}>
-                    <span className="size-1.5 rounded-full bg-current" />
-                    {status.label}
-                </Badge>
-                {!monitor.active ? <span className="ml-2 text-[11px] text-quiet">paused</span> : null}
-            </td>
-            <td className="tnum py-2 pl-3 text-right whitespace-nowrap">{formatUptime(monitor.uptime24h)}</td>
-            <td className="tnum py-2 pl-3 text-right whitespace-nowrap">{formatUptime(monitor.uptime7d)}</td>
-            <td className="tnum py-2 pl-3 text-right whitespace-nowrap">{formatPing(monitor.ping)}</td>
-            <td className="tnum py-2 pl-3 text-right whitespace-nowrap text-quiet">{ageOf(monitor.lastCheck)} ago</td>
-            <td className="py-2 pr-4 pl-3 text-xs whitespace-nowrap text-quiet">{monitor.type}</td>
-            <td className="py-2 pr-4 pl-3 text-right">
-                {onContextMenu ? (
-                    <button
-                        type="button"
-                        aria-label={`Actions for ${monitor.name}`}
-                        title="Actions"
-                        className="rounded px-1.5 py-0.5 text-quiet hover:bg-surface hover:text-primary"
-                        onClick={(event) => onContextMenu(monitor, event.clientX, event.clientY)}
-                    >
-                        ⋯
-                    </button>
-                ) : null}
-            </td>
-        </tr>
-    );
-}
-
-/**
- * Column widths, shared by the flat and grouped tables so columns align.
- */
-function MonitorColgroup() {
-    return (
-        <colgroup>
-            <col className="w-8" />
-            <col className="w-[30rem]" />
-            <col className="w-32" />
-            <col className="w-20" />
-            <col className="w-20" />
-            <col className="w-20" />
-            <col className="w-24" />
-            <col className="w-24" />
-            <col className="w-10" />
-        </colgroup>
-    );
-}
-
-/**
- * Table header, shared by the flat and grouped tables.
- */
-function MonitorHead() {
-    return (
-        <thead>
-            <tr className="border-b border-border text-left text-xs tracking-wide text-muted-foreground uppercase">
-                <th className="w-8 py-2 pl-4" />
-                <th className="py-2 pl-1 font-medium">Monitor</th>
-                <th className="w-32 py-2 font-medium">Status</th>
-                <th className="w-20 py-2 pl-3 text-right font-medium whitespace-nowrap">24h</th>
-                <th className="w-20 py-2 pl-3 text-right font-medium whitespace-nowrap">7d</th>
-                <th className="w-20 py-2 pl-3 text-right font-medium whitespace-nowrap">Ping</th>
-                <th className="w-24 py-2 pl-3 text-right font-medium whitespace-nowrap">Checked</th>
-                <th className="w-24 py-2 pr-4 pl-3 font-medium whitespace-nowrap">Type</th>
-                <th className="w-10 py-2 pr-4 pl-3 font-medium" />
-            </tr>
-        </thead>
-    );
-}
-
-/**
- * Flat table: every row, no sections. Used for search results, where
- * grouping would hide matches inside collapsed sections.
- */
-function MonitorTable({
-    monitors,
-    selected,
-    onToggle,
-    onEdit,
-    onContextMenu,
-}: {
-    monitors: MonitorSummary[];
-    selected: Set<number>;
-    onToggle: (id: number) => void;
-    onEdit: (id: number) => void;
-    onContextMenu?: (monitor: MonitorSummary, x: number, y: number) => void;
-}) {
-    return (
-        <div className="overflow-x-auto">
-            {/* table-fixed with an explicit colgroup: an auto layout table lets the
-            name column absorb all the width, which squeezes the numeric columns
-            until their headers collide. Fixed widths keep rows comparable down
-            a column, which is the point of this view. */}
-            <table className="w-full table-fixed border-collapse text-sm">
-                <MonitorColgroup />
-                <MonitorHead />
-                <tbody>
-                    {monitors.map((monitor) => (
-                        <MonitorRow
-                            key={monitor.id}
-                            monitor={monitor}
-                            selected={selected}
-                            onToggle={onToggle}
-                            onEdit={onEdit}
-                            onContextMenu={onContextMenu}
-                        />
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    );
-}
-
-/**
- * Grouped table: a collapsible tree of groups, subgroups and monitors.
- *
- * Collapse state persists in localStorage so the board keeps the shape the
- * operator left it in across refreshes.
- */
-function GroupedTable({
-    roots,
-    ungrouped,
-    selected,
-    onToggle,
-    onEdit,
-    onContextMenu,
-    onGroupMenu,
-}: {
-    roots: GroupNode[];
-    ungrouped: MonitorSummary[];
-    selected: Set<number>;
-    onToggle: (id: number) => void;
-    onEdit: (id: number) => void;
-    onContextMenu?: (monitor: MonitorSummary, x: number, y: number) => void;
-    onGroupMenu?: (group: MonitorSummary, x: number, y: number) => void;
-}) {
-    const [collapsed, setCollapsed] = useState<Set<number>>(() => {
-        try {
-            const raw = window.localStorage.getItem("flatline.collapsedGroups");
-            return new Set(raw ? (JSON.parse(raw) as number[]) : []);
-        } catch {
-            return new Set();
-        }
-    });
-
-    function toggle(id: number) {
-        setCollapsed((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) {
-                next.delete(id);
-            } else {
-                next.add(id);
-            }
-            try {
-                window.localStorage.setItem("flatline.collapsedGroups", JSON.stringify([...next]));
-            } catch {
-                // Storage can be unavailable; collapsing just will not persist.
-            }
-            return next;
-        });
-    }
-
-    /** Header for a group node, indented by nesting depth. */
-    function nodeHeader(node: GroupNode, depth: number, totals: { count: number; down: number }) {
-        const isCollapsed = collapsed.has(node.id);
-        return (
-            <tr
-                className="border-b border-border bg-surface/60"
-                onContextMenu={(event) => {
-                    if (!onGroupMenu) {
-                        return;
-                    }
-                    event.preventDefault();
-                    onGroupMenu(node.group, event.clientX, event.clientY);
-                }}
-            >
-                <td colSpan={9} className="py-1.5 pr-4 pl-4" style={{ paddingLeft: `${16 + depth * 18}px` }}>
-                    <button
-                        type="button"
-                        onClick={() => toggle(node.id)}
-                        aria-expanded={!isCollapsed}
-                        className="inline-flex items-center gap-2 text-xs font-semibold tracking-wide uppercase hover:text-primary"
-                    >
-                        <span className="inline-block w-3 text-quiet">{isCollapsed ? "▸" : "▾"}</span>
-                        {node.name}
-                    </button>
-                    <span className="ml-2 text-xs text-quiet">
-                        <span className="tnum">{totals.count}</span>
-                        {totals.down > 0 ? (
-                            <span className="ml-1 font-semibold text-bad">
-                                · <span className="tnum">{totals.down}</span> down
-                            </span>
-                        ) : (
-                            <span className="ml-1">· all up</span>
-                        )}
-                    </span>
-                    {onGroupMenu ? (
-                        <button
-                            type="button"
-                            aria-label={`Actions for group ${node.name}`}
-                            title="Group actions"
-                            className="ml-2 rounded px-1.5 py-0.5 text-xs text-quiet hover:bg-card hover:text-primary"
-                            onClick={(event) => onGroupMenu(node.group, event.clientX, event.clientY)}
-                        >
-                            ⋯
-                        </button>
-                    ) : null}
-                </td>
-            </tr>
-        );
-    }
-
-    /** One node: its header and monitors, then its subgroups as siblings. */
-    function renderNode(node: GroupNode, depth: number, guard: number): React.ReactNode {
-        if (guard > 8) {
-            return null;
-        }
-        const isCollapsed = collapsed.has(node.id);
-        return (
-            <Fragment key={node.id}>
-                <tbody>
-                    {nodeHeader(node, depth, nodeTotals(node))}
-                    {!isCollapsed &&
-                        node.monitors.map((monitor) => (
-                            <MonitorRow
-                                key={monitor.id}
-                                monitor={monitor}
-                                indent={depth + 1}
-                                selected={selected}
-                                onToggle={onToggle}
-                                onEdit={onEdit}
-                                onContextMenu={onContextMenu}
-                            />
-                        ))}
-                </tbody>
-                {!isCollapsed && node.groups.map((child) => renderNode(child, depth + 1, guard + 1))}
-            </Fragment>
-        );
-    }
-
-    return (
-        <div className="overflow-x-auto">
-            <table className="w-full table-fixed border-collapse text-sm">
-                <MonitorColgroup />
-                <MonitorHead />
-                {roots.map((node) => renderNode(node, 0, 0))}
-                {ungrouped.length > 0 ? (
-                    <tbody key="ungrouped">
-                        <tr className="border-b border-border bg-surface/60">
-                            <td colSpan={9} className="py-1.5 pr-4 pl-4">
-                                <span className="inline-flex items-center gap-2 text-xs font-semibold tracking-wide text-quiet uppercase">
-                                    <span className="inline-block w-3" />
-                                    Ungrouped
-                                </span>
-                                <span className="ml-2 text-xs text-quiet">
-                                    <span className="tnum">{ungrouped.length}</span>
-                                    {ungrouped.some((m) => m.status === 0) ? (
-                                        <span className="ml-1 font-semibold text-bad">
-                                            ·{" "}
-                                            <span className="tnum">
-                                                {ungrouped.filter((m) => m.status === 0).length}
-                                            </span>{" "}
-                                            down
-                                        </span>
-                                    ) : (
-                                        <span className="ml-1">· all up</span>
-                                    )}
-                                </span>
-                            </td>
-                        </tr>
-                        {ungrouped.map((monitor) => (
-                            <MonitorRow
-                                key={monitor.id}
-                                monitor={monitor}
-                                selected={selected}
-                                onToggle={onToggle}
-                                onEdit={onEdit}
-                                onContextMenu={onContextMenu}
-                            />
-                        ))}
-                    </tbody>
-                ) : null}
-            </table>
-        </div>
-    );
-}
-
-/**
- * The operator's monitor table.
- */
-/**
- * The operator dashboard: token gate, then the grouped monitor table.
+ * Header, status summary, a pinned "Needs attention" list, the group tree
+ * (worst first by default) and a detail pane. The data layer lives in
+ * `board/useBoardData`, the pure rules in `lib/board-*`.
  */
 export function Dashboard() {
     const [authed, setAuthed] = useState(() => Boolean(getToken()));
-    const [monitors, setMonitors] = useState<MonitorSummary[]>([]);
-    const [rosterLoaded, setRosterLoaded] = useState(false);
-    const health = useMemo(() => (rosterLoaded ? healthFromMonitors(monitors) : null), [monitors, rosterLoaded]);
-    const tree = useMemo(() => groupTree(monitors), [monitors]);
-    const loadEpoch = useRef(0);
+    const disconnect = useCallback(() => {
+        setToken(null);
+        setAuthed(false);
+    }, []);
+    const data = useBoardData(authed, disconnect);
+    const { monitors, rosterLoaded } = data;
+
+    const initial = useRef(initialBoardState()).current;
+    const [filter, setFilter] = useState<FilterState>(initial.filter);
+    const [sort, setSort] = useState<SortKey>(initial.sort);
+    const [detailId, setDetailId] = useState<number | null>(initial.open);
+    const [density, setDensityState] = useState<Density>(() => loadDensity(window.localStorage));
+    const [views, setViews] = useState<SavedViews>(() => loadViews(window.localStorage));
+    const [collapsed, setCollapsed] = useState<Set<number>>(readCollapsed);
     const [selected, setSelected] = useState<Set<number>>(new Set());
-    const [query, setQuery] = useState("");
+    const [cursorId, setCursorId] = useState<number | null>(null);
+    const [pointerOverList, setPointerOverList] = useState(false);
     const [menu, setMenu] = useState<MenuAnchor | null>(null);
     const [renaming, setRenaming] = useState<MonitorSummary | null>(null);
     const [moving, setMoving] = useState<MonitorSummary | null>(null);
@@ -614,111 +135,153 @@ export function Dashboard() {
         rows: number;
         children: number;
     } | null>(null);
-    const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [formState, setFormState] = useState<
         | { mode: "create"; initial?: Partial<MonitorSummary> & Record<string, unknown> }
         | { mode: "edit"; monitor: MonitorSummary & Record<string, unknown> }
         | null
     >(null);
-    const [detailId, setDetailId] = useState<number | null>(null);
     const [agentsOpen, setAgentsOpen] = useState(false);
 
-    const load = useCallback(async (strict = false, signal?: AbortSignal) => {
-        const epoch = ++loadEpoch.current;
+    const calm = useIdleCalm();
+    const wide = useMedia(WIDE_QUERY);
+
+    // ---- derived board ----------------------------------------------------
+
+    const attention = useMemo(
+        () =>
+            deriveAttention({
+                monitors,
+                strips: data.strips,
+                nowMs: data.now,
+                changedAt: data.changedAt,
+                agentWarnings: data.agentWarnings,
+                backups: data.backups,
+            }),
+        [monitors, data.strips, data.now, data.changedAt, data.agentWarnings, data.backups]
+    );
+    const attentionIds = useMemo(() => attentionMonitorIds(attention), [attention]);
+
+    // While the pointer is over the list, a selection exists or a menu is open,
+    // a status-driven reorder waits: sort keys come from the last free snapshot
+    // while rows keep showing live data.
+    const hold = shouldHoldReorder({
+        pointerOverList,
+        selectionSize: selected.size,
+        menuOpen: menu !== null,
+    });
+    const basisRef = useRef<Map<number, MonitorSummary>>(new Map());
+    if (!hold || basisRef.current.size === 0) {
+        basisRef.current = new Map(monitors.map((m) => [m.id, m]));
+    }
+    const basis = hold ? basisRef.current : undefined;
+
+    const board = useMemo(
+        () => buildBoard(monitors, { sort, filter, attentionIds, basis, strips: data.strips }),
+        [monitors, sort, filter, attentionIds, basis, data.strips]
+    );
+    const totals = useMemo(() => boardTotals(monitors), [monitors]);
+    const facets = useMemo(() => filterFacets(monitors), [monitors]);
+    const forceOpen = isFilterActive(filter);
+    const shownCount = useMemo(
+        () => visibleRowIds(board, collapsed, true).filter((r) => r.kind === "monitor").length,
+        [board, collapsed]
+    );
+    const rowOrder = useMemo(() => visibleRowIds(board, collapsed, forceOpen), [board, collapsed, forceOpen]);
+
+    // ---- persistence and URL ---------------------------------------------
+
+    useEffect(() => {
+        storeViews(window.localStorage, views);
+    }, [views]);
+
+    const setDensity = useCallback((next: Density) => {
+        setDensityState(next);
         try {
-            const next = await fetchAllMonitors(signal);
-            if (epoch !== loadEpoch.current) {
-                return;
-            }
-            setMonitors(next);
-            setRosterLoaded(true);
-            setError(null);
-        } catch (e) {
-            if (epoch !== loadEpoch.current) {
-                return;
-            }
-            if (e instanceof ApiError && e.status === 401) {
-                setToken(null);
-                setAuthed(false);
-                return;
-            }
-            setError(e instanceof Error ? e.message : "Failed to load.");
-            if (strict) {
-                throw e;
-            }
+            window.localStorage.setItem(DENSITY_KEY, next);
+        } catch {
+            // Storage can be unavailable; the choice just will not persist.
         }
     }, []);
 
-    // Initial/reconnect snapshot, then only committed heartbeat deltas.
     useEffect(() => {
-        if (!authed) {
-            return;
-        }
+        const timer = window.setTimeout(() => {
+            const search = serializeBoardQuery({ filter, sort, open: detailId }, window.location.search);
+            if (search !== window.location.search) {
+                window.history.replaceState(window.history.state, "", `${window.location.pathname}${search}`);
+            }
+        }, 250);
+        return () => window.clearTimeout(timer);
+    }, [filter, sort, detailId]);
 
-        const stop = subscribeLive({
-            metrics: false,
-            snapshot: (signal) => load(true, signal),
-            event: (event) => {
-                if (event.type !== "heartbeat") {
-                    return;
-                }
-                setMonitors((previous) =>
-                    previous.map((monitor) =>
-                        monitor.id === event.monitorId ? { ...monitor, ...event.patch } : monitor
-                    )
-                );
-                setError(null);
-            },
-            error: (error) => {
-                if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-                    setToken(null);
-                    setAuthed(false);
-                    return;
-                }
-                setError("Live updates disconnected; reconnecting.");
-            },
+    // ---- actions ----------------------------------------------------------
+
+    const openMonitor = useCallback((id: number) => {
+        setAgentsOpen(false);
+        setDetailId(id);
+        setCursorId(id);
+    }, []);
+    const closeDetail = useCallback(() => setDetailId(null), []);
+
+    const toggleSelect = useCallback((id: number) => {
+        setSelected((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
         });
-        return () => {
-            loadEpoch.current++;
-            stop();
-        };
-    }, [authed, load]);
-
-    // "/" focuses search, escape clears it and any selection.
-    useEffect(() => {
-        function onKey(event: KeyboardEvent) {
-            const target = event.target as HTMLElement | null;
-            const typing = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA";
-
-            if (event.key === "/" && !typing) {
-                event.preventDefault();
-                document.getElementById("monitor-search")?.focus();
-            }
-
-            if (event.key === "Escape") {
-                setQuery("");
-                setSelected(new Set());
-                (document.activeElement as HTMLElement | null)?.blur();
-            }
-        }
-
-        window.addEventListener("keydown", onKey);
-        return () => window.removeEventListener("keydown", onKey);
     }, []);
 
-    const filtered = useMemo(() => {
-        if (!query.trim()) {
-            return monitors;
-        }
-        const needle = query.trim().toLowerCase();
-        return monitors.filter(
-            (m) =>
-                m.name.toLowerCase().includes(needle) ||
-                (m.url ?? "").toLowerCase().includes(needle) ||
-                m.type.toLowerCase().includes(needle)
-        );
-    }, [monitors, query]);
+    const toggleGroup = useCallback((id: number) => {
+        setCollapsed((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            try {
+                window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+            } catch {
+                // Storage can be unavailable; collapsing just will not persist.
+            }
+            return next;
+        });
+    }, []);
+
+    const openMenu = useCallback((monitor: MonitorSummary, x: number, y: number) => setMenu({ x, y, monitor }), []);
+
+    // Handlers behind a stable object so memoised rows do not re-render when the closures change.
+    const latest = useRef<BoardActions>({ openMonitor, toggleSelect, toggleGroup, openMenu });
+    latest.current = { openMonitor, toggleSelect, toggleGroup, openMenu };
+    const actions = useMemo<BoardActions>(
+        () => ({
+            openMonitor: (id) => latest.current.openMonitor(id),
+            toggleSelect: (id) => latest.current.toggleSelect(id),
+            toggleGroup: (id) => latest.current.toggleGroup(id),
+            openMenu: (monitor, x, y) => latest.current.openMenu(monitor, x, y),
+        }),
+        []
+    );
+
+    const clearFilters = useCallback(() => setFilter(EMPTY_FILTER), []);
+    const toggleStatus = useCallback(
+        (status: StatusKey) =>
+            setFilter((prev) => ({
+                ...prev,
+                status: prev.status.includes(status)
+                    ? prev.status.filter((s) => s !== status)
+                    : [...prev.status, status],
+            })),
+        []
+    );
+    const applyView = useCallback((view: SavedView) => {
+        setFilter(view.filter);
+        setSort(view.sort);
+    }, []);
 
     async function applyToSelection(action: "pause" | "resume" | "delete") {
         if (action === "delete") {
@@ -741,16 +304,119 @@ export function Dashboard() {
                 })
             );
             setSelected(new Set());
-            await load();
+            await data.reload();
         } catch (e) {
-            setError(e instanceof Error ? e.message : "Action failed.");
+            data.setError(e instanceof Error ? e.message : "Action failed.");
         } finally {
             setBusy(false);
         }
     }
 
-    // Group options for the form's Group picker. A group being edited cannot
-    // move inside itself, so its own subtree is excluded from the choices.
+    // ---- keyboard ---------------------------------------------------------
+
+    const overlayOpen =
+        menu !== null || renaming !== null || moving !== null || deletingGroup !== null || formState !== null;
+    const keyState = useRef({ rowOrder, cursorId, detailId, selected, filter, overlayOpen, toggleGroup });
+    keyState.current = { rowOrder, cursorId, detailId, selected, filter, overlayOpen, toggleGroup };
+
+    useEffect(() => {
+        if (!authed) {
+            return;
+        }
+        function focusRow(id: number) {
+            setCursorId(id);
+            const el = document.querySelector<HTMLElement>(`[data-row-main="${id}"]`);
+            el?.focus({ preventScroll: true });
+            el?.scrollIntoView({ block: "nearest" });
+        }
+        function onKey(event: KeyboardEvent) {
+            if (event.metaKey || event.ctrlKey || event.altKey) {
+                return;
+            }
+            const state = keyState.current;
+            const target = event.target as HTMLElement | null;
+            const typing =
+                target?.tagName === "INPUT" ||
+                target?.tagName === "TEXTAREA" ||
+                target?.tagName === "SELECT" ||
+                target?.isContentEditable === true;
+            // Checkboxes are inputs but not text entry: shortcuts still apply there.
+            const textEntry = typing && !(target instanceof HTMLInputElement && target.type === "checkbox");
+
+            if (event.key === "Escape") {
+                if (state.overlayOpen || document.querySelector("[data-popover-open]")) {
+                    return;
+                }
+                if (textEntry) {
+                    if (target?.id === "monitor-search") {
+                        setFilter((prev) => ({ ...prev, q: "" }));
+                    }
+                    target?.blur();
+                    return;
+                }
+                if (state.detailId !== null) {
+                    setDetailId(null);
+                } else if (state.selected.size > 0) {
+                    setSelected(new Set());
+                } else if (isFilterActive(state.filter)) {
+                    setFilter(EMPTY_FILTER);
+                }
+                return;
+            }
+            if (textEntry || state.overlayOpen) {
+                return;
+            }
+            if (event.key === "/") {
+                event.preventDefault();
+                document.getElementById("monitor-search")?.focus();
+                return;
+            }
+            const order = state.rowOrder;
+            if (event.key === "j" || event.key === "k") {
+                if (order.length === 0) {
+                    return;
+                }
+                event.preventDefault();
+                const at = order.findIndex((r) => r.id === state.cursorId);
+                const next = event.key === "j" ? Math.min(order.length - 1, at + 1) : Math.max(0, at < 0 ? 0 : at - 1);
+                focusRow(order[next].id);
+                return;
+            }
+            const current = order.find((r) => r.id === state.cursorId);
+            if (!current) {
+                return;
+            }
+            if (event.key === "x" && current.kind === "monitor") {
+                event.preventDefault();
+                setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(current.id)) {
+                        next.delete(current.id);
+                    } else {
+                        next.add(current.id);
+                    }
+                    return next;
+                });
+            } else if (
+                event.key === "Enter" &&
+                !(target instanceof HTMLButtonElement) &&
+                !(target instanceof HTMLAnchorElement)
+            ) {
+                event.preventDefault();
+                if (current.kind === "group") {
+                    state.toggleGroup(current.id);
+                } else {
+                    setAgentsOpen(false);
+                    setDetailId(current.id);
+                }
+            }
+        }
+        window.addEventListener("keydown", onKey, true);
+        return () => window.removeEventListener("keydown", onKey, true);
+    }, [authed]);
+
+    // ---- menus and dialogs ------------------------------------------------
+
     const groupChoices = useMemo(
         () =>
             groupOptions(
@@ -759,16 +425,11 @@ export function Dashboard() {
             ),
         [monitors, formState]
     );
-
-    // Link targets for the form's "Linked websites" picker: groups and
-    // monitors, never the server being edited itself.
     const linkCandidates = useMemo(
         () => buildLinkCandidates(monitors, formState?.mode === "edit" ? formState.monitor.id : null),
         [monitors, formState]
     );
 
-    // Right-click/⋯ menu contents: groups manage the tree, monitors move
-    // through it. Built per anchor so it always sees the current roster.
     const menuItems: MenuItem[] = useMemo(() => {
         if (!menu) {
             return [];
@@ -851,181 +512,220 @@ export function Dashboard() {
                 await deleteMonitor(target.group.id);
             }
             setDeletingGroup(null);
-            await load();
+            await data.reload();
         } catch (e) {
-            setError(e instanceof Error ? e.message : "Delete failed.");
+            data.setError(e instanceof Error ? e.message : "Delete failed.");
             setDeletingGroup(null);
         } finally {
             setBusy(false);
         }
     }
 
+    // ---- render -----------------------------------------------------------
+
+    const lastDetail = useRef<number | null>(detailId);
+    if (detailId !== null) {
+        lastDetail.current = detailId;
+    }
+
+    const view: BoardView = {
+        density,
+        calm,
+        strips: data.strips,
+        selected,
+        collapsed,
+        forceOpen,
+        openId: detailId,
+        menuId: menu?.monitor.id ?? null,
+        cursorId,
+        cueRows: data.cue.rows,
+        cueSeq: data.cue.seq,
+        now: data.now,
+    };
+
     if (!authed) {
         return <TokenGate onSaved={() => setAuthed(true)} />;
     }
 
+    const filtering = isFilterActive(filter);
+    const hasRows = board.roots.length > 0 || board.ungrouped.length > 0;
+
     return (
-        <div className="min-h-screen">
-            <header className="flex items-center gap-3 border-b border-border px-4 py-3">
-                <span className="text-sm font-semibold tracking-tight">Flatline</span>
+        <MotionProvider>
+            <div className="flex min-h-screen">
+                <div className="min-w-0 flex-1">
+                    <div className="mx-auto max-w-[1480px]">
+                        <BoardHeader
+                            query={filter.q}
+                            onQuery={(q) => setFilter((prev) => ({ ...prev, q }))}
+                            matchCount={filtering ? shownCount : null}
+                            total={totals.total}
+                            filters={
+                                <>
+                                    <FilterPopover
+                                        filter={filter}
+                                        onChange={setFilter}
+                                        types={facets.types}
+                                        tags={facets.tags}
+                                        attentionCount={attentionIds.size}
+                                    />
+                                    <ViewsMenu
+                                        state={views}
+                                        onChange={setViews}
+                                        onApply={applyView}
+                                        filter={filter}
+                                        sort={sort}
+                                    />
+                                </>
+                            }
+                            density={density}
+                            onDensity={setDensity}
+                            paused={data.paused}
+                            onTogglePaused={() => data.setPaused(!data.paused)}
+                            onNewMonitor={() => setFormState({ mode: "create" })}
+                            onNewGroup={() => setFormState({ mode: "create", initial: { type: "group" } })}
+                            onSuperboard={() => navigate("/superboard")}
+                            onAgents={() => {
+                                setDetailId(null);
+                                setAgentsOpen((v) => !v);
+                            }}
+                            onDisconnect={disconnect}
+                        />
 
-                <Input
-                    id="monitor-search"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search  ( / )"
-                    className="ml-2 h-7 max-w-xs"
-                />
+                        {data.error ? (
+                            <div
+                                role="status"
+                                className="mx-6 mb-3 rounded-md bg-destructive/10 px-4 py-2 text-xs text-destructive"
+                            >
+                                {data.error}
+                            </div>
+                        ) : null}
 
-                {query ? (
-                    <span className="text-xs text-quiet">
-                        <span className="tnum">{filtered.length}</span> of{" "}
-                        <span className="tnum">{monitors.length}</span>
-                    </span>
+                        {agentsOpen ? (
+                            <AgentPanel
+                                onClose={() => {
+                                    setAgentsOpen(false);
+                                    void data.reload();
+                                }}
+                            />
+                        ) : (
+                            <main className="space-y-4 px-6 pb-28">
+                                {rosterLoaded ? (
+                                    <>
+                                        <StatusSummary
+                                            totals={totals}
+                                            attention={attention}
+                                            active={filter.status}
+                                            onToggleStatus={toggleStatus}
+                                            cue={data.cue}
+                                            calm={calm}
+                                            paused={data.paused}
+                                            pending={data.pending}
+                                            onResume={() => data.setPaused(false)}
+                                        />
+                                        <AttentionSection items={attention} onOpen={openMonitor} calm={calm} />
+                                    </>
+                                ) : null}
+
+                                <section
+                                    aria-label="Monitors"
+                                    className="rounded-lg border border-border bg-surface/40"
+                                >
+                                    <div className="flex items-center gap-3 px-5 py-3">
+                                        <h2 className="text-sm font-semibold">Monitors</h2>
+                                        {rosterLoaded ? (
+                                            <span className="tnum text-xs text-quiet">{totals.total}</span>
+                                        ) : null}
+                                        <label className="ml-auto flex items-center gap-2 text-xs text-quiet">
+                                            Sort
+                                            <select
+                                                value={sort}
+                                                onChange={(e) => setSort(e.target.value as SortKey)}
+                                                className="h-7 rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground focus-visible:outline-offset-1"
+                                            >
+                                                {SORT_KEYS.map((option) => (
+                                                    <option key={option.key} value={option.key}>
+                                                        {option.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                    </div>
+
+                                    <BoardActionsContext.Provider value={actions}>
+                                        <BoardViewContext.Provider value={view}>
+                                            <div
+                                                className="board-list border-t border-border"
+                                                data-density={density}
+                                                data-selecting={selected.size > 0 || undefined}
+                                                onPointerEnter={() => setPointerOverList(true)}
+                                                onPointerLeave={() => setPointerOverList(false)}
+                                            >
+                                                {!rosterLoaded ? (
+                                                    data.error ? (
+                                                        <LoadFailed
+                                                            message={data.error}
+                                                            onRetry={() => void data.reload()}
+                                                        />
+                                                    ) : (
+                                                        <BoardSkeleton />
+                                                    )
+                                                ) : monitors.length === 0 ? (
+                                                    <EmptyBoard onNewMonitor={() => setFormState({ mode: "create" })} />
+                                                ) : !hasRows ? (
+                                                    <NoMatches onClear={clearFilters} />
+                                                ) : (
+                                                    <BoardTree board={board} />
+                                                )}
+                                            </div>
+                                        </BoardViewContext.Provider>
+                                    </BoardActionsContext.Provider>
+
+                                    {rosterLoaded && hasRows ? (
+                                        <p className="board-hint hidden border-t border-border px-5 py-2.5 text-[11px] text-quiet md:block">
+                                            <kbd>/</kbd> search · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>Enter</kbd> open
+                                            · <kbd>x</kbd> select · <kbd>Esc</kbd> close or clear
+                                        </p>
+                                    ) : null}
+                                </section>
+                            </main>
+                        )}
+                    </div>
+                </div>
+
+                {wide ? (
+                    <DetailPane open={detailId !== null && !agentsOpen} wide onClose={closeDetail} calm={calm}>
+                        {lastDetail.current !== null ? (
+                            <MonitorDetail
+                                id={lastDetail.current}
+                                compact
+                                onBack={closeDetail}
+                                onEdit={(monitor) => setFormState({ mode: "edit", monitor })}
+                            />
+                        ) : null}
+                    </DetailPane>
                 ) : null}
+            </div>
 
-                <div className="ml-auto flex items-center gap-2">
-                    <Button size="sm" variant="outline" onClick={() => navigate("/superboard")}>
-                        Superboard
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                            setDetailId(null);
-                            setAgentsOpen((v) => !v);
-                        }}
-                    >
-                        Agents
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setFormState({ mode: "create", initial: { type: "group" } })}
-                    >
-                        New group
-                    </Button>
-                    <Button size="sm" onClick={() => setFormState({ mode: "create" })}>
-                        New monitor
-                    </Button>
-                    {selected.size > 0 ? (
-                        <>
-                            <span className="text-xs text-quiet">
-                                <span className="tnum">{selected.size}</span> selected
-                            </span>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={busy}
-                                onClick={() => void applyToSelection("pause")}
-                            >
-                                Pause
-                            </Button>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={busy}
-                                onClick={() => void applyToSelection("resume")}
-                            >
-                                Resume
-                            </Button>
-                            <Button
-                                variant="destructive"
-                                size="sm"
-                                disabled={busy}
-                                onClick={() => void applyToSelection("delete")}
-                            >
-                                Delete
-                            </Button>
-                        </>
+            {!wide ? (
+                <DetailPane open={detailId !== null && !agentsOpen} wide={false} onClose={closeDetail} calm={calm}>
+                    {lastDetail.current !== null ? (
+                        <MonitorDetail
+                            id={lastDetail.current}
+                            compact
+                            onBack={closeDetail}
+                            onEdit={(monitor) => setFormState({ mode: "edit", monitor })}
+                        />
                     ) : null}
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        title="Forget token"
-                        onClick={() => {
-                            setToken(null);
-                            setAuthed(false);
-                        }}
-                    >
-                        Disconnect
-                    </Button>
-                </div>
-            </header>
-
-            {health ? <HealthStrip health={health} /> : null}
-
-            {error ? (
-                <div className="border-b border-border bg-destructive/10 px-4 py-2 text-xs text-destructive">
-                    {error}
-                </div>
+                </DetailPane>
             ) : null}
 
-            {agentsOpen ? (
-                <AgentPanel
-                    onClose={() => {
-                        setAgentsOpen(false);
-                        void load();
-                    }}
-                />
-            ) : detailId !== null ? (
-                <MonitorDetail
-                    id={detailId}
-                    onBack={() => {
-                        setDetailId(null);
-                        void load();
-                    }}
-                    onEdit={(monitor) => setFormState({ mode: "edit", monitor })}
-                />
-            ) : filtered.length === 0 ? (
-                <p className="px-4 py-10 text-center text-sm text-quiet">
-                    {monitors.length === 0 ? "No monitors yet." : "Nothing matches that search."}
-                </p>
-            ) : query.trim() ? (
-                <MonitorTable
-                    monitors={filtered}
-                    selected={selected}
-                    onToggle={(id) =>
-                        setSelected((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(id)) {
-                                next.delete(id);
-                            } else {
-                                next.add(id);
-                            }
-                            return next;
-                        })
-                    }
-                    onEdit={(id) => {
-                        setAgentsOpen(false);
-                        setDetailId(id);
-                    }}
-                    onContextMenu={(monitor, x, y) => setMenu({ x, y, monitor })}
-                />
-            ) : (
-                <GroupedTable
-                    roots={tree.roots}
-                    ungrouped={tree.ungrouped}
-                    selected={selected}
-                    onToggle={(id) =>
-                        setSelected((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(id)) {
-                                next.delete(id);
-                            } else {
-                                next.add(id);
-                            }
-                            return next;
-                        })
-                    }
-                    onEdit={(id) => {
-                        setAgentsOpen(false);
-                        setDetailId(id);
-                    }}
-                    onContextMenu={(monitor, x, y) => setMenu({ x, y, monitor })}
-                    onGroupMenu={(group, x, y) => setMenu({ x, y, monitor: group })}
-                />
-            )}
+            <SelectionBar
+                count={selected.size}
+                busy={busy}
+                onAction={(action) => void applyToSelection(action)}
+                onClear={() => setSelected(new Set())}
+            />
 
             {menu ? <ServerMenu anchor={menu} items={menuItems} onClose={() => setMenu(null)} /> : null}
             {renaming ? (
@@ -1072,13 +772,13 @@ export function Dashboard() {
                             linkCandidates={linkCandidates}
                             onSaved={() => {
                                 setFormState(null);
-                                void load();
+                                void data.reload();
                             }}
                             onCancel={() => setFormState(null)}
                         />
                     </div>
                 </div>
             ) : null}
-        </div>
+        </MotionProvider>
     );
 }

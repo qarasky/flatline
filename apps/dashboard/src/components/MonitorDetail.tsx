@@ -59,7 +59,7 @@ function BeatBar({ beats }: { beats: HeartbeatEntry[] }) {
     const ordered = [...beats].reverse();
 
     return (
-        <div className="flex items-end gap-[2px]" role="img" aria-label={`${beats.length} recent checks`}>
+        <div className="flex flex-wrap items-end gap-[2px]" role="img" aria-label={`${beats.length} recent checks`}>
             {ordered.map((beat, i) => (
                 <span
                     key={i}
@@ -151,9 +151,12 @@ export function MonitorDetail({
     id,
     onBack,
     onEdit,
+    compact = false,
 }: {
     id: number;
     onBack: () => void;
+    /** Rendered in the board's side pane / sheet: closer wording, narrower grids. */
+    compact?: boolean;
     onEdit: (monitor: MonitorSummary & Record<string, unknown>) => void;
 }) {
     const [monitor, setMonitor] = useState<(MonitorSummary & Record<string, unknown>) | null>(null);
@@ -324,7 +327,7 @@ export function MonitorDetail({
         <div className="px-4 py-4">
             <div className="mb-4 flex flex-wrap items-center gap-3">
                 <Button variant="ghost" size="sm" onClick={onBack}>
-                    ← All monitors
+                    {compact ? "✕ Close" : "← All monitors"}
                 </Button>
                 <h1 className="text-base font-semibold">{monitor.name}</h1>
                 <Badge tone={status.tone}>
@@ -343,7 +346,7 @@ export function MonitorDetail({
 
             {monitor.url ? <p className="mb-4 truncate text-xs text-quiet">{monitor.url}</p> : null}
 
-            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className={`mb-4 grid grid-cols-2 gap-3 ${compact ? "" : "md:grid-cols-4"}`}>
                 <div className="rounded-md border border-border bg-card p-3">
                     <div className="mb-1 text-[11px] uppercase tracking-wide text-quiet">24h uptime</div>
                     <div className="tnum text-lg font-semibold">
@@ -368,7 +371,7 @@ export function MonitorDetail({
                 </div>
             </div>
 
-            <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className={`mb-4 grid grid-cols-1 gap-3 ${compact ? "" : "md:grid-cols-2"}`}>
                 <div className="rounded-md border border-border bg-card p-3">
                     <div className="mb-2 text-[11px] uppercase tracking-wide text-quiet">
                         Recent checks{" "}
