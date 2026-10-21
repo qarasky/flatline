@@ -102,17 +102,32 @@ async fn group_links_expand_to_descendants_including_later_ones() {
     let h = harness().await;
     let server = create(&h, "host", "push", json!({})).await;
     let group = create(&h, "clients", "group", json!({})).await;
-    let one = create(&h, "one", "http", json!({ "url": "https://one.example", "parent": group })).await;
+    let one = create(
+        &h,
+        "one",
+        "http",
+        json!({ "url": "https://one.example", "parent": group }),
+    )
+    .await;
 
     let (_, body) = put_links(&h, server, json!([group])).await;
     assert_eq!(body["raw"].as_array().unwrap().len(), 1);
     assert_eq!(body["raw"][0]["type"], "group");
     assert_eq!(body["resolved"].as_array().unwrap().len(), 1);
     assert_eq!(body["resolved"][0]["id"], one);
-    assert_eq!(body["resolved"][0]["via"], group, "attributed to the group link");
+    assert_eq!(
+        body["resolved"][0]["via"], group,
+        "attributed to the group link"
+    );
 
     // A website added to the group afterwards appears without re-linking.
-    let two = create(&h, "two", "http", json!({ "url": "https://two.example", "parent": group })).await;
+    let two = create(
+        &h,
+        "two",
+        "http",
+        json!({ "url": "https://two.example", "parent": group }),
+    )
+    .await;
     let (_, body) = get_links(&h, server).await;
     let ids: Vec<i64> = body["resolved"]
         .as_array()
@@ -203,7 +218,13 @@ async fn deleting_a_monitor_cascades_its_links() {
     assert_eq!(body["raw"], json!([]), "target deletion cascades");
 
     // Deleting the server removes its links too.
-    let web2 = create(&h, "site-2", "http", json!({ "url": "https://two.example" })).await;
+    let web2 = create(
+        &h,
+        "site-2",
+        "http",
+        json!({ "url": "https://two.example" }),
+    )
+    .await;
     put_links(&h, server, json!([web2])).await;
     let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM monitor_links")
         .fetch_one(&h.pool)

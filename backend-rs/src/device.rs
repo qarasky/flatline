@@ -234,9 +234,8 @@ mod tests {
         let base = Instant::now();
         let offset = Arc::new(Mutex::new(Duration::ZERO));
         let clock_offset = Arc::clone(&offset);
-        let requests = DeviceRequests::new_with_clock(Arc::new(move || {
-            base + *clock_offset.lock().unwrap()
-        }));
+        let requests =
+            DeviceRequests::new_with_clock(Arc::new(move || base + *clock_offset.lock().unwrap()));
         (requests, offset)
     }
 
@@ -309,7 +308,10 @@ mod tests {
         let started = requests.start("ua").unwrap();
         requests.approve(&started.code, "TV").unwrap();
         assert_eq!(requests.poll(&started.code, "wrong"), PollOutcome::Expired);
-        assert_eq!(requests.poll(&started.code, &started.code), PollOutcome::Expired);
+        assert_eq!(
+            requests.poll(&started.code, &started.code),
+            PollOutcome::Expired
+        );
     }
 
     #[test]
@@ -326,7 +328,9 @@ mod tests {
             requests.poll(&started.code, &started.poll_secret),
             PollOutcome::Pending
         );
-        requests.approve(&started.code, "  Living room TV ").unwrap();
+        requests
+            .approve(&started.code, "  Living room TV ")
+            .unwrap();
         assert_eq!(
             requests.poll(&started.code, &started.poll_secret),
             PollOutcome::Approved {
@@ -380,7 +384,10 @@ mod tests {
     fn name_is_trimmed_and_bounded() {
         let (requests, _) = store();
         let started = requests.start("ua").unwrap();
-        assert_eq!(requests.approve(&started.code, "   "), Err(DeviceError::BadName));
+        assert_eq!(
+            requests.approve(&started.code, "   "),
+            Err(DeviceError::BadName)
+        );
         assert_eq!(
             requests.approve(&started.code, &"x".repeat(61)),
             Err(DeviceError::BadName)

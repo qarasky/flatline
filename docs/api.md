@@ -137,6 +137,16 @@ The SSE stream and agent binary downloads have no timeout.
 | GET    | `/api/v1/auth/setup` | Public; always `setupNeeded:false`       |
 | POST   | `/api/v1/auth/login` | Public; token in `password`, echoed back |
 | GET    | `/api/v1/auth/me`    | Validate and describe the bearer token   |
+| POST   | `/api/v1/auth/device/start`   | Public; a screen asks to sign in with a QR code. Returns `code`, `pollSecret`, `expiresIn`, `publicUrl` |
+| POST   | `/api/v1/auth/device/poll`    | Public; body `{code, pollSecret}`. `pending`, `denied`, `expired`, or `approved` with a new never-expiring operator `token` |
+| POST   | `/api/v1/auth/device/lookup`  | Describe a waiting screen (user agent, age, suggested name) |
+| POST   | `/api/v1/auth/device/approve` | Body `{code, name}`; the screen gets its own operator token |
+| POST   | `/api/v1/auth/device/deny`    | Body `{code}` |
+
+Device codes travel in JSON bodies, never in paths. The QR code encodes
+`<base>/device#<code>` only; the poll secret never leaves the waiting screen.
+At most 64 requests wait at once per instance (429 `busy` beyond that), each
+for 5 minutes.
 
 ### Monitors, heartbeats and links
 

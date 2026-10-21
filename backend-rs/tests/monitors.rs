@@ -477,7 +477,10 @@ async fn agent_warnings_clear_acknowledges_every_counter_and_resets_on_restart()
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["pushFailuresAck"], 2);
     assert_eq!(body["samplesDroppedAck"], 5);
-    assert_eq!(body["collectorErrorsAck"], json!({ "gpu": 3, "updates": 1 }));
+    assert_eq!(
+        body["collectorErrorsAck"],
+        json!({ "gpu": 3, "updates": 1 })
+    );
 
     let (status, body) = get_json(&h.app, &format!("/api/v1/monitors/{id}"), &h.token).await;
     assert_eq!(status, StatusCode::OK);
