@@ -14,6 +14,7 @@ for the shape of the system, then go to whichever document matches your task.
 | [backup-agent.md](backup-agent.md)             | Named encrypted backup agents: configuration, scheduling, offline verify and restore.                        |
 | [superboard.md](superboard.md)                 | Changing or explaining the wall board: card anatomy, scopes, history, links.                                 |
 | [dashboard.md](dashboard.md)                   | Working on the operator UI: routes, panels, groups, monitor types.                                           |
+| [dashboard-motion.md](dashboard-motion.md)     | Adding or changing animation in the operator UI.                                                             |
 | [status-pages.md](status-pages.md)             | Publishing, theming or password-gating a public status page.                                                 |
 | [deployment.md](deployment.md)                 | Shipping a release: the office host, the image, rollout, the fleet inventory.                                |
 | [operations.md](operations.md)                 | Backing up, rolling back, rotating tokens, and diagnosing a broken instance.                                 |
