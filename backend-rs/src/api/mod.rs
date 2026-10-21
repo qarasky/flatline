@@ -15,6 +15,7 @@ pub mod public_cache;
 pub mod push;
 pub mod status_pages;
 pub mod stream;
+pub mod strips;
 pub mod web;
 
 use axum::extract::DefaultBodyLimit;
@@ -240,6 +241,7 @@ pub fn router(state: AppState) -> Router {
             post(monitors::clear_agent_warnings),
         )
         .route("/api/v1/monitors/links", get(links::bulk))
+        .route("/api/v1/monitors/heartbeat-strips", get(strips::strips))
         .route(
             "/api/v1/monitors/{id}/links",
             get(links::single).put(links::replace).delete(links::clear),

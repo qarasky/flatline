@@ -2208,6 +2208,105 @@
                 }
             }
         },
+        "/api/v1/monitors/heartbeat-strips": {
+            "get": {
+                "summary": "Bucketed heartbeat status strips.",
+                "description": "Requires the `read` scope. One strip per monitor: `buckets` buckets, oldest first, the last one containing now. Buckets are aligned to multiples of `bucketSeconds` since the Unix epoch (bucket index = floor(epochSeconds / bucketSeconds)), so a client can place a live beat itself; `start` is the UTC start of the first bucket. A bucket is `[worstStatus, beats, failedBeats]` (status 0 down, 1 up, 2 pending, 3 maintenance; worst by severity down > pending > maintenance > up) or `null` when it has no heartbeats. Unknown ids are absent from `strips`; groups are included. Omitting `ids` returns the first 200 monitors by id. `hours * 3600 / buckets` must be a whole number of seconds, at least 60. Cached for about 10 seconds. Register before /monitors/{id} so the static path wins.",
+                "parameters": [
+                    {
+                        "name": "ids",
+                        "in": "query",
+                        "required": false,
+                        "description": "Comma-separated monitor ids, at most 200. Omit for all monitors (first 200).",
+                        "schema": {
+                            "type": "string",
+                            "example": "4,5,6"
+                        }
+                    },
+                    {
+                        "name": "hours",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 168,
+                            "default": 24
+                        }
+                    },
+                    {
+                        "name": "buckets",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 120,
+                            "default": 48
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok", "hours", "buckets", "bucketSeconds", "start", "strips"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        },
+                                        "hours": {
+                                            "type": "integer"
+                                        },
+                                        "buckets": {
+                                            "type": "integer"
+                                        },
+                                        "bucketSeconds": {
+                                            "type": "integer"
+                                        },
+                                        "start": {
+                                            "type": "string",
+                                            "format": "date-time",
+                                            "example": "2026-10-20T11:00:00.000Z"
+                                        },
+                                        "strips": {
+                                            "type": "object",
+                                            "description": "Monitor id -> `buckets` entries, oldest first.",
+                                            "additionalProperties": {
+                                                "type": "array",
+                                                "items": {
+                                                    "oneOf": [
+                                                        {
+                                                            "type": "null"
+                                                        },
+                                                        {
+                                                            "type": "array",
+                                                            "description": "[worstStatus, beats, failedBeats]",
+                                                            "items": {
+                                                                "type": "integer"
+                                                            },
+                                                            "minItems": 3,
+                                                            "maxItems": 3
+                                                        }
+                                                    ]
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed or out-of-range `ids`, `hours` or `buckets`."
+                    }
+                }
+            }
+        },
         "/api/v1/monitors/{id}/links": {
             "get": {
                 "summary": "A server's linked websites.",
