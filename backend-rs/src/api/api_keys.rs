@@ -14,7 +14,7 @@ use crate::api::ApiError;
 use crate::auth::{OP_TOKEN_PREFIX, hash_token, mint_op_token};
 use crate::metrics::metric_time;
 
-type TokenRow = (i64, String, String, Option<String>, i64);
+type TokenRow = (i64, String, String, Option<String>, i64, Option<String>);
 
 /// Scopes the panel may show. The Rust backend has one scope: full.
 const SCOPES: [&str; 1] = ["full"];
@@ -25,6 +25,7 @@ fn api_key_json(
     created: &str,
     expires: &Option<String>,
     active: i64,
+    last_used: &Option<String>,
 ) -> Value {
     let expired = expires
         .as_deref()
@@ -45,6 +46,7 @@ fn api_key_json(
         "createdDate": created,
         "active": active != 0,
         "expires": expires,
+        "lastUsedAt": last_used,
         "status": status,
         "scopes": SCOPES,
     })
@@ -52,18 +54,21 @@ fn api_key_json(
 
 /// GET /api/v1/api-keys
 pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    let rows: Vec<TokenRow> =
-        sqlx::query_as("SELECT id, name, created_at, expires, active FROM tokens ORDER BY id")
-            .fetch_all(&state.pool)
-            .await
-            .map_err(internal)?;
+    let rows: Vec<TokenRow> = sqlx::query_as(
+        "SELECT id, name, created_at, expires, active, last_used_at FROM tokens ORDER BY id",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(internal)?;
 
     Ok(Json(json!({
         "ok": true,
         "count": rows.len(),
         "apiKeys": rows
             .iter()
-            .map(|(id, name, created, expires, active)| api_key_json(*id, name, created, expires, *active))
+            .map(|(id, name, created, expires, active, last_used)| {
+                api_key_json(*id, name, created, expires, *active, last_used)
+            })
             .collect::<Vec<_>>(),
         "availableScopes": SCOPES,
         "tokenKind": "operator",
@@ -101,10 +106,10 @@ pub async fn create(
         .map(str::to_string);
 
     let token = mint_op_token();
-    let row: (i64, String, String, Option<String>, i64) = sqlx::query_as(
+    let row: TokenRow = sqlx::query_as(
         "INSERT INTO tokens (name, hash, scheme, active, expires)
          VALUES (?, ?, 'sha256', ?, ?)
-         RETURNING id, name, created_at, expires, active",
+         RETURNING id, name, created_at, expires, active, last_used_at",
     )
     .bind(&name)
     .bind(hash_token(&token))
@@ -121,7 +126,7 @@ pub async fn create(
         StatusCode::CREATED,
         Json(json!({
             "ok": true,
-            "apiKey": api_key_json(row.0, &row.1, &row.2, &row.3, row.4),
+            "apiKey": api_key_json(row.0, &row.1, &row.2, &row.3, row.4, &row.5),
             // Shown once. There is no endpoint that returns this again.
             "token": token,
             "tokenKind": "operator",
@@ -156,18 +161,19 @@ pub async fn patch(
         return Err(ApiError::not_found(format!("No API key with id {id}.")));
     }
 
-    let row: TokenRow =
-        sqlx::query_as("SELECT id, name, created_at, expires, active FROM tokens WHERE id = ?")
-            .bind(id)
-            .fetch_one(&state.pool)
-            .await
-            .map_err(internal)?;
+    let row: TokenRow = sqlx::query_as(
+        "SELECT id, name, created_at, expires, active, last_used_at FROM tokens WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(internal)?;
 
     state.events.invalidate();
 
     Ok(Json(json!({
         "ok": true,
-        "apiKey": api_key_json(row.0, &row.1, &row.2, &row.3, row.4),
+        "apiKey": api_key_json(row.0, &row.1, &row.2, &row.3, row.4, &row.5),
     })))
 }
 

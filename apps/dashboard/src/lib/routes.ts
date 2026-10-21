@@ -67,3 +67,14 @@ export function statusSlugFromPath(path: string): string | null {
         return match[1];
     }
 }
+
+/**
+ * Whether a path is the phone's "approve this screen" page.
+ *
+ * The request code travels in the URL fragment, not the path, so it never
+ * reaches server logs and survives the phone's own sign-in step.
+ * @param path Current path
+ */
+export function isDeviceApprovePath(path: string): boolean {
+    return (path.replace(/\/+$/, "") || "/") === "/device";
+}

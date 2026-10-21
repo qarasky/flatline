@@ -40,6 +40,19 @@ The router is ~40 lines in `src/lib/router.ts` (path parsing in
 and every request carries it as a bearer token. A 401 returns the app to the
 gate; `Disconnect` clears the stored token.
 
+### Sign in with a QR code
+
+A screen without a keyboard (the wall TV) shows a QR code instead. Scan it with
+a phone that is already signed in, name the screen, and tap **Approve**: the
+screen signs itself in with its own operator token. That token appears in
+**Agents** under the name you gave it, never expires, and is revoked there
+without affecting any other device. The code lives five minutes and renews
+itself; a denied or expired request is replaced by a fresh code. **Paste a
+token instead** stays on every gate as the fallback. The QR URL uses
+`FLATLINE_PUBLIC_URL` when it is set, otherwise the address the screen was
+opened on, so set it when the phone cannot reach that address. See the
+[design](superpowers/specs/2026-10-21-qr-sign-in-design.md).
+
 There is no username and no password: tokens are the only credential, and every
 token has full permission. The **Agents** panel mints additional named tokens
 (shown once, then only their hash is stored) so an integration can have its own

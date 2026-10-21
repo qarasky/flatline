@@ -124,8 +124,10 @@ Added after the builder check (all my calls):
 - **URL.** The code travels in the URL fragment (`#`), so it stays out of server logs and Referer
   headers. It must survive the phone's sign-in step. `public_url` is used when set; otherwise the
   request Host, and the approve page warns if the phone is reaching the instance by a different host.
-- **Rate limiting.** `start` is limited per IP (forwarded headers are not trusted unless the
-  instance is configured to). `poll` is not limited per IP because it needs the poll secret.
+- **Rate limiting.** Per-IP limits are not meaningful here (behind the Cloudflare Tunnel every
+  request has the tunnel's address, and forwarded-for headers are spoofable; see `api/limits.rs`),
+  so at most 64 requests wait at once per instance and `start` answers 429 beyond that. `poll`
+  needs the poll secret and is not otherwise limited.
 - **Names.** Trimmed, 1 to 60 characters, duplicates allowed.
 - **Pruning.** The Agents panel already lists tokens; the builder should show last-used time for
   screen tokens there if it does not already.

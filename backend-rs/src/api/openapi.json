@@ -1433,6 +1433,61 @@
                 }
             }
         },
+        "/api/v1/auth/device/start": {
+            "post": {
+                "summary": "Start a QR sign-in",
+                "description": "Public. A screen with no session asks to sign in. Returns the request `code` (shown as a QR code at `<base>/device#<code>`), a private `pollSecret` that only the screen keeps, `expiresIn` seconds and the instance `publicUrl`. 429 `busy` when too many screens are waiting.",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/device/poll": {
+            "post": {
+                "summary": "Collect a QR sign-in",
+                "description": "Public. Body `{code, pollSecret}`. Returns status `pending`, `denied`, `expired` or `approved`; an approved response carries a new operator `token` that never expires. A wrong secret or unknown code reads as `expired`. The token is minted on the first poll after approval and can be fetched again for 60 seconds.",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/device/lookup": {
+            "post": {
+                "summary": "Describe a waiting screen",
+                "description": "Operator token. Body `{code}`. Returns the screen's user agent, how long it has waited and a suggested name. 404 when the request is unknown, expired or already answered.",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/device/approve": {
+            "post": {
+                "summary": "Approve a waiting screen",
+                "description": "Operator token. Body `{code, name}` (name 1 to 60 characters). The screen then receives its own operator token, listed in `/api/v1/api-keys` under that name. 409 `not_pending` when already answered or expired.",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/device/deny": {
+            "post": {
+                "summary": "Deny a waiting screen",
+                "description": "Operator token. Body `{code}`. 409 `not_pending` when already answered or expired.",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
         "/api/v1/auth/me": {
             "get": {
                 "summary": "Own account",

@@ -576,7 +576,11 @@ async fn stale_backfill_does_not_page() {
     )
     .await;
     assert_eq!(status, 200);
-    assert_eq!(raw_count(&h.pool, id).await, 1, "backfill is still archived");
+    assert_eq!(
+        raw_count(&h.pool, id).await,
+        1,
+        "backfill is still archived"
+    );
 
     h.state.metrics.evaluate_alerts_at(&monitor, now).await;
     tokio::time::sleep(Duration::from_millis(100)).await;

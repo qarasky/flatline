@@ -192,6 +192,9 @@ Small fleets stay on one page instead of rotating.
 | `rotate`        | `5`      | Seconds between pages (1–300). Rotation pauses on any interaction and resumes after 30 s idle, and pauses while the tab is hidden. |
 | `perPage`       | measured | Explicit page size override.                                                                                                       |
 
+A kiosk with no session shows a QR code to sign in with a phone; see
+[Signing in](dashboard.md#signing-in).
+
 Kiosk mode is chrome-free and hides scrollbars. Reaching it is a route, not a
 parameter.
 

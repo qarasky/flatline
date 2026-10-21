@@ -4,6 +4,7 @@ pub mod api_keys;
 pub mod auth;
 pub mod backups;
 pub mod badges;
+pub mod device;
 pub mod limits;
 pub mod links;
 pub mod metrics;
@@ -143,6 +144,8 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/api/v1/auth/setup", get(auth::setup_status))
         .route("/api/v1/auth/login", post(auth::login))
+        .route("/api/v1/auth/device/start", post(device::start))
+        .route("/api/v1/auth/device/poll", post(device::poll))
         .route("/api/v1/openapi.json", get(openapi::document))
         .route("/robots.txt", get(status_pages::robots))
         .route("/add-push-server.md", get(provisioning::runbook))
@@ -218,6 +221,9 @@ pub fn router(state: AppState) -> Router {
     let authed = Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/auth/me", get(auth::me))
+        .route("/api/v1/auth/device/lookup", post(device::lookup))
+        .route("/api/v1/auth/device/approve", post(device::approve))
+        .route("/api/v1/auth/device/deny", post(device::deny))
         .route(
             "/api/v1/monitors",
             get(monitors::list).post(monitors::create),

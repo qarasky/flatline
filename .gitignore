@@ -46,3 +46,5 @@ superboard/flatline-superboard
 # Go backup agent build artifacts (binary is installed, never committed).
 backup-agent/flatline-backup
 backup-agent/flatline-backup-*
+
+.superpowers/
