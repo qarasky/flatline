@@ -15,6 +15,7 @@ pub mod backups;
 pub mod badges;
 pub mod config;
 pub mod db;
+pub mod device;
 pub mod events;
 pub mod heartbeats;
 pub mod import;
@@ -46,6 +47,8 @@ pub struct AppState {
     pub status_page_secret: Arc<String>,
     /// Short-lived cache behind `GET /api/v1/monitors/heartbeat-strips`.
     pub strips: Arc<api::strips::StripCache>,
+    /// Pending QR sign-in requests (in memory; see `device`).
+    pub devices: Arc<device::DeviceRequests>,
 }
 
 /// Open the database, run migrations, and make sure an admin token exists.
@@ -76,6 +79,7 @@ pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
         backups,
         status_page_secret: Arc::new(status_page_secret),
         strips: Arc::new(api::strips::StripCache::new()),
+        devices: Arc::new(device::DeviceRequests::new()),
     })
 }
 
