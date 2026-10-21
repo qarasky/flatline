@@ -554,7 +554,7 @@ export function Dashboard() {
         <MotionProvider>
             <div className="flex min-h-screen">
                 <div className="min-w-0 flex-1">
-                    <div className="mx-auto max-w-[1480px]">
+                    <div className="mx-auto max-w-[1200px]">
                         <BoardHeader
                             query={filter.q}
                             onQuery={(q) => setFilter((prev) => ({ ...prev, q }))}
