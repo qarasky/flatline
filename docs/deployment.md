@@ -215,6 +215,7 @@ minutes and only real outages page.
 | 2026-10-14 | Performance/stability follow-up fixes; agent 1.6.0/1.6.1 rolled to the fleet.                                                                                           |
 | 2026-10-18 | Node backend removed from the repository; Superboard card redesign; hosted-website links; provider logos; agent-warning acknowledgements; agent 1.7.0 with self-update. |
 | 2026-10-21 | October performance and reliability audit (storage, engine, API, agent, dashboard findings) merged; backup agent integrated; agent 1.8.0.                               |
+| 2026-10-21 | Main board redesign (attention section, heartbeat strips, detail pane, motion) and the `heartbeat-strips` endpoint. Rollback tag `office-prev-20261021-144515`.         |
 
 Each release is also recorded in [history](history.md) with the defects it fixed.
 
