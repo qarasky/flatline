@@ -106,6 +106,7 @@ pub fn validate_agent_version(version: &str) -> Result<(), Error> {
     if version.is_empty() || version.len() > MAX_AGENT_VERSION {
         return Err(invalid());
     }
+    // Semver: `-pre` then `+build`, each dot-separated alphanumerics.
     let (core, suffix) = match version.find(['-', '+']) {
         Some(index) => (&version[..index], Some(&version[index + 1..])),
         None => (version, None),
@@ -120,9 +121,11 @@ pub fn validate_agent_version(version: &str) -> Result<(), Error> {
     }
     if let Some(suffix) = suffix
         && (suffix.is_empty()
-            || !suffix
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-'))
+            || !suffix.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-' || byte == b'+'
+            })
+            || suffix.split('+').count() > 2
+            || suffix.split('+').any(str::is_empty))
     {
         return Err(invalid());
     }

@@ -948,8 +948,12 @@ impl Backups {
         // The version is agent metadata, recorded whatever happens to the
         // run, and never part of `same_start`: a pending bundle written by
         // an older agent and retried after an update is still the same run.
+        // A malformed version is dropped, never a reason to refuse a backup.
         if let Some(version) = input.agent_version.as_deref() {
-            self.record_version_at(agent_id, version, None, now).await?;
+            match self.record_version_at(agent_id, version, None, now).await {
+                Ok(()) | Err(Error::BadRequest(_)) => {}
+                Err(error) => return Err(error),
+            }
         }
         let storage = self.storage()?;
 

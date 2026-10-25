@@ -102,11 +102,23 @@ async fn retry_with_new_version_is_the_same_run() {
 }
 
 #[tokio::test]
-async fn malformed_agent_version_is_rejected() {
+async fn malformed_agent_version_never_blocks_a_backup() {
     let h = harness().await;
-    let (_, token) = register(&h, "meks").await;
+    let (id, token) = register(&h, "meks").await;
+    // Metadata must not refuse a backup: the run starts, the bad version is
+    // simply not recorded.
     let (status, body) = start(&h, &token, json!({"agentVersion": "latest"})).await;
-    assert_eq!(status, 400, "{body}");
+    assert_eq!(status, 200, "{body}");
+    assert!(agent(&h, &id).await["reportedVersion"].is_null());
+}
+
+#[tokio::test]
+async fn full_semver_versions_are_accepted() {
+    let h = harness().await;
+    let (id, token) = register(&h, "meks").await;
+    let (status, body) = start(&h, &token, json!({"agentVersion": "1.2.3-rc.1+build.5"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(agent(&h, &id).await["reportedVersion"], "1.2.3-rc.1+build.5");
 }
 
 #[tokio::test]
