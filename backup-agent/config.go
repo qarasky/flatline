@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"filippo.io/age"
 	"golang.org/x/sys/unix"
@@ -309,6 +310,24 @@ func AcquireInstanceLock(stateDir string) (io.Closer, error) {
 		return nil, fmt.Errorf("another instance is running: %w", err)
 	}
 	return &instanceLock{file: file}, nil
+}
+
+// acquireInstanceLockWait retries AcquireInstanceLock once a second until it
+// succeeds or wait elapses. Self-update uses it so a binary swap waits for a
+// running backup instead of happening under it.
+func acquireInstanceLockWait(stateDir string, wait time.Duration) (io.Closer, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		lock, err := AcquireInstanceLock(stateDir)
+		if err == nil {
+			return lock, nil
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, err
+		}
+		time.Sleep(min(time.Second, remaining))
+	}
 }
 
 func loadS3Credentials(path string) (S3Credentials, error) {
