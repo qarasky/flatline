@@ -1048,6 +1048,30 @@ export function fetchBackupAgents(
 }
 
 /**
+ * Every backup agent, all pages, for the Superboard: one listing for the
+ * whole board (grouped by monitor on the client), never one per card.
+ * @param signal Cancels the requests
+ */
+export async function fetchAllBackupAgents(signal?: AbortSignal): Promise<BackupAgentSummary[]> {
+    const agents: BackupAgentSummary[] = [];
+    let cursor: string | null = null;
+    // Bounded: a cursor loop that never ends must not hang the board.
+    for (let page = 0; page < 100; page++) {
+        const query: string = cursor ? `?limit=200&cursor=${encodeURIComponent(cursor)}` : "?limit=200";
+        const body: { agents: BackupAgentSummary[]; nextCursor: string | null } = await request(
+            `/api/v1/backup-agents${query}`,
+            { signal }
+        );
+        agents.push(...body.agents);
+        cursor = body.nextCursor;
+        if (!cursor) {
+            break;
+        }
+    }
+    return agents;
+}
+
+/**
  * Newest-first run history for one agent.
  * @param agentId Agent UUID
  * @param signal Cancels the request

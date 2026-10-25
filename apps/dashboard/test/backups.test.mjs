@@ -167,3 +167,31 @@ test("only encrypted runs are marked: plain is the default", () => {
     assert.doesNotMatch(backupSourceSummary(plain), /encrypted/);
     assert.match(backupSourceSummary(sealed), / · encrypted$/);
 });
+
+test("the board loads every backup agent, following nextCursor", async () => {
+    const all = Array.from({ length: 60 }, (_, index) => agent(`agent-${String(index).padStart(2, "0")}`, "healthy"));
+    const calls = [];
+    globalThis.window = { localStorage: { getItem: () => "test-token" } };
+    globalThis.fetch = async (url) => {
+        const parsed = new URL(String(url), "http://board.test");
+        calls.push(parsed);
+        const start = Number(parsed.searchParams.get("cursor") ?? "0");
+        const page = all.slice(start, start + 20);
+        const next = start + 20 < all.length ? String(start + 20) : null;
+        return new Response(JSON.stringify({ ok: true, agents: page, nextCursor: next }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        });
+    };
+    const { fetchAllBackupAgents } = await import("../src/lib/api.ts");
+    const agents = await fetchAllBackupAgents();
+    assert.equal(agents.length, 60);
+    assert.equal(calls.length, 3);
+    assert.equal(calls[0].searchParams.get("cursor"), null);
+    assert.equal(calls[1].searchParams.get("cursor"), "20");
+    assert.equal(calls[2].searchParams.get("cursor"), "40");
+    for (const call of calls) {
+        assert.equal(call.pathname, "/api/v1/backup-agents");
+        assert.equal(call.searchParams.get("monitorId"), null, "one request for the whole board, not per card");
+    }
+});

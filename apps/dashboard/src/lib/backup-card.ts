@@ -114,3 +114,21 @@ export function backupAttention(agents: BackupAgentSummary[]): { flagged: number
     }
     return { flagged, headline: flagged === 1 ? "Backup overdue" : `${flagged} backups behind` };
 }
+
+/**
+ * Backup agents keyed by the monitor they are linked to, for the board's
+ * one listing. Agents without a monitor belong to no card.
+ * @param agents Every backup agent
+ */
+export function groupBackupsByMonitor(agents: BackupAgentSummary[]): Map<number, BackupAgentSummary[]> {
+    const grouped = new Map<number, BackupAgentSummary[]>();
+    for (const agent of agents) {
+        if (agent.monitorId == null) {
+            continue;
+        }
+        const list = grouped.get(agent.monitorId) ?? [];
+        list.push(agent);
+        grouped.set(agent.monitorId, list);
+    }
+    return grouped;
+}

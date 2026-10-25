@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { backupAttention, backupLines, backupVersion } from "../src/lib/backup-card.ts";
+import { backupAttention, backupLines, backupVersion, groupBackupsByMonitor } from "../src/lib/backup-card.ts";
 
 const NOW = Date.parse("2026-10-25T12:00:00Z");
 const hoursAgo = (hours) => new Date(NOW - hours * 3600 * 1000).toISOString();
@@ -149,4 +149,18 @@ test("attention: overdue and failed flag the card; pending and disabled never do
         flagged: 0,
         headline: null,
     });
+});
+
+test("agents are grouped by their monitor; unlinked agents go nowhere", () => {
+    const grouped = groupBackupsByMonitor([
+        agent("zhkh", "healthy", { monitorId: 48 }),
+        agent("modernization", "healthy", { monitorId: 48 }),
+        agent("cmn", "healthy", { monitorId: 47 }),
+        agent("orphan", "healthy", { monitorId: null }),
+    ]);
+    assert.deepEqual([...grouped.keys()].sort(), [47, 48]);
+    assert.deepEqual(
+        grouped.get(48).map((a) => a.name),
+        ["zhkh", "modernization"]
+    );
 });

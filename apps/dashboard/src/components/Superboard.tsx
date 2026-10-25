@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ApiError,
     clearAgentWarnings,
+    fetchAllBackupAgents,
     fetchBulkMonitorLinks,
     fetchLatestMetricsBulk,
     fetchAllMonitors,
     getToken,
     setToken,
+    type BackupAgentSummary,
     type MonitorLinks,
     type MonitorSummary,
     type ResolvedMonitorLink,
@@ -20,6 +22,7 @@ import { WebsiteLinkDialog } from "@/components/WebsiteLinks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { agentWarningCounts, fleetAttention, isPeakFresh, isSampleStale, matchGroups } from "@/lib/fleet-presentation";
+import { backupAttention, groupBackupsByMonitor } from "@/lib/backup-card";
 import { fleetPageSize } from "@/lib/fleet-layout";
 import { ServerHistory } from "@/components/ServerHistory";
 
@@ -132,6 +135,9 @@ function Superboard({
     onDisconnect: () => void;
 }) {
     const [servers, setServers] = useState<FleetServer[]>([]);
+    // Backup agents by monitor id, kept beside the servers so live metric
+    // updates never drop them. One listing for the whole board.
+    const [backups, setBackups] = useState<Map<number, BackupAgentSummary[]>>(() => new Map());
     const [error, setError] = useState<string | null>(null);
     const [loaded, setLoaded] = useState(false);
 
@@ -235,7 +241,26 @@ function Superboard({
             (a.monitor.weight ?? 0) - (b.monitor.weight ?? 0) ||
             a.monitor.name.localeCompare(b.monitor.name);
 
+        // Backups are secondary: a failed listing keeps the last known agents
+        // and logs once, and never breaks the board.
+        let backupsWarned = false;
+        async function loadBackups(signal?: AbortSignal) {
+            try {
+                const agents = await fetchAllBackupAgents(signal);
+                if (alive) {
+                    setBackups(groupBackupsByMonitor(agents));
+                }
+            } catch (e) {
+                if (!backupsWarned && !(e instanceof DOMException && e.name === "AbortError")) {
+                    backupsWarned = true;
+                    console.warn("Superboard: backup agents unavailable", e);
+                }
+            }
+        }
+
         async function load(signal?: AbortSignal) {
+            // Alongside the board load, on every (re)connect snapshot.
+            void loadBackups(signal);
             try {
                 const monitors = await fetchAllMonitors(signal);
                 roster = new Map(monitors.map((m) => [m.id, m]));
@@ -308,6 +333,7 @@ function Superboard({
         // however, skips hidden ticks — no point polling a board nobody sees.
         const stop = subscribeLive({
             snapshot: load,
+            backups: () => void loadBackups(),
             event: (event) => {
                 if (!alive) {
                     return;
@@ -478,7 +504,9 @@ function Superboard({
     const attentionCount = servers.filter((s) => {
         const state = fleetAttention(s.metrics, s.time, s.monitor.interval || 60, now);
         const websiteDown = s.links?.some((link) => link.status === 0) ?? false;
+        const backupsBehind = backupAttention(backups.get(s.monitor.id) ?? []).flagged > 0;
         return (
+            backupsBehind ||
             s.monitor.status === 0 ||
             s.monitor.status === 2 ||
             state.stale ||
@@ -522,6 +550,7 @@ function Superboard({
                     <FleetCard
                         key={server.monitor.id}
                         server={server}
+                        backups={backups.get(server.monitor.id)}
                         stale={isSampleStale(server.metrics, server.time, server.monitor.interval || 60, now)}
                         peakFresh={isPeakFresh(server.cpuPeak10m?.at, now)}
                         onOpenHistory={openHistory}
