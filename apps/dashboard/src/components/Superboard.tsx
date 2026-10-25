@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { agentWarningCounts, fleetAttention, isPeakFresh, isSampleStale, matchGroups } from "@/lib/fleet-presentation";
 import { backupAttention, groupBackupsByMonitor } from "@/lib/backup-card";
+import { serialRefresh } from "@/lib/serial-refresh";
 import { fleetPageSize } from "@/lib/fleet-layout";
 import { ServerHistory } from "@/components/ServerHistory";
 
@@ -244,9 +245,13 @@ function Superboard({
         // Backups are secondary: a failed listing keeps the last known agents
         // and logs once, and never breaks the board.
         let backupsWarned = false;
-        async function loadBackups(signal?: AbortSignal) {
+        const backupsLoader = new AbortController();
+        // One listing in flight at a time: upload progress emits a backups
+        // event about once a second, and overlapping fetches could also land
+        // out of order.
+        const loadBackups = serialRefresh(async () => {
             try {
-                const agents = await fetchAllBackupAgents(signal);
+                const agents = await fetchAllBackupAgents(backupsLoader.signal);
                 if (alive) {
                     setBackups(groupBackupsByMonitor(agents));
                 }
@@ -256,11 +261,11 @@ function Superboard({
                     console.warn("Superboard: backup agents unavailable", e);
                 }
             }
-        }
+        });
 
         async function load(signal?: AbortSignal) {
             // Alongside the board load, on every (re)connect snapshot.
-            void loadBackups(signal);
+            void loadBackups();
             try {
                 const monitors = await fetchAllMonitors(signal);
                 roster = new Map(monitors.map((m) => [m.id, m]));
@@ -422,6 +427,7 @@ function Superboard({
         });
         return () => {
             alive = false;
+            backupsLoader.abort();
             stop();
         };
     }, [onDisconnect, filter]);
