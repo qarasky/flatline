@@ -13,7 +13,7 @@ how a release goes out, and how to get back.
 | Compose files      | `/home/office/flatline/compose.rust.yaml` + `/home/office/flatline-src/docker/compose.backups.yaml`     |
 | Environment        | `/home/office/flatline/.env` — `FLATLINE_PORT=3001`, `FLATLINE_PUBLIC_URL=https://uptime.mediaboost.kz` |
 | Data               | `/home/office/flatline/data-rust/flatline.db` (plus `initial-token.txt`, `status-page-secret`)          |
-| Database backups   | `/home/office/flatline/backups/` (nightly copies in `backups/nightly/`)                                 |
+| Database backups   | Pre-release: `/home/office/flatline/backups/`. Nightly: `/mnt/mirror/flatline-nightly/` (RAID1)         |
 | Backup storage     | `/mnt/mirror/flatline-backups` (RAID1 `md0`) → `/app/backups`; client bundles from backup agents        |
 | Source tree        | `/home/office/flatline-src` — the tree the image is built from                                          |
 | Provisioning token | `/home/office/flatline/provisioning-token.txt` (0600, root)                                             |
@@ -217,13 +217,14 @@ minutes and only real outages page.
 
 ## Release log
 
-| Date       | What shipped                                                                                                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-10-13 | Rust backend cutover (parity-verified against the Node backend, then the Node backend was retired).                                                                     |
-| 2026-10-14 | Performance/stability follow-up fixes; agent 1.6.0/1.6.1 rolled to the fleet.                                                                                           |
-| 2026-10-18 | Node backend removed from the repository; Superboard card redesign; hosted-website links; provider logos; agent-warning acknowledgements; agent 1.7.0 with self-update. |
-| 2026-10-21 | October performance and reliability audit (storage, engine, API, agent, dashboard findings) merged; backup agent integrated; agent 1.8.0.                               |
-| 2026-10-21 | Main board redesign (attention section, heartbeat strips, detail pane, motion) and the `heartbeat-strips` endpoint. Rollback tag `office-prev-20261021-144515`.         |
+| Date       | What shipped                                                                                                                                                                           |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-13 | Rust backend cutover (parity-verified against the Node backend, then the Node backend was retired).                                                                                    |
+| 2026-10-14 | Performance/stability follow-up fixes; agent 1.6.0/1.6.1 rolled to the fleet.                                                                                                          |
+| 2026-10-18 | Node backend removed from the repository; Superboard card redesign; hosted-website links; provider logos; agent-warning acknowledgements; agent 1.7.0 with self-update.                |
+| 2026-10-21 | October performance and reliability audit (storage, engine, API, agent, dashboard findings) merged; backup agent integrated; agent 1.8.0.                                              |
+| 2026-10-21 | Main board redesign (attention section, heartbeat strips, detail pane, motion) and the `heartbeat-strips` endpoint. Rollback tag `office-prev-20261021-144515`.                        |
+| 2026-10-25 | Backup storage enabled; optional backup encryption (backup agent 0.2.0); QR sign-in; nightly DB backup timer installed. Agent stays 1.8.0. Rollback tag `office-prev-20261025-054357`. |
 
 Each release is also recorded in [history](history.md) with the defects it fixed.
 
