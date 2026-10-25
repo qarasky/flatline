@@ -139,6 +139,9 @@ func SelfUpdate(ctx context.Context, options updateOptions) (string, error) {
 	// project's version on the board stays current even when nothing updates.
 	var release Release
 	var reported bool
+	// The download uses the credential that just worked: an instance whose
+	// token was revoked must not block the host's updates.
+	var source *UploadClient
 	for _, inst := range instances {
 		got, err := inst.client.checkin(ctx, platformID(), previous)
 		if err != nil {
@@ -146,7 +149,7 @@ func SelfUpdate(ctx context.Context, options updateOptions) (string, error) {
 			continue
 		}
 		if !reported {
-			release, reported = got, true
+			release, reported, source = got, true, inst.client
 		}
 	}
 	if !reported {
@@ -188,7 +191,7 @@ func SelfUpdate(ctx context.Context, options updateOptions) (string, error) {
 	}
 
 	staged := filepath.Join(options.stagingDir, "flatline-backup.new")
-	if err := instances[0].client.downloadRelease(ctx, asset.File, staged, asset.Size); err != nil {
+	if err := source.downloadRelease(ctx, asset.File, staged, asset.Size); err != nil {
 		return finish(ctx, options, instances, updateDownloadFailed, err)
 	}
 	defer os.Remove(staged)
@@ -308,22 +311,35 @@ func normalizeServer(raw string) string {
 	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
-// lockAll takes every instance's run lock, waiting for running backups;
-// on a timeout it releases what it took.
+// lockAll takes every instance's run lock at once, or none: while one
+// backup runs, the others stay free to start, and the locks are only held
+// together for the swap. It retries each second until wait elapses.
 func lockAll(instances []instance, wait time.Duration) ([]io.Closer, error) {
-	locks := make([]io.Closer, 0, len(instances))
 	deadline := time.Now().Add(wait)
-	for _, inst := range instances {
-		lock, err := acquireInstanceLockWait(inst.cfg.StateDir, max(time.Until(deadline), 0))
-		if err != nil {
-			for _, held := range locks {
-				held.Close()
+	for {
+		locks := make([]io.Closer, 0, len(instances))
+		var busy string
+		var busyErr error
+		for _, inst := range instances {
+			lock, err := AcquireInstanceLock(inst.cfg.StateDir)
+			if err != nil {
+				busy, busyErr = inst.cfg.Name, err
+				break
 			}
-			return nil, fmt.Errorf("backup %s is still running: %w", inst.cfg.Name, err)
+			locks = append(locks, lock)
 		}
-		locks = append(locks, lock)
+		if busyErr == nil {
+			return locks, nil
+		}
+		for _, held := range locks {
+			held.Close()
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, fmt.Errorf("backup %s is still running: %w", busy, busyErr)
+		}
+		time.Sleep(min(time.Second, remaining))
 	}
-	return locks, nil
 }
 
 // swapBinary keeps a copy of the current binary as <binary>.prev and

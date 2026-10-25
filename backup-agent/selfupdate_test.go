@@ -336,19 +336,59 @@ func TestSelfUpdateReportsPreviousStatusOnNextRun(t *testing.T) {
 	}
 }
 
-func TestAcquireInstanceLockWaitGetsAFreedLock(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "meks")
-	held, err := AcquireInstanceLock(dir)
+func TestSelfUpdateDownloadsWithTheInstanceThatCheckedIn(t *testing.T) {
+	server := newReleaseServer(t, "0.4.0", newBinary)
+	revoked := "Bearer modernization"
+	inner := server.server.Config.Handler
+	server.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == revoked {
+			http.Error(w, `{"ok":false,"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+	host := newUpdateHost(t, server.server.URL)
+	host.options.clientFor = func(cfg Config) (*UploadClient, error) {
+		client := testUploadClient(t, cfg.ServerURL)
+		client.token = cfg.Name // one credential per instance; modernization's is revoked
+		return client, nil
+	}
+
+	status, err := SelfUpdate(context.Background(), host.options)
+	if err != nil || status != "ok" {
+		t.Fatalf("a revoked first instance must not block the host's update: status = %q, err = %v", status, err)
+	}
+	if !bytes.Equal(readBinary(t, host.options.binaryPath), newBinary) {
+		t.Fatal("the build must be downloaded with a working credential")
+	}
+}
+
+func TestSelfUpdateNeverHoldsOneLockWhileWaitingForAnother(t *testing.T) {
+	server := newReleaseServer(t, "0.4.0", newBinary)
+	host := newUpdateHost(t, server.server.URL)
+	busy, err := AcquireInstanceLock(host.configs[1].StateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer busy.Close()
+
+	// While self-update waits for zhkh's running backup, modernization's
+	// own backup must still be able to start.
+	free := make(chan error, 1)
 	go func() {
-		time.Sleep(300 * time.Millisecond)
-		held.Close()
+		time.Sleep(700 * time.Millisecond)
+		lock, err := AcquireInstanceLock(host.configs[0].StateDir)
+		if err == nil {
+			lock.Close()
+		}
+		free <- err
 	}()
-	lock, err := acquireInstanceLockWait(dir, 3*time.Second)
-	if err != nil {
-		t.Fatalf("a lock freed within the wait must be acquired: %v", err)
+
+	status, _ := SelfUpdate(context.Background(), host.options)
+	if status != "lock_timeout" {
+		t.Fatalf("status = %q", status)
 	}
-	lock.Close()
+	if err := <-free; err != nil {
+		t.Fatalf("an idle instance's lock was held during the wait: %v", err)
+	}
 }
