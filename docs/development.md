@@ -85,7 +85,7 @@ have been verified with.
 | `backend-rs/migrations/`         | Ordered SQL migrations.                                                       |
 | `backend-rs/tests/`              | Integration tests against a real in-memory SQLite.                            |
 | `superboard/`                    | The Go agent (`mockagent/` is the dev fleet).                                 |
-| `backup-agent/`                  | The separate encrypted backup agent and its offline/restore tests.            |
+| `backup-agent/`                  | The separate backup agent and its offline/restore tests.                      |
 | `apps/dashboard/src/components/` | UI components; `lib/` holds the pure presentation logic that the tests cover. |
 | `packages/shared/`               | Types shared with the dashboard.                                              |
 | `docs/`                          | These documents.                                                              |

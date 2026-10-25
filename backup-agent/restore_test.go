@@ -150,7 +150,11 @@ func makeRestoreBundleWithGlobalsSQL(t *testing.T, identity *age.X25519Identity,
 		sql := writeSource(t, spool, "globals/000001.sql", globalsBody)
 		files = append(files, ExportFile{Path: "globals/000001.sql", SourcePath: sql, Kind: kindGlobals})
 	}
-	bundle, err := WriteBundle(context.Background(), Config{Name: "meks", recipient: identity.Recipient()}, spool, Export{
+	cfg := Config{Name: "meks"}
+	if identity != nil {
+		cfg.recipient = identity.Recipient()
+	}
+	bundle, err := WriteBundle(context.Background(), cfg, spool, Export{
 		Manifest: manifest,
 		Files:    files,
 	})

@@ -10,7 +10,7 @@ import (
 	"syscall"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -76,7 +76,11 @@ func runCheck(args []string) int {
 		fmt.Fprintf(os.Stderr, "configuration invalid: %v\n", err)
 		return 1
 	}
-	fmt.Printf("ok: %s (%d postgres, %d s3 sources)\n", cfg.Name, len(cfg.Postgres), len(cfg.S3))
+	encryption := "off (plain tar bundles)"
+	if cfg.Encrypted() {
+		encryption = "on (age)"
+	}
+	fmt.Printf("ok: %s (%d postgres, %d s3 sources, encryption %s)\n", cfg.Name, len(cfg.Postgres), len(cfg.S3), encryption)
 	return 0
 }
 
@@ -127,14 +131,14 @@ func runInstall(args []string) int {
 
 func bundleFlags(name string, args []string, needTarget bool) (string, string, string, error) {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
-	bundle := flags.String("bundle", "", "path to the encrypted bundle")
-	identity := flags.String("identity-file", "", "path to the age identity")
+	bundle := flags.String("bundle", "", "path to the bundle (.tar or .age)")
+	identity := flags.String("identity-file", "", "path to the age identity; needed only for an encrypted bundle")
 	target := flags.String("target-config", "", "path to the scratch target configuration")
 	if err := flags.Parse(args); err != nil {
 		return "", "", "", err
 	}
-	if *bundle == "" || *identity == "" || (needTarget && *target == "") {
-		return "", "", "", fmt.Errorf("%s needs --bundle FILE --identity-file FILE%s", name, map[bool]string{true: " --target-config FILE"}[needTarget])
+	if *bundle == "" || (needTarget && *target == "") {
+		return "", "", "", fmt.Errorf("%s needs --bundle FILE [--identity-file FILE]%s", name, map[bool]string{true: " --target-config FILE"}[needTarget])
 	}
 	return *bundle, *identity, *target, nil
 }

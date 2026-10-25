@@ -26,7 +26,7 @@ export function BackupAgents({
     agents: BackupAgentSummary[];
     runs?: Record<string, BackupRunSummary[]>;
     error?: string | null;
-    onDownload?: (runId: string) => void;
+    onDownload?: (run: BackupRunSummary) => void;
 }) {
     if (agents.length === 0 && !error) {
         return null;
@@ -104,11 +104,7 @@ export function BackupAgents({
                                     </td>
                                     <td className="py-2 pr-3 text-right">
                                         {completed && onDownload ? (
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() => onDownload(completed.id)}
-                                            >
+                                            <Button variant="outline" size="sm" onClick={() => onDownload(completed)}>
                                                 Download
                                             </Button>
                                         ) : null}

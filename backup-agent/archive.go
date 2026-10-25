@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -20,11 +21,24 @@ import (
 	"filippo.io/age"
 )
 
+// ageMagic opens every binary age v1 file. A plain bundle starts with a tar
+// header whose name is a generated identifier, so the two never collide.
+const ageMagic = "age-encryption.org/v1\n"
+
+// bundleExtension names a bundle by its format: ".age" when encrypted,
+// ".tar" when plain.
+func bundleExtension(encrypted bool) string {
+	if encrypted {
+		return ".age"
+	}
+	return ".tar"
+}
+
 // WriteBundle creates a versioned tar archive, encrypts it to the configured
-// age recipient, fsyncs it and publishes it under an immutable name. The
-// manifest is the last entry and records every generated path's size and
-// SHA-256. On failure the partial file is removed; an existing pending
-// bundle is never overwritten.
+// age recipient when there is one, fsyncs it and publishes it under an
+// immutable name. The manifest is the last entry and records every generated
+// path's size and SHA-256. On failure the partial file is removed; an
+// existing pending bundle is never overwritten.
 func WriteBundle(ctx context.Context, cfg Config, spool *Spool, export Export) (Bundle, error) {
 	manifest := export.Manifest
 	manifest.FormatVersion = manifestFormatVersion
@@ -77,8 +91,9 @@ func WriteBundle(ctx context.Context, cfg Config, spool *Spool, export Export) (
 		}
 	}
 
-	partialName := manifest.ClientRunID + ".partial.age"
-	finalName := manifest.ClientRunID + ".age"
+	extension := bundleExtension(cfg.Encrypted())
+	partialName := manifest.ClientRunID + ".partial" + extension
+	finalName := manifest.ClientRunID + extension
 	if _, err := os.Lstat(filepath.Join(spool.Root(), finalName)); err == nil {
 		return Bundle{}, errors.New("a pending bundle already exists for this run")
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -94,13 +109,18 @@ func WriteBundle(ctx context.Context, cfg Config, spool *Spool, export Export) (
 		_ = spool.Remove(partialName)
 	}
 
-	ciphertext := &hashCounter{writer: spooled, hash: sha256.New()}
-	encrypted, err := age.Encrypt(ciphertext, cfg.recipient)
-	if err != nil {
-		cleanup()
-		return Bundle{}, fmt.Errorf("encrypt bundle: %w", err)
+	// output hashes exactly the bytes that are stored and uploaded.
+	output := &hashCounter{writer: spooled, hash: sha256.New()}
+	var payload io.WriteCloser = nopWriteCloser{output}
+	if cfg.Encrypted() {
+		encrypted, err := age.Encrypt(output, cfg.recipient)
+		if err != nil {
+			cleanup()
+			return Bundle{}, fmt.Errorf("encrypt bundle: %w", err)
+		}
+		payload = encrypted
 	}
-	archive := tar.NewWriter(encrypted)
+	archive := tar.NewWriter(payload)
 
 	manifest.Entries = make([]Entry, 0, len(export.Files))
 	for _, file := range export.Files {
@@ -130,9 +150,9 @@ func WriteBundle(ctx context.Context, cfg Config, spool *Spool, export Export) (
 		cleanup()
 		return Bundle{}, fmt.Errorf("close archive: %w", err)
 	}
-	if err := encrypted.Close(); err != nil {
+	if err := payload.Close(); err != nil {
 		cleanup()
-		return Bundle{}, fmt.Errorf("close age stream: %w", err)
+		return Bundle{}, fmt.Errorf("close bundle stream: %w", err)
 	}
 	if err := spooled.Close(); err != nil {
 		cleanup()
@@ -150,13 +170,13 @@ func WriteBundle(ctx context.Context, cfg Config, spool *Spool, export Export) (
 
 	return Bundle{
 		Path:             filepath.Join(spool.Root(), finalName),
-		Size:             ciphertext.n,
-		SHA256:           hex.EncodeToString(ciphertext.hash.Sum(nil)),
+		Size:             output.n,
+		SHA256:           hex.EncodeToString(output.hash.Sum(nil)),
 		ClientRunID:      manifest.ClientRunID,
 		ExportStartedAt:  manifest.ExportStartedAt,
 		ExportFinishedAt: manifest.ExportFinishedAt,
 		Manifest:         manifest,
-		Summary:          summarize(manifest),
+		Summary:          summarize(manifest, cfg.Encrypted()),
 	}, nil
 }
 
@@ -228,11 +248,15 @@ func writeArchiveBytes(archive *tar.Writer, name string, data []byte) error {
 	return err
 }
 
-// VerifyBundle decrypts and validates every entry without extracting it.
-// It rejects authentication failures, trailing plaintext, duplicate or
-// unexpected entries, unsupported versions, oversized manifests, missing
-// entries, forged sizes and duplicate object mappings. It returns only the
-// validated manifest; restore rereads the bundle.
+// VerifyBundle validates every entry without extracting it, decrypting first
+// when the bundle is age-encrypted (identityFile is required then and
+// ignored for a plain bundle). It rejects authentication failures, trailing
+// data, duplicate or unexpected entries, unsupported versions, oversized
+// manifests, missing entries, forged sizes and duplicate object mappings.
+// A plain bundle has no authenticated stream: its integrity rests on the
+// per-entry SHA-256 in the manifest, the manifest-last rule and the
+// receiver's whole-bundle hash. It returns only the validated manifest;
+// restore rereads the bundle.
 func VerifyBundle(ctx context.Context, bundlePath, identityFile string) (VerifiedBundle, error) {
 	info, err := os.Stat(bundlePath)
 	if err != nil {
@@ -244,30 +268,11 @@ func VerifyBundle(ctx context.Context, bundlePath, identityFile string) (Verifie
 	if info.Size() > maxBundleBytes {
 		return VerifiedBundle{}, errors.New("bundle exceeds the 8 GiB limit")
 	}
-	if err := requireSecretFile(identityFile, "identityFile"); err != nil {
+	decrypted, closer, err := openPayload(bundlePath, identityFile)
+	if err != nil {
 		return VerifiedBundle{}, err
 	}
-
-	identityReader, err := os.Open(identityFile)
-	if err != nil {
-		return VerifiedBundle{}, fmt.Errorf("open identity: %w", err)
-	}
-	defer identityReader.Close()
-	identities, err := age.ParseIdentities(identityReader)
-	if err != nil {
-		return VerifiedBundle{}, fmt.Errorf("parse identity: %w", err)
-	}
-
-	bundle, err := os.Open(bundlePath)
-	if err != nil {
-		return VerifiedBundle{}, fmt.Errorf("open bundle: %w", err)
-	}
-	defer bundle.Close()
-
-	decrypted, err := age.Decrypt(bundle, identities...)
-	if err != nil {
-		return VerifiedBundle{}, fmt.Errorf("decrypt bundle: %w", err)
-	}
+	defer closer.Close()
 
 	archive := tar.NewReader(decrypted)
 	seen := make(map[string]Entry)
@@ -343,20 +348,8 @@ func VerifyBundle(ctx context.Context, bundlePath, identityFile string) (Verifie
 		return VerifiedBundle{}, errors.New("archive has no manifest")
 	}
 
-	// Read through the age stream to its authenticated end. Anything left
-	// after the tar end markers is unexpected plaintext.
-	buffer := make([]byte, 1)
-	for {
-		read, err := decrypted.Read(buffer)
-		if read > 0 {
-			return VerifiedBundle{}, errors.New("archive has trailing plaintext")
-		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return VerifiedBundle{}, fmt.Errorf("verify age stream: %w", err)
-		}
+	if err := requireCleanEnd(decrypted); err != nil {
+		return VerifiedBundle{}, err
 	}
 
 	if err := validateManifest(manifest); err != nil {
@@ -377,6 +370,84 @@ func VerifyBundle(ctx context.Context, bundlePath, identityFile string) (Verifie
 
 	return VerifiedBundle{Manifest: *manifest}, nil
 }
+
+// openPayload opens a bundle and returns its tar stream: decrypted when the
+// file is age-encrypted, the file itself when it is plain. An encrypted
+// bundle without an identity is an error that says so; a plain bundle
+// ignores identityFile. The caller closes the returned closer.
+func openPayload(bundlePath, identityFile string) (io.Reader, io.Closer, error) {
+	bundle, err := os.Open(bundlePath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open bundle: %w", err)
+	}
+	reader := bufio.NewReader(bundle)
+	head, err := reader.Peek(len(ageMagic))
+	if err != nil && !errors.Is(err, io.EOF) {
+		_ = bundle.Close()
+		return nil, nil, fmt.Errorf("read bundle: %w", err)
+	}
+	if string(head) != ageMagic {
+		return reader, bundle, nil
+	}
+
+	if identityFile == "" {
+		_ = bundle.Close()
+		return nil, nil, errors.New("bundle is age-encrypted: pass --identity-file")
+	}
+	if err := requireSecretFile(identityFile, "identityFile"); err != nil {
+		_ = bundle.Close()
+		return nil, nil, err
+	}
+	identities, err := readIdentities(identityFile)
+	if err != nil {
+		_ = bundle.Close()
+		return nil, nil, fmt.Errorf("parse identity: %w", err)
+	}
+	decrypted, err := age.Decrypt(reader, identities...)
+	if err != nil {
+		_ = bundle.Close()
+		return nil, nil, fmt.Errorf("decrypt bundle: %w", err)
+	}
+	return decrypted, bundle, nil
+}
+
+// requireCleanEnd reads the payload past the tar end markers. For an
+// encrypted bundle this reaches the authenticated end of the age stream;
+// for either format, any byte left over is unexpected trailing data.
+func requireCleanEnd(payload io.Reader) error {
+	buffer := make([]byte, 1)
+	for {
+		read, err := payload.Read(buffer)
+		if read > 0 {
+			return errors.New("archive has trailing data")
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("verify bundle stream: %w", err)
+		}
+	}
+}
+
+// isEncryptedBundle reports whether the file at path is age-encrypted.
+func isEncryptedBundle(path string) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	head := make([]byte, len(ageMagic))
+	read, err := io.ReadFull(file, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	return string(head[:read]) == ageMagic, nil
+}
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
 
 type hashCounter struct {
 	writer io.Writer

@@ -9,6 +9,7 @@ import {
     type BackupRunSummary,
     type MonitorSummary,
 } from "@/lib/api";
+import { backupFileName } from "@/lib/backup-presentation";
 import { prependBeat, type HeartbeatEntry } from "@/lib/heartbeat-log";
 import { subscribeLive } from "@/lib/live-hub";
 import { BackupAgents } from "@/components/BackupAgents";
@@ -303,14 +304,14 @@ export function MonitorDetail({
         return <p className="px-4 py-10 text-sm text-quiet">Loading…</p>;
     }
 
-    async function handleDownload(runId: string) {
+    async function handleDownload(run: BackupRunSummary) {
         try {
             // A single-use ticket URL: the browser streams the bundle to disk
             // itself instead of holding up to 8 GiB in memory.
-            const url = await backupDownloadUrl(runId);
+            const url = await backupDownloadUrl(run.id);
             const anchor = document.createElement("a");
             anchor.href = url;
-            anchor.download = `flatline-backup-${runId}.age`;
+            anchor.download = backupFileName(run);
             anchor.rel = "noreferrer";
             document.body.appendChild(anchor);
             anchor.click();

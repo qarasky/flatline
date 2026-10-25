@@ -93,6 +93,18 @@ async fn start_run(
     total: u64,
     sha256: &str,
 ) -> (StatusCode, Value) {
+    let summary = json!({"databaseCount": 1, "objectCount": 0, "sourceBytes": total});
+    start_run_with_summary(h, token, client_run_id, total, sha256, summary).await
+}
+
+async fn start_run_with_summary(
+    h: &common::Harness,
+    token: &str,
+    client_run_id: &str,
+    total: u64,
+    sha256: &str,
+    summary: Value,
+) -> (StatusCode, Value) {
     // Fixed times: a retry of the same clientRunId must carry the original
     // manifest times, exactly as the Go agent's pending descriptor does.
     send(
@@ -107,11 +119,7 @@ async fn start_run(
                 "exportFinishedAt": "2026-01-01T01:00:00Z",
                 "totalBytes": total,
                 "sha256": sha256,
-                "sourceSummary": {
-                    "databaseCount": 1,
-                    "objectCount": 0,
-                    "sourceBytes": total,
-                },
+                "sourceSummary": summary,
             })),
         ),
     )
@@ -1043,4 +1051,69 @@ async fn download_tickets_are_short_lived_single_use_and_bound() {
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     let (status, _, _) = get_raw(&h, issued["url"].as_str().unwrap()).await;
     assert_eq!(status, 404, "expired tickets are refused");
+}
+
+/// Encryption is optional on the agent. A plain run reports
+/// `encrypted: false` and downloads as `.tar`; a run without the field comes
+/// from an agent that always encrypted, so it stays `.age`.
+#[tokio::test]
+async fn download_names_follow_the_reported_encryption() {
+    let free = FakeFreeSpace::new(RESERVE_BYTES + 256 * 1024 * 1024);
+    let h = harness_with_backups(free, ScriptedFaults::new()).await;
+    let (_, token) = register(&h, "meks").await;
+
+    let cases = [
+        ("plain", Some(false), ".tar"),
+        ("sealed", Some(true), ".age"),
+        ("legacy", None, ".age"),
+    ];
+    for (client_run_id, encrypted, extension) in cases {
+        let data: Vec<u8> = client_run_id.bytes().cycle().take(4096).collect();
+        let mut summary = json!({"databaseCount": 1, "objectCount": 0, "sourceBytes": 4096});
+        if let Some(encrypted) = encrypted {
+            summary["encrypted"] = json!(encrypted);
+        }
+        let (status, started) = start_run_with_summary(
+            &h,
+            &token,
+            client_run_id,
+            data.len() as u64,
+            &digest(&data),
+            summary,
+        )
+        .await;
+        assert_eq!(status, 200, "{started}");
+        let run_id = started["run"]["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            started["run"]["sourceSummary"]["encrypted"],
+            json!(encrypted.unwrap_or(true)),
+            "the stored summary says whether the bundle is encrypted"
+        );
+        let (status, _) = put(&h, &token, &run_id, 0, 0, data.clone()).await;
+        assert_eq!(status, 200);
+        let (status, _) = complete(&h, &token, &run_id).await;
+        assert_eq!(status, 200);
+
+        let ticket_uri = format!("/api/v1/backup-runs/{run_id}/download-ticket");
+        let (_, issued) = send(&h.app, request("POST", &ticket_uri, Some(&h.token), None)).await;
+        let (status, headers, body) = get_raw(&h, issued["url"].as_str().unwrap()).await;
+        assert_eq!(status, 200);
+        assert_eq!(body, data);
+        let disposition = headers["content-disposition"].to_str().unwrap().to_string();
+        assert!(
+            disposition.ends_with(&format!("{extension}\"")),
+            "{client_run_id}: {disposition}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn non_boolean_encrypted_flag_is_rejected() {
+    let free = FakeFreeSpace::new(RESERVE_BYTES + 256 * 1024 * 1024);
+    let h = harness_with_backups(free, ScriptedFaults::new()).await;
+    let (_, token) = register(&h, "meks").await;
+    let summary = json!({"databaseCount": 1, "encrypted": "yes"});
+    let (status, body) =
+        start_run_with_summary(&h, &token, "bad-flag", 10, &digest(b"0123456789"), summary).await;
+    assert_eq!(status, 400, "{body}");
 }

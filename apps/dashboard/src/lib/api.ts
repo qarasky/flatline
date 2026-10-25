@@ -175,7 +175,8 @@ export interface BackupRunSummary {
     totalBytes: number | null;
     receivedBytes: number;
     sha256: string | null;
-    sourceSummary: { databaseCount: number; objectCount: number; sourceBytes: number } | null;
+    /** Agent-reported. `encrypted` is absent on runs from agents that always encrypted. */
+    sourceSummary: { databaseCount: number; objectCount: number; sourceBytes: number; encrypted?: boolean } | null;
     errorCode: string | null;
     archiveVerification: BackupVerification | null;
     restoreVerification: BackupVerification | null;

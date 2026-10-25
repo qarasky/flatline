@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::Error;
 
-/// Maximum accepted encrypted bundle size: 8 GiB.
+/// Maximum accepted bundle size: 8 GiB.
 pub const MAX_BUNDLE_BYTES: i64 = 8 * 1024 * 1024 * 1024;
 
 /// Fixed pilot overdue threshold: 36 hours since registration or the latest
@@ -43,6 +43,16 @@ pub struct Verification {
     pub status: String,
     pub checked_at: String,
     pub summary: String,
+}
+
+/// Whether a stored summary describes an age-encrypted bundle. A run with
+/// no summary, or one written before the flag existed, predates optional
+/// encryption and is encrypted.
+pub fn summary_is_encrypted(summary: Option<&Value>) -> bool {
+    summary
+        .and_then(|value| value.get("encrypted"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
 }
 
 /// The run shape shared with the Go agent and the dashboard.
@@ -123,7 +133,9 @@ pub(crate) fn valid_sha256(value: &str) -> bool {
 }
 
 /// Validate and normalize a source summary. Only the three contracted
-/// counters are stored; unknown fields are ignored rather than trusted.
+/// counters and the `encrypted` flag are stored; unknown fields are ignored
+/// rather than trusted. An absent flag comes from an agent that predates
+/// optional encryption and always encrypted, so it normalizes to `true`.
 fn normalize_summary(summary: Option<Value>) -> Result<Option<String>, Error> {
     let Some(value) = summary else {
         return Ok(None);
@@ -143,10 +155,18 @@ fn normalize_summary(summary: Option<Value>) -> Result<Option<String>, Error> {
         }
     };
 
+    let encrypted = match object.get("encrypted") {
+        None => true,
+        Some(value) => value.as_bool().ok_or_else(|| {
+            Error::BadRequest("sourceSummary.encrypted must be a boolean".to_string())
+        })?,
+    };
+
     let normalized = json!({
         "databaseCount": read("databaseCount")?,
         "objectCount": read("objectCount")?,
         "sourceBytes": read("sourceBytes")?,
+        "encrypted": encrypted,
     });
     Ok(Some(normalized.to_string()))
 }
@@ -320,7 +340,7 @@ mod tests {
         assert_eq!(validated.export_finished_at, "2026-10-19T23:30:00.000Z");
         assert_eq!(
             validated.source_summary.as_deref(),
-            Some(r#"{"databaseCount":1,"objectCount":0,"sourceBytes":0}"#)
+            Some(r#"{"databaseCount":1,"encrypted":true,"objectCount":0,"sourceBytes":0}"#)
         );
     }
 

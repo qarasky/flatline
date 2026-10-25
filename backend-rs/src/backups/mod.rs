@@ -547,7 +547,15 @@ impl Backups {
         Ok(BundleDownload {
             file,
             length,
-            filename: format!("flatline-backup-{}.age", run.id),
+            filename: format!(
+                "flatline-backup-{}.{}",
+                run.id,
+                if runs::summary_is_encrypted(run.source_summary.as_ref()) {
+                    "age"
+                } else {
+                    "tar"
+                }
+            ),
         })
     }
 

@@ -11,7 +11,7 @@ for the shape of the system, then go to whichever document matches your task.
 | [architecture.md](architecture.md)             | Understanding how the pieces fit, how data is stored and retained, and how live updates work.                |
 | [api.md](api.md)                               | Calling Flatline from a script, an integration or an LLM agent.                                              |
 | [agent.md](agent.md)                           | Installing, configuring, updating or debugging the `superboard` host agent.                                  |
-| [backup-agent.md](backup-agent.md)             | Named encrypted backup agents: configuration, scheduling, offline verify and restore.                        |
+| [backup-agent.md](backup-agent.md)             | Named backup agents (encryption optional): configuration, scheduling, offline verify and restore.            |
 | [superboard.md](superboard.md)                 | Changing or explaining the wall board: card anatomy, scopes, history, links.                                 |
 | [dashboard.md](dashboard.md)                   | Working on the operator UI: routes, panels, groups, monitor types.                                           |
 | [dashboard-motion.md](dashboard-motion.md)     | Adding or changing animation in the operator UI.                                                             |

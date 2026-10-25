@@ -569,6 +569,10 @@
                             "sourceBytes": {
                                 "type": "integer",
                                 "minimum": 0
+                            },
+                            "encrypted": {
+                                "type": "boolean",
+                                "description": "Whether the bundle is age-encrypted. Absent means true (agents before optional encryption always encrypted)."
                             }
                         }
                     }
@@ -3335,7 +3339,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Encrypted bundle",
+                        "description": "Bundle: age-encrypted (`.age`) or plain tar (`.tar`), per the run's `sourceSummary.encrypted`",
                         "content": {
                             "application/octet-stream": {}
                         }
@@ -3349,7 +3353,7 @@
         "/api/v1/backup-runs/{id}/download": {
             "get": {
                 "summary": "Download a completed bundle",
-                "description": "Operator only. Streams the retained encrypted bundle as an attachment with `Cache-Control: no-store`. The URL carries no credential; use the operator Authorization header. Incomplete, failed, expired and pruned runs are not downloadable.",
+                "description": "Operator only. Streams the retained bundle as an attachment with `Cache-Control: no-store`. The URL carries no credential; use the operator Authorization header. Incomplete, failed, expired and pruned runs are not downloadable.",
                 "parameters": [
                     {
                         "name": "id",
@@ -3363,7 +3367,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Encrypted bundle",
+                        "description": "Bundle: age-encrypted (`.age`) or plain tar (`.tar`), per the run's `sourceSummary.encrypted`",
                         "content": {
                             "application/octet-stream": {
                                 "schema": {

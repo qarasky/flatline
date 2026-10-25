@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { backupHealth, restoreLabel, verificationLabel } from "../src/lib/backup-presentation.ts";
+import {
+    backupFileName,
+    backupHealth,
+    backupIsEncrypted,
+    backupSourceSummary,
+    restoreLabel,
+    verificationLabel,
+} from "../src/lib/backup-presentation.ts";
 
 function run(overrides = {}) {
     return {
@@ -136,4 +143,27 @@ test("downloads use a single-use ticket URL, never a buffered blob", async () =>
     assert.equal(seen.headers.Authorization, "Bearer test-token");
     assert.match(url, /\/api\/v1\/backup-downloads\/fbd_once$/);
     assert.ok(!url.includes("test-token"), "the operator token never enters the URL");
+});
+
+test("encryption is read from the run summary; absent means an older, always-encrypting agent", () => {
+    const plain = run({ sourceSummary: { databaseCount: 1, objectCount: 2, sourceBytes: 1024, encrypted: false } });
+    const sealed = run({ sourceSummary: { databaseCount: 1, objectCount: 2, sourceBytes: 1024, encrypted: true } });
+    const legacy = run();
+    assert.equal(backupIsEncrypted(plain), false);
+    assert.equal(backupIsEncrypted(sealed), true);
+    assert.equal(backupIsEncrypted(legacy), true);
+    assert.equal(backupIsEncrypted(run({ sourceSummary: null })), true);
+});
+
+test("download names match the bundle format", () => {
+    const plain = run({ sourceSummary: { databaseCount: 1, objectCount: 0, sourceBytes: 1, encrypted: false } });
+    assert.equal(backupFileName(plain), "flatline-backup-run-1.tar");
+    assert.equal(backupFileName(run()), "flatline-backup-run-1.age");
+});
+
+test("only encrypted runs are marked: plain is the default", () => {
+    const plain = run({ sourceSummary: { databaseCount: 1, objectCount: 2, sourceBytes: 1024, encrypted: false } });
+    const sealed = run({ sourceSummary: { databaseCount: 1, objectCount: 2, sourceBytes: 1024, encrypted: true } });
+    assert.doesNotMatch(backupSourceSummary(plain), /encrypted/);
+    assert.match(backupSourceSummary(sealed), / · encrypted$/);
 });
