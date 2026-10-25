@@ -648,6 +648,7 @@ async fn reconciliation_without_storage_does_not_block_boot() {
         .insert_run_metadata_at(
             &agent.id,
             StartRun {
+                agent_version: None,
                 client_run_id: "active-without-storage".to_string(),
                 export_started_at: (now - chrono::Duration::minutes(5)).to_rfc3339(),
                 export_finished_at: Some(now.to_rfc3339()),

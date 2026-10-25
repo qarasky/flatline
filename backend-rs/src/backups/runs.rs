@@ -87,6 +87,59 @@ pub struct StartRun {
     pub total_bytes: Option<i64>,
     pub sha256: Option<String>,
     pub source_summary: Option<Value>,
+    /// Version of the agent sending the start. Metadata only: recorded on
+    /// the agent row, never compared when a start is retried.
+    #[serde(default)]
+    pub agent_version: Option<String>,
+}
+
+/// Longest accepted agent version string.
+pub const MAX_AGENT_VERSION: usize = 32;
+
+/// Accept `MAJOR.MINOR.PATCH` with an optional `-pre` or `+build` suffix.
+pub fn validate_agent_version(version: &str) -> Result<(), Error> {
+    let invalid = || {
+        Error::BadRequest(
+            "agentVersion must look like 1.2.3 (optionally -pre or +build)".to_string(),
+        )
+    };
+    if version.is_empty() || version.len() > MAX_AGENT_VERSION {
+        return Err(invalid());
+    }
+    let (core, suffix) = match version.find(['-', '+']) {
+        Some(index) => (&version[..index], Some(&version[index + 1..])),
+        None => (version, None),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err(invalid());
+    }
+    if let Some(suffix) = suffix
+        && (suffix.is_empty()
+            || !suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-'))
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// Accept a bounded update-status code: `ok` or a snake_case error code.
+pub fn validate_update_status(status: &str) -> Result<(), Error> {
+    if status.is_empty()
+        || status.len() > 40
+        || !status.bytes().all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+    {
+        return Err(Error::BadRequest(
+            "updateStatus must be 1-40 lowercase letters or underscores".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Fully validated values, in canonical storage form.
@@ -325,6 +378,7 @@ mod tests {
 
     fn start() -> StartRun {
         StartRun {
+            agent_version: None,
             client_run_id: "run-1".to_string(),
             export_started_at: "2026-10-19T23:00:00Z".to_string(),
             export_finished_at: Some("2026-10-19T23:30:00Z".to_string()),
