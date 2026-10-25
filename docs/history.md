@@ -33,7 +33,8 @@ contributor-policy and CI files were removed too — this is a solo fork that
 merges straight to `master`, so `.github/` now holds only
 `copilot-instructions.md`, `SECURITY.md` and `opencode-models.json` (the
 upstream workflows, issue templates, `AGENTS.md`, `CLAUDE.md`, Dependabot and
-funding config were all deleted). The underlying advice still applies: run the
+funding config were all deleted; a fork-specific `AGENTS.md`, imported by
+`CLAUDE.md`, was added on 2026-10-25). The underlying advice still applies: run the
 local lint and tests, because nothing enforces them any more.
 
 | Area          | Upstream Uptime Kuma                                   | Flatline                                                                                                                                                                    |
@@ -45,6 +46,7 @@ local lint and tests, because nothing enforces them any more.
 | API           | Read-only badges, basic-auth + API-key                 | **REST API v1** with bearer-token auth and a self-describing OpenAPI document; agentic provisioning endpoints                                                               |
 | Monitor types | 29 advertised types                                    | `push`, `http`, `https`, `ping`, `group` only; the rest were not ported                                                                                                     |
 | Telemetry     | None                                                   | Go-agent push pipeline, Superboard, threshold alerts, two-tier retention                                                                                                    |
+| Backups       | None                                                   | Named Go backup agents (Postgres + S3/Garage, optional encryption, offline restore), self-updating, with backup state on the Superboard                                     |
 
 Additions that were later retired are listed under "Retired things".
 

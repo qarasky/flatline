@@ -29,10 +29,18 @@ per-container one-shot CPU/memory stats, SMART disk health, agent self-update
 
 ## Agent & fleet
 
-| Item                                             | Rationale                                                                                                                                          |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Docker event subscriptions**                   | The agent polls the Docker API; it does not subscribe to daemon events, so container start/stop/die transitions are only observed on the next poll |
-| **Agent 1.8.0 rollout to the rest of the fleet** | The image ships 1.8.0; hosts on 1.6.1 need one manual `install.sh --update` hop before self-update can take over (operational, not a code gap)     |
+| Item                           | Rationale                                                                                                                                          |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Docker event subscriptions** | The agent polls the Docker API; it does not subscribe to daemon events, so container start/stop/die transitions are only observed on the next poll |
+
+## Backups
+
+| Item                              | Rationale                                                                                                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Off-site copy**                 | Client bundles and the nightly database live on the office RAID1 mirror only; a fire, theft or a two-disk failure loses them. Kore is a candidate destination                         |
+| **Application config in bundles** | Bundles carry Postgres and S3 data, not compose files, `.env` secrets or Garage configuration, so a full host rebuild needs those from elsewhere                                      |
+| **Scheduled restore drills**      | Restores are proven by hand on office (operations runbook); nothing re-tests them periodically                                                                                        |
+| **Self-update review leftovers**  | Deferred minors from the 2026-10-25 review: the lock wait ignores SIGTERM, no size cap on release downloads, staging dir shared with an instance named `update`, opt-out checked late |
 
 ## Monitors, tags & API surface
 

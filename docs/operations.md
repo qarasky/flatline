@@ -52,6 +52,18 @@ report that the stack itself is down. Something outside has to watch it:
 
 ## Backups
 
+Two different things are called backups here:
+
+| What                        | Where (office)                                      | By                                                                  |
+| --------------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
+| Flatline's own database     | `/mnt/mirror/flatline-nightly` (14 daily, 8 weekly) | `flatline-backup.timer`, 03:30 UTC (below)                          |
+| Client data (Postgres, S3)  | `/mnt/mirror/flatline-backups` (7 per project)      | Backup agents on the client hosts ([backup-agent](backup-agent.md)) |
+| Pre-release database copies | `/home/office/flatline/backups/` (single disk)      | The release procedure ([deployment](deployment.md))                 |
+
+Everything is in the office building: the RAID1 mirror survives a disk, not a
+fire or theft. No off-site copy is configured yet (`OFFSITE_TARGET` below
+covers the nightly database only).
+
 The database is a single SQLite file. Copy it with the **backup API**, never with
 `cp` while the stack is running (a live copy can catch a torn write).
 
@@ -174,10 +186,37 @@ Rules that keep this manageable:
   `/api/backup/v1`, a push-agent token only opens its push route and
   `/agent/*`.
 
+### Restore test for a backup agent
+
+Prove a restore before enabling an agent's daily timer, and again after a
+bundle-format change. Run it on office against the stored bundle, into scratch
+containers only; never into the client's services.
+
+1. Start a scratch `postgres:16` (`POSTGRES_HOST_AUTH_METHOD=trust`) and an
+   empty database per source database, and a scratch Garage (single node,
+   `replication_factor = 1`, layout assigned) with an empty bucket per source
+   bucket and a read/write key; keep files under `/mnt/mirror/<scratch dir>`.
+2. Copy `flatline-backup` out of the running image
+   (`/app/backup-agent/flatline-backup-linux-amd64`).
+3. Write a `restore-target.json` mapping each source database and bucket to its
+   scratch target ([backup-agent](backup-agent.md#recovery)), then run
+   `restore` and `compare` against
+   `/mnt/mirror/flatline-backups/agents/<agent>/<run>/bundle.age`.
+4. Record the result so the dashboard shows it:
+   `POST /api/v1/backup-runs/{runId}/verification` with
+   `{"kind":"restore","status":"passed","checkedAt":…,"summary":…}`.
+5. Remove the scratch containers, their data and images.
+
+The 2026-10-25 test of meks restored `sem` (19 objects) and `modernization`
+(1,375 objects) this way; it also found the restore bug fixed in 0.3.1.
+
 ## Updating the agent fleet
 
-The server ships the agent, agents pull it. Details and the manual first hop are
-in [deployment](deployment.md#agent-versions) and [agent](agent.md).
+Both agents update themselves from the image. The server ships the telemetry
+agent and agents pull it; details and the manual first hop are in
+[deployment](deployment.md#agent-versions) and [agent](agent.md). Backup agents
+check daily too ([backup-agent](backup-agent.md#self-update)); a host on a
+build older than 0.3.0 needs one manual install.
 
 ```bash
 curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update

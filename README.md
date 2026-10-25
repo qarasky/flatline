@@ -18,17 +18,19 @@ removed.
 
 ## What it is
 
-Three pieces, one origin:
+Four pieces, one origin:
 
-| Piece      | Dir               | What                                                                                                 |
-| ---------- | ----------------- | ---------------------------------------------------------------------------------------------------- |
-| Backend    | `backend-rs/`     | Rust service: the check engine, REST API, storage, alerts, and the built web app.                    |
-| Dashboard  | `apps/dashboard/` | React/Vite app: operator dashboard, Superboard, public status pages.                                 |
-| Host agent | `superboard/`     | Single static Go binary pushed to each monitored server; sends telemetry, never accepts connections. |
+| Piece        | Dir               | What                                                                                                         |
+| ------------ | ----------------- | ------------------------------------------------------------------------------------------------------------ |
+| Backend      | `backend-rs/`     | Rust service: the check engine, REST API, storage, alerts, and the built web app.                            |
+| Dashboard    | `apps/dashboard/` | React/Vite app: operator dashboard, Superboard, public status pages.                                         |
+| Host agent   | `superboard/`     | Single static Go binary pushed to each monitored server; sends telemetry, never accepts connections.         |
+| Backup agent | `backup-agent/`   | Separate Go binary on servers whose data you back up: exports Postgres and S3/Garage, uploads to the server. |
 
 `./dev.sh` runs all three locally, plus a mock fleet so the board has something
 to show without real machines. Production is one container: the backend serves
-the API, the dashboard, the status pages and the agent downloads on `:3001`.
+the API, the dashboard, the status pages and both agents' downloads on `:3001`.
+Both agents update themselves from the builds the server ships.
 
 ## What you can do
 
@@ -50,6 +52,12 @@ the API, the dashboard, the status pages and the agent downloads on `:3001`.
 - **See agent trouble at a glance**: version, dropped samples, failed pushes and
   per-collector error counts on the card, with one right-click action to clear
   the warnings you have seen.
+- **Back up client servers**: named backup agents export each project's Postgres
+  databases and S3/Garage buckets daily to the Flatline server's storage, with
+  optional age encryption, resumable uploads, retention and offline
+  verify/restore. The Superboard shows each server's backup-agent version and a
+  live "last backup … ago" line per project, and flags a server whose backup is
+  overdue or failed.
 - **Serve client status pages** with password gates, per-page logos and accents
   (`/status/:slug`, plus host-routed client domains). Serving and unlocking them
   is fully API-driven; creating or editing a page is currently a database
@@ -93,6 +101,12 @@ downloads. Data lives in `./data`; on first run the operator token is written to
 `./data/initial-token.txt` (0600) — sign in with it. There is no account setup
 and no seed script.
 
+Backup storage is opt-in: to accept uploads from backup agents, provision a
+storage directory and add `-f docker/compose.backups.yaml` to every
+`docker compose up` (see
+[docs/deployment.md](docs/deployment.md#backup-storage)). Without it, backup
+uploads answer 503 and everything else works.
+
 ### Without Docker
 
 ```bash
@@ -110,8 +124,9 @@ git pull --ff-only
 docker compose up -d --build
 ```
 
-Back up the database first. Agents update themselves from the release the
-server ships; see [docs/agent.md](docs/agent.md). The office deployment is
+Back up the database first. Both agents update themselves from the release the
+server ships; see [docs/agent.md](docs/agent.md) and
+[docs/backup-agent.md](docs/backup-agent.md#self-update). The office deployment is
 documented in [docs/deployment.md](docs/deployment.md).
 
 ## Sign in and tokens

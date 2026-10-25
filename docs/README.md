@@ -17,7 +17,7 @@ for the shape of the system, then go to whichever document matches your task.
 | [dashboard-motion.md](dashboard-motion.md)     | Adding or changing animation in the operator UI.                                                             |
 | [status-pages.md](status-pages.md)             | Publishing, theming or password-gating a public status page.                                                 |
 | [deployment.md](deployment.md)                 | Shipping a release: the office host, the image, rollout, the fleet inventory.                                |
-| [operations.md](operations.md)                 | Backing up, rolling back, rotating tokens, and diagnosing a broken instance.                                 |
+| [operations.md](operations.md)                 | Backing up, restore-testing backup agents, rolling back, rotating tokens, diagnosing a broken instance.      |
 | [development.md](development.md)               | Running the stack locally, tests, builds, repository layout.                                                 |
 | [provisioning.md](provisioning.md)             | AI-assisted agent deployment, websites, groups and notification setup. Also served at `/add-push-server.md`. |
 | [roadmap.md](roadmap.md)                       | Checking what is deliberately not implemented.                                                               |

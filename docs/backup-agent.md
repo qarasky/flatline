@@ -194,6 +194,27 @@ show it.
   hand once and re-run `install --config …` for each instance so the update
   units are written; from then on the host updates itself.
 
+## What a bundle contains
+
+| Included                                                 | Not included                                                       |
+| -------------------------------------------------------- | ------------------------------------------------------------------ |
+| Each configured Postgres database (`pg_dump -Fc`)        | Postgres roles and other globals, unless `includeGlobals: true`    |
+| Every object of each configured S3/Garage bucket, by key | Garage itself: `garage.toml`, layout, bucket settings, access keys |
+| A manifest with per-entry size and SHA-256, table counts | The application: compose files, `.env` secrets, container images   |
+
+A restore therefore needs a running Postgres and S3 service to restore into;
+rebuilding a host also needs its application configuration from elsewhere.
+
+## Where bundles are stored
+
+On the receiving Flatline server, under `FLATLINE_BACKUP_DIR` (office:
+`/mnt/mirror/flatline-backups`, the RAID1 mirror):
+`agents/<agent-id>/<run-id>/bundle.age`, owned by the service user, mode 0700
+directories. The file is named `bundle.age` whatever its format; downloads
+are named `.tar` or `.age` from the run's `encrypted` flag. The server keeps
+`retentionCount` (default seven) completed runs per agent plus the latest
+restore-tested and archive-verified runs, and deletes the rest.
+
 ## Consistency of one bundle
 
 A bundle is not a single point-in-time snapshot of the whole application:

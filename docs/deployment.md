@@ -171,14 +171,19 @@ enough. The Node-era rollback path no longer exists — see
 
 ## The fleet
 
-Eight monitors push telemetry; the rest are HTTP/ICMP checks and groups.
+Six monitors push telemetry (33 monitors in all on 2026-10-25); the rest are
+HTTP/ICMP checks and groups. `office-mac-server` and `home-rpi` are no longer
+monitored.
 
 | Host                                                                           | Role                                              |
 | ------------------------------------------------------------------------------ | ------------------------------------------------- |
 | `office-server`                                                                | The office machine itself (also runs this stack). |
-| `office-mac-server`                                                            | A Mac used as a server.                           |
-| `home-rpi`                                                                     | Home Raspberry Pi.                                |
 | `cmn.kz`, `aiel-qorgan.kz`, `meks-zhkh`, `nationalbusiness.kz`, `zhasalash.kz` | Client hosts.                                     |
+
+Backup agents run on `meks-zhkh` only: `modernization` and `zhkh`, linked to its
+monitor, daily at 02:00 and 02:30 Asia/Almaty, encryption off, restore proven
+on 2026-10-25. Bundles are kept on the office mirror (seven completed per
+project, plus the latest restore-tested and archive-verified ones).
 
 Monitor ids, group membership and notification links live in the dashboard; the
 provisioning history for the client hosts is in the cabinet record, not here.
@@ -192,9 +197,8 @@ still on 1.6.1 needs one manual hop, per host:
 curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
 ```
 
-Hosts already on 1.7.0 or newer pick up 1.8.1 themselves. `home-rpi` and
-`office-mac-server` report no agent version at all and need the same one-liner
-to join.
+Hosts already on 1.7.0 or newer pick up 1.8.1 themselves. Every monitored host
+was on 1.8.0 when 1.8.1 shipped, so the whole fleet updates on its own.
 
 1.8.0 carries the G1 fix (a restart during self-update could kill the helper
 before it replaced the binary) and the audit's resource-cap fixes. Hosts on
@@ -211,6 +215,9 @@ Hosts that set `buffer_max_bytes` explicitly keep their value.
 
 The backup agent (`flatline-backup`) is versioned separately: **0.3.0** is the
 first build that updates itself (see [backup agent](backup-agent.md#self-update)).
+The office image ships **0.3.1** (restore reuses one S3 client per target);
+`master` carries 0.3.2 (clearer self-update log line), shipped with the next
+deploy.
 The image ships it under `/app/backup-agent` and serves it to backup agents at
 `/api/backup/v1/release/*`; hosts check daily and install newer builds on their
 own. A host on 0.2.0 needs one manual hop: install 0.3.0 from the image (verify

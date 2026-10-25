@@ -1,6 +1,6 @@
 # Architecture
 
-Flatline is three programs and one database.
+Flatline is four programs and one database.
 
 | Process              | Language     | Runs on                           | Job                                                                                                                    |
 | -------------------- | ------------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -48,7 +48,9 @@ agent ──POST /api/push──┘   (outbound only, per-monitor push token)
 SQLite, opened and migrated at startup (`sqlx::migrate!`, migrations in
 `backend-rs/migrations/`). Backup metadata is stored in the same SQLite
 database; bundles (plain or encrypted) live under `FLATLINE_BACKUP_DIR`, never in the
-application data directory. Migrations are additive and ordered; the database
+application data directory. Both agents update themselves from builds baked
+into the image: the telemetry agent from `FLATLINE_AGENT_DIR` (`/agent/*`), the
+backup agent from `FLATLINE_BACKUP_AGENT_DIR` (`/api/backup/v1/release/*`). Migrations are additive and ordered; the database
 records which have been applied, and the backend refuses to start if the
 database contains a migration it does not know — so a code rollback also needs
 the matching database (see [operations](operations.md)).

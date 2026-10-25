@@ -80,6 +80,17 @@ record: [docs/deployment.md](docs/deployment.md).
   fleet-wide burst of push failures or dropped samples usually means the
   server was down: check `journalctl --list-boots` on office first. Cloudflare
   `530 / error 1033` from agents means the tunnel had no connector.
+- **A deploy is a fleet rollout.** The image carries both agents' builds; hosts
+  self-update daily to the image's telemetry agent (`/agent/*`) and backup agent
+  (`/api/backup/v1/release/*`). Ship agent bumps deliberately.
+- **Backups on office:** client backup bundles live on the RAID1 mirror at
+  `/mnt/mirror/flatline-backups` (`/app/backups` in the container). Flatline's
+  own database is backed up nightly by `flatline-backup.timer` to
+  `/mnt/mirror/flatline-nightly`. On office, `/usr/local/sbin/flatline-backup`
+  is that nightly script, not the backup agent.
+- **Backup agents in use:** meks runs `modernization` and `zhkh` (daily 02:00
+  and 02:30 Asia/Almaty, self-update on). Prove a restore before enabling a new
+  agent's timer; the scratch-container procedure is in `docs/operations.md`.
 - Inspect the production database read-only:
   `sqlite3.connect("file:/home/office/flatline/data-rust/flatline.db?mode=ro", uri=True)`
   via `sudo python3` on office (no `sqlite3` CLI there).
