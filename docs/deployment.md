@@ -227,14 +227,15 @@ minutes and only real outages page.
 
 ## Release log
 
-| Date       | What shipped                                                                                                                                                                           |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-10-13 | Rust backend cutover (parity-verified against the Node backend, then the Node backend was retired).                                                                                    |
-| 2026-10-14 | Performance/stability follow-up fixes; agent 1.6.0/1.6.1 rolled to the fleet.                                                                                                          |
-| 2026-10-18 | Node backend removed from the repository; Superboard card redesign; hosted-website links; provider logos; agent-warning acknowledgements; agent 1.7.0 with self-update.                |
-| 2026-10-21 | October performance and reliability audit (storage, engine, API, agent, dashboard findings) merged; backup agent integrated; agent 1.8.0.                                              |
-| 2026-10-21 | Main board redesign (attention section, heartbeat strips, detail pane, motion) and the `heartbeat-strips` endpoint. Rollback tag `office-prev-20261021-144515`.                        |
-| 2026-10-25 | Backup storage enabled; optional backup encryption (backup agent 0.2.0); QR sign-in; nightly DB backup timer installed. Agent stays 1.8.0. Rollback tag `office-prev-20261025-054357`. |
+| Date       | What shipped                                                                                                                                                                                                       |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-13 | Rust backend cutover (parity-verified against the Node backend, then the Node backend was retired).                                                                                                                |
+| 2026-10-14 | Performance/stability follow-up fixes; agent 1.6.0/1.6.1 rolled to the fleet.                                                                                                                                      |
+| 2026-10-18 | Node backend removed from the repository; Superboard card redesign; hosted-website links; provider logos; agent-warning acknowledgements; agent 1.7.0 with self-update.                                            |
+| 2026-10-21 | October performance and reliability audit (storage, engine, API, agent, dashboard findings) merged; backup agent integrated; agent 1.8.0.                                                                          |
+| 2026-10-21 | Main board redesign (attention section, heartbeat strips, detail pane, motion) and the `heartbeat-strips` endpoint. Rollback tag `office-prev-20261021-144515`.                                                    |
+| 2026-10-25 | Backup storage enabled; optional backup encryption (backup agent 0.2.0); QR sign-in; nightly DB backup timer installed. Agent stays 1.8.0. Rollback tag `office-prev-20261025-054357`.                             |
+| 2026-10-25 | Agent 1.8.1 (256 MiB buffer) to the fleet via self-update; backup-agent self-update (0.3.0, migration 0015) and Superboard backup lines; meks hopped to 0.3.0 by hand. Rollback tag `office-prev-20261025-073124`. |
 
 Each release is also recorded in [history](history.md) with the defects it fixed.
 
