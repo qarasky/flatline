@@ -48,10 +48,12 @@ const DefaultIntervalSeconds = 1
 // DefaultBufferDir is where undelivered samples wait across restarts.
 const DefaultBufferDir = "/var/lib/superboard/buffer"
 
-// DefaultBufferMaxBytes caps the buffer at 32 MiB: at 1Hz and ~1.5KB per
-// sample that is many hours of telemetry — long enough for any realistic
-// outage, small enough to be harmless on a tiny VPS disk.
-const DefaultBufferMaxBytes = 32 << 20
+// DefaultBufferMaxBytes caps the buffer at 256 MiB. Real samples run ~7.5KB
+// (containers and update lists included), so at 1Hz that is roughly ten
+// hours of telemetry — enough to ride out a server-side power cut. The old
+// 32 MiB cap held ~74 minutes and lost most of a 5-hour outage. Still small
+// enough to be harmless on a tiny VPS disk.
+const DefaultBufferMaxBytes = 256 << 20
 
 // bufferDir resolves the configured buffer directory, applying the default.
 func (c *Config) bufferDir() string {

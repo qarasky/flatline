@@ -182,14 +182,14 @@ provisioning history for the client hosts is in the cabinet record, not here.
 
 ### Agent versions
 
-The current release is **1.8.0**. Self-update exists only from 1.7.0, so a host
+The current release is **1.8.1**. Self-update exists only from 1.7.0, so a host
 still on 1.6.1 needs one manual hop, per host:
 
 ```bash
 curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
 ```
 
-Hosts already on 1.7.0 or newer pick up 1.8.0 themselves. `home-rpi` and
+Hosts already on 1.7.0 or newer pick up 1.8.1 themselves. `home-rpi` and
 `office-mac-server` report no agent version at all and need the same one-liner
 to join.
 
@@ -198,6 +198,11 @@ before it replaced the binary) and the audit's resource-cap fixes. Hosts on
 1.7.0 take this one update with their old helper, which is still exposed to
 G1; from 1.8.0 on, the agent rewrites its unit on first start and later updates
 are safe.
+
+1.8.1 raises the default `buffer_max_bytes` from 32 MiB to 256 MiB. At 1Hz and
+~7.5KB per sample, 32 MiB held ~74 minutes, so the office server's 5-hour power
+cut on 2026-10-23 cost each client host 5–16k samples. 256 MiB covers ~10 hours.
+Hosts that set `buffer_max_bytes` explicitly keep their value.
 
 ### Host-down noise
 

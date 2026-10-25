@@ -30,7 +30,7 @@ Order follows the monitor tree: parent group `weight`, then the monitor's own
 ```
 ┌───────────────────────────────────────────────────────────────┐
 │ ⬢ web-01 ↗                            ● Host up               │
-│   uptime 11d · agent 1.8.0            Updated 2s ago          │
+│   uptime 11d · agent 1.8.1            Updated 2s ago          │
 │                                                               │
 │ Security Updates: 6 · reboot required      ← flags line       │
 │                                                               │
