@@ -10,10 +10,11 @@ how a release goes out, and how to get back.
 | ------------------ | ------------------------------------------------------------------------------------------------------- |
 | Public origin      | `https://uptime.mediaboost.kz`                                                                          |
 | Tunnel target      | `http://localhost:3001` on the office host                                                              |
-| Compose file       | `/home/office/flatline/compose.rust.yaml` (repository copy: `docker/compose.rust.yaml`)                 |
+| Compose files      | `/home/office/flatline/compose.rust.yaml` + `/home/office/flatline-src/docker/compose.backups.yaml`     |
 | Environment        | `/home/office/flatline/.env` — `FLATLINE_PORT=3001`, `FLATLINE_PUBLIC_URL=https://uptime.mediaboost.kz` |
 | Data               | `/home/office/flatline/data-rust/flatline.db` (plus `initial-token.txt`, `status-page-secret`)          |
-| Backups            | `/home/office/flatline/backups/` (nightly copies in `backups/nightly/`)                                 |
+| Database backups   | `/home/office/flatline/backups/` (nightly copies in `backups/nightly/`)                                 |
+| Backup storage     | `/mnt/mirror/flatline-backups` (RAID1 `md0`) → `/app/backups`; client bundles from backup agents        |
 | Source tree        | `/home/office/flatline-src` — the tree the image is built from                                          |
 | Provisioning token | `/home/office/flatline/provisioning-token.txt` (0600, root)                                             |
 | Stack name         | `flatline-rust` (container `flatline-rust-flatline-1`)                                                  |
@@ -108,7 +109,8 @@ sudo chmod 600 "$BM"
 
 # 4. Promote and recreate (only once the backup printed ok).
 sudo docker tag artchsh/flatline-rust:office-new artchsh/flatline-rust:office-live
-cd /home/office/flatline && sudo docker compose -f compose.rust.yaml up -d
+cd /home/office/flatline && sudo docker compose -f compose.rust.yaml \
+  -f /home/office/flatline-src/docker/compose.backups.yaml up -d
 echo "rollback tag: office-prev-$REL  backup: $BM"
 ```
 
@@ -155,7 +157,8 @@ go back with the code.
 ```bash
 sudo docker tag artchsh/flatline-rust:office-prev-<REL> artchsh/flatline-rust:office-live
 # stop the stack, restore the backup over data-rust/flatline.db, then:
-sudo docker compose -f compose.rust.yaml up -d
+cd /home/office/flatline && sudo docker compose -f compose.rust.yaml \
+  -f /home/office/flatline-src/docker/compose.backups.yaml up -d
 ```
 
 Restore the pre-release backup (`backups/pre-<REL>.db`, same timestamp as the
@@ -238,9 +241,16 @@ Each release is also recorded in [history](history.md) with the defects it fixed
 - The old `uptime-kuma` container is stopped but not removed, and its data
   directory is untouched. It is no longer a rollback path.
 
-## Backup storage (opt-in)
+## Backup storage
 
-Named backup agents need a dedicated mount, separate from `data-rust/`:
+**Enabled on the office host since 2026-10-25.** Every `docker compose ... up`
+there must pass both `compose.rust.yaml` and `compose.backups.yaml`: with the
+first file alone the container is recreated without the backup mount and
+uploads answer 503. `ps`, `logs` and `down` work with either form (same
+project name).
+
+Provisioning a new host (already done on office). Named backup agents need a
+dedicated mount, separate from `data-rust/`:
 
 ```bash
 sudo install -d -m 0700 /mnt/mirror/flatline-backups
