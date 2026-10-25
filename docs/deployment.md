@@ -207,6 +207,16 @@ are safe.
 cut on 2026-10-23 cost each client host 5–16k samples. 256 MiB covers ~10 hours.
 Hosts that set `buffer_max_bytes` explicitly keep their value.
 
+### Backup agent versions
+
+The backup agent (`flatline-backup`) is versioned separately: **0.3.0** is the
+first build that updates itself (see [backup agent](backup-agent.md#self-update)).
+The image ships it under `/app/backup-agent` and serves it to backup agents at
+`/api/backup/v1/release/*`; hosts check daily and install newer builds on their
+own. A host on 0.2.0 needs one manual hop: install 0.3.0 from the image (verify
+it against `sha256sums-backup`) and re-run `flatline-backup install --config …`
+for each instance so the self-update units are written.
+
 ### Host-down noise
 
 Agent hosts use `maxretries: 2` with `retryInterval: 180`. With `maxretries: 0`,

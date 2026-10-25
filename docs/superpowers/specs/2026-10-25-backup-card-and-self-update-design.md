@@ -1,6 +1,6 @@
 # Backup status on Superboard cards, and backup-agent self-update
 
-Date: 2026-10-25. Status: approved by the operator on 2026-10-25.
+Date: 2026-10-25. Status: approved by the operator on 2026-10-25; implemented on `feature/backup-card-self-update` (plan `docs/superpowers/plans/2026-10-25-backup-card-and-self-update.md`).
 
 ## Intent
 

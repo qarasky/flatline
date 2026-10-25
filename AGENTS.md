@@ -46,6 +46,9 @@ Do not run `cargo fmt` across the tree: it is not uniformly `rustfmt`-formatted.
   newer `version` in `superboard/main.go`. Bump it (and the version examples in
   `docs/agent.md`, `docs/superboard.md`, `docs/deployment.md` and the mock
   agent) whenever agent code changes.
+- **The backup agent has its own version line.** `const version` in
+  `backup-agent/main.go` (`0.x`) is separate from the telemetry agent's; bump it
+  whenever backup-agent code changes, or hosts never self-update to it.
 - **New agent config keys** get a default in `superboard/config.go` and a row
   in `docs/agent.md`.
 - **API routes** are registered in `backend-rs/src/api/mod.rs` and documented
