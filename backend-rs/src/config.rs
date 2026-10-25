@@ -18,6 +18,10 @@ pub struct Config {
     /// Directory holding the agent binaries, `VERSION` and `sha256sums`
     /// served under `/agent/*`.
     pub agent_dir: PathBuf,
+    /// Directory holding the backup-agent builds (`flatline-backup-<os>-<arch>`),
+    /// `VERSION-BACKUP` and `sha256sums-backup`, served to backup agents for
+    /// self-update under `/api/backup/v1/release/*`.
+    pub backup_agent_dir: PathBuf,
     /// Root of dedicated backup bundle storage (office mirror mount). None
     /// keeps backup storage disabled; the API reports 503 rather than
     /// falling back to the application data directory.
@@ -79,6 +83,10 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/app/agent"));
 
+        let backup_agent_dir = set("FLATLINE_BACKUP_AGENT_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/app/backup-agent"));
+
         let backup_dir = set("FLATLINE_BACKUP_DIR").map(PathBuf::from);
 
         let heartbeat_retention_days = match set("FLATLINE_HEARTBEAT_RETENTION_DAYS") {
@@ -102,6 +110,7 @@ impl Config {
             web_dist,
             public_url,
             agent_dir,
+            backup_agent_dir,
             backup_dir,
             heartbeat_retention_days,
         })

@@ -132,16 +132,16 @@ The SSE stream and agent binary downloads have no timeout.
 
 ### Auth
 
-| Method | Path                 | Purpose                                  |
-| ------ | -------------------- | ---------------------------------------- |
-| GET    | `/api/v1/auth/setup` | Public; always `setupNeeded:false`       |
-| POST   | `/api/v1/auth/login` | Public; token in `password`, echoed back |
-| GET    | `/api/v1/auth/me`    | Validate and describe the bearer token   |
-| POST   | `/api/v1/auth/device/start`   | Public; a screen asks to sign in with a QR code. Returns `code`, `pollSecret`, `expiresIn`, `publicUrl` |
+| Method | Path                          | Purpose                                                                                                                     |
+| ------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/auth/setup`          | Public; always `setupNeeded:false`                                                                                          |
+| POST   | `/api/v1/auth/login`          | Public; token in `password`, echoed back                                                                                    |
+| GET    | `/api/v1/auth/me`             | Validate and describe the bearer token                                                                                      |
+| POST   | `/api/v1/auth/device/start`   | Public; a screen asks to sign in with a QR code. Returns `code`, `pollSecret`, `expiresIn`, `publicUrl`                     |
 | POST   | `/api/v1/auth/device/poll`    | Public; body `{code, pollSecret}`. `pending`, `denied`, `expired`, or `approved` with a new never-expiring operator `token` |
-| POST   | `/api/v1/auth/device/lookup`  | Describe a waiting screen (user agent, age, suggested name) |
-| POST   | `/api/v1/auth/device/approve` | Body `{code, name}`; the screen gets its own operator token |
-| POST   | `/api/v1/auth/device/deny`    | Body `{code}` |
+| POST   | `/api/v1/auth/device/lookup`  | Describe a waiting screen (user agent, age, suggested name)                                                                 |
+| POST   | `/api/v1/auth/device/approve` | Body `{code, name}`; the screen gets its own operator token                                                                 |
+| POST   | `/api/v1/auth/device/deny`    | Body `{code}`                                                                                                               |
 
 Device codes travel in JSON bodies, never in paths. The QR code encodes
 `<base>/device#<code>` only; the poll secret never leaves the waiting screen.
@@ -267,6 +267,21 @@ Backup-agent tokens are accepted only under `/api/backup/v1`.
 | GET    | `/agent/sha256sums`   | Checksums for the shipped builds                 |
 | GET    | `/agent/{file}`       | One `superboard-<os>-<arch>` binary              |
 | GET    | `/robots.txt`         | Public; advisory `Disallow: /`                   |
+
+### Backup-agent self-update
+
+Under `/api/backup/v1`, authenticated by a backup-agent token only (operator
+and push tokens are refused). The backup agent updates on its own version line,
+separate from the telemetry agent above; see [backup-agent](backup-agent.md).
+
+| Method | Path                            | Purpose                                                                                                  |
+| ------ | ------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| POST   | `/api/backup/v1/checkin`        | Report `{version, platform, updateStatus}`; answers the shipped `release` (version, per-platform sha256) |
+| GET    | `/api/backup/v1/release/{file}` | One `flatline-backup-<os>-<arch>` build; anything else is 404                                            |
+
+Run starts may also carry `agentVersion`. The latest reported version, its
+time and the last update outcome appear on every backup agent as
+`reportedVersion`, `versionReportedAt` and `updateStatus`.
 
 ### Health, live events and the agent push
 

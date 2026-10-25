@@ -13,6 +13,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router, middleware};
+use serde::Deserialize;
 use tokio_util::io::ReaderStream;
 
 use crate::AppState;
@@ -29,6 +30,7 @@ pub fn agent_routes(state: AppState) -> Router<AppState> {
         .route("/api/backup/v1/runs/{id}", get(agent_run))
         .route("/api/backup/v1/runs/{id}/abandon", post(agent_abandon))
         .route("/api/backup/v1/failures", post(agent_failure))
+        .route("/api/backup/v1/checkin", post(agent_checkin))
         .route_layer(middleware::from_fn_with_state(state, require_agent))
 }
 
@@ -47,6 +49,11 @@ pub fn transfer_routes(state: AppState) -> Router<AppState> {
         .route(
             "/api/backup/v1/runs/{id}/complete",
             post(agent_complete).route_layer(agent()),
+        )
+        // A ~10 MB build: kept off the request timeout like the bundles.
+        .route(
+            "/api/backup/v1/release/{file}",
+            get(agent_release_file).route_layer(agent()),
         )
         .route(
             "/api/v1/backup-runs/{id}/download",
@@ -452,6 +459,77 @@ fn required_header<'a>(headers: &'a HeaderMap, name: &'static str) -> Result<&'a
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ApiError::bad(format!("{name} header is required")))
+}
+
+/// Prefix of backup-agent build file names served for self-update.
+const BACKUP_AGENT_PREFIX: &str = "flatline-backup-";
+
+/// A self-update check-in: the version this host runs and how its last
+/// update attempt went (`None` keeps the stored outcome).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckIn {
+    pub version: String,
+    /// Informational: the agent picks its own asset from the manifest.
+    #[serde(default)]
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub update_status: Option<String>,
+}
+
+/// POST /api/backup/v1/checkin (agent-scoped). Records the reported version
+/// and answers with the backup-agent release this image ships.
+pub async fn agent_checkin(
+    State(state): State<AppState>,
+    axum::Extension(AgentId(agent_id)): axum::Extension<AgentId>,
+    Json(input): Json<CheckIn>,
+) -> Result<Json<serde_json::Value>, BackupApiError> {
+    state
+        .backups
+        .record_version(&agent_id, &input.version, input.update_status.as_deref())
+        .await
+        .map_err(api_error)?;
+
+    let dir = &state.config.backup_agent_dir;
+    let version = tokio::fs::read_to_string(dir.join("VERSION-BACKUP"))
+        .await
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|version| !version.is_empty());
+    let assets: Vec<_> = crate::api::provisioning::build_assets(dir, BACKUP_AGENT_PREFIX)
+        .await
+        .into_iter()
+        .map(|asset| {
+            serde_json::json!({
+                "platform": asset.platform,
+                "file": asset.file,
+                "size": asset.size,
+                "sha256": asset.sha256,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "release": { "version": version, "assets": assets },
+    })))
+}
+
+/// GET /api/backup/v1/release/{file} (agent-scoped). One backup-agent build;
+/// any other name in the directory (VERSION-BACKUP, checksums) is a 404.
+pub async fn agent_release_file(State(state): State<AppState>, Path(file): Path<String>) -> Response {
+    if !crate::api::provisioning::is_build_file(&file, BACKUP_AGENT_PREFIX) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "not_found",
+                "message": "No backup-agent build by that name.",
+            })),
+        )
+            .into_response();
+    }
+    crate::api::provisioning::stream_build(&state.config.backup_agent_dir, &file).await
 }
 
 /// PUT /api/backup/v1/runs/{id}/chunks/{index} (agent-scoped)
