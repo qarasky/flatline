@@ -107,7 +107,8 @@ ENV UPTIME_KUMA_IS_CONTAINER=1 \
     DATA_DIR=/app/data \
     PORT=3001 \
     FLATLINE_WEB_DIST=/app/dashboard \
-    FLATLINE_AGENT_DIR=/app/agent
+    FLATLINE_AGENT_DIR=/app/agent \
+    FLATLINE_BACKUP_AGENT_DIR=/app/backup-agent
 
 COPY --from=build /app/target/release/flatline-backend /usr/local/bin/flatline-backend
 COPY --from=web /app/apps/dashboard/dist /app/dashboard

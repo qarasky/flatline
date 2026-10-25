@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::Error;
 
-/// Maximum accepted encrypted bundle size: 8 GiB.
+/// Maximum accepted bundle size: 8 GiB.
 pub const MAX_BUNDLE_BYTES: i64 = 8 * 1024 * 1024 * 1024;
 
 /// Fixed pilot overdue threshold: 36 hours since registration or the latest
@@ -43,6 +43,16 @@ pub struct Verification {
     pub status: String,
     pub checked_at: String,
     pub summary: String,
+}
+
+/// Whether a stored summary describes an age-encrypted bundle. A run with
+/// no summary, or one written before the flag existed, predates optional
+/// encryption and is encrypted.
+pub fn summary_is_encrypted(summary: Option<&Value>) -> bool {
+    summary
+        .and_then(|value| value.get("encrypted"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
 }
 
 /// The run shape shared with the Go agent and the dashboard.
@@ -77,6 +87,62 @@ pub struct StartRun {
     pub total_bytes: Option<i64>,
     pub sha256: Option<String>,
     pub source_summary: Option<Value>,
+    /// Version of the agent sending the start. Metadata only: recorded on
+    /// the agent row, never compared when a start is retried.
+    #[serde(default)]
+    pub agent_version: Option<String>,
+}
+
+/// Longest accepted agent version string.
+pub const MAX_AGENT_VERSION: usize = 32;
+
+/// Accept `MAJOR.MINOR.PATCH` with an optional `-pre` or `+build` suffix.
+pub fn validate_agent_version(version: &str) -> Result<(), Error> {
+    let invalid = || {
+        Error::BadRequest(
+            "agentVersion must look like 1.2.3 (optionally -pre or +build)".to_string(),
+        )
+    };
+    if version.is_empty() || version.len() > MAX_AGENT_VERSION {
+        return Err(invalid());
+    }
+    // Semver: `-pre` then `+build`, each dot-separated alphanumerics.
+    let (core, suffix) = match version.find(['-', '+']) {
+        Some(index) => (&version[..index], Some(&version[index + 1..])),
+        None => (version, None),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err(invalid());
+    }
+    if let Some(suffix) = suffix
+        && (suffix.is_empty()
+            || !suffix.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-' || byte == b'+'
+            })
+            || suffix.split('+').count() > 2
+            || suffix.split('+').any(str::is_empty))
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// Accept a bounded update-status code: `ok` or a snake_case error code.
+pub fn validate_update_status(status: &str) -> Result<(), Error> {
+    if status.is_empty()
+        || status.len() > 40
+        || !status.bytes().all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+    {
+        return Err(Error::BadRequest(
+            "updateStatus must be 1-40 lowercase letters or underscores".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Fully validated values, in canonical storage form.
@@ -123,7 +189,9 @@ pub(crate) fn valid_sha256(value: &str) -> bool {
 }
 
 /// Validate and normalize a source summary. Only the three contracted
-/// counters are stored; unknown fields are ignored rather than trusted.
+/// counters and the `encrypted` flag are stored; unknown fields are ignored
+/// rather than trusted. An absent flag comes from an agent that predates
+/// optional encryption and always encrypted, so it normalizes to `true`.
 fn normalize_summary(summary: Option<Value>) -> Result<Option<String>, Error> {
     let Some(value) = summary else {
         return Ok(None);
@@ -143,10 +211,18 @@ fn normalize_summary(summary: Option<Value>) -> Result<Option<String>, Error> {
         }
     };
 
+    let encrypted = match object.get("encrypted") {
+        None => true,
+        Some(value) => value.as_bool().ok_or_else(|| {
+            Error::BadRequest("sourceSummary.encrypted must be a boolean".to_string())
+        })?,
+    };
+
     let normalized = json!({
         "databaseCount": read("databaseCount")?,
         "objectCount": read("objectCount")?,
         "sourceBytes": read("sourceBytes")?,
+        "encrypted": encrypted,
     });
     Ok(Some(normalized.to_string()))
 }
@@ -305,6 +381,7 @@ mod tests {
 
     fn start() -> StartRun {
         StartRun {
+            agent_version: None,
             client_run_id: "run-1".to_string(),
             export_started_at: "2026-10-19T23:00:00Z".to_string(),
             export_finished_at: Some("2026-10-19T23:30:00Z".to_string()),
@@ -320,7 +397,7 @@ mod tests {
         assert_eq!(validated.export_finished_at, "2026-10-19T23:30:00.000Z");
         assert_eq!(
             validated.source_summary.as_deref(),
-            Some(r#"{"databaseCount":1,"objectCount":0,"sourceBytes":0}"#)
+            Some(r#"{"databaseCount":1,"encrypted":true,"objectCount":0,"sourceBytes":0}"#)
         );
     }
 

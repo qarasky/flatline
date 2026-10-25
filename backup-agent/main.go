@@ -10,7 +10,7 @@ import (
 	"syscall"
 )
 
-const version = "0.1.0"
+const version = "0.3.0"
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -42,6 +42,8 @@ func run(args []string) int {
 		return runRestoreGlobals(args[1:])
 	case "keygen":
 		return runKeygen(args[1:])
+	case "self-update":
+		return runSelfUpdate(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", args[0])
 		usage()
@@ -50,7 +52,7 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: flatline-backup <check|run-once|install|verify|restore|compare|restore-globals|keygen|version> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: flatline-backup <check|run-once|install|self-update|verify|restore|compare|restore-globals|keygen|version> [flags]")
 }
 
 func configFlag(name string, args []string) (string, []string, error) {
@@ -76,7 +78,11 @@ func runCheck(args []string) int {
 		fmt.Fprintf(os.Stderr, "configuration invalid: %v\n", err)
 		return 1
 	}
-	fmt.Printf("ok: %s (%d postgres, %d s3 sources)\n", cfg.Name, len(cfg.Postgres), len(cfg.S3))
+	encryption := "off (plain tar bundles)"
+	if cfg.Encrypted() {
+		encryption = "on (age)"
+	}
+	fmt.Printf("ok: %s (%d postgres, %d s3 sources, encryption %s)\n", cfg.Name, len(cfg.Postgres), len(cfg.S3), encryption)
 	return 0
 }
 
@@ -106,11 +112,24 @@ func runInstall(args []string) int {
 	flags := flag.NewFlagSet("install", flag.ContinueOnError)
 	configPath := flags.String("config", "", "path to the instance configuration")
 	enableTimer := flags.Bool("enable-timer", false, "enable the daily systemd timer")
+	refresh := flags.Bool("refresh-units", false, "re-render every installed instance's units and the self-update units")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
+	if *refresh {
+		if *configPath != "" || *enableTimer || flags.NArg() > 0 {
+			fmt.Fprintln(os.Stderr, "install --refresh-units takes no other flags")
+			return 2
+		}
+		if err := RefreshUnits(installOptions{systemctl: runSystemctl}); err != nil {
+			fmt.Fprintf(os.Stderr, "refresh failed: %v\n", err)
+			return 1
+		}
+		fmt.Println("units refreshed")
+		return 0
+	}
 	if *configPath == "" || flags.NArg() > 0 {
-		fmt.Fprintln(os.Stderr, "install needs --config FILE [--enable-timer]")
+		fmt.Fprintln(os.Stderr, "install needs --config FILE [--enable-timer], or --refresh-units")
 		return 2
 	}
 	if err := InstallInstance(*configPath, *enableTimer); err != nil {
@@ -120,21 +139,39 @@ func runInstall(args []string) int {
 	if *enableTimer {
 		fmt.Println("installed; daily timer enabled and started (systemctl list-timers shows the next run)")
 	} else {
-		fmt.Println("installed; daily timer left disabled; run systemctl daemon-reload")
+		fmt.Println("installed; daily backup timer left disabled; self-update timer enabled")
 	}
+	return 0
+}
+
+func runSelfUpdate(args []string) int {
+	if len(args) > 0 {
+		fmt.Fprintln(os.Stderr, "self-update takes no flags")
+		return 2
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	status, err := SelfUpdate(ctx, updateOptions{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "self-update: %s: %v\n", status, err)
+	}
+	if status != updateOK {
+		return 1
+	}
+	fmt.Printf("self-update: %s (running %s)\n", status, version)
 	return 0
 }
 
 func bundleFlags(name string, args []string, needTarget bool) (string, string, string, error) {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
-	bundle := flags.String("bundle", "", "path to the encrypted bundle")
-	identity := flags.String("identity-file", "", "path to the age identity")
+	bundle := flags.String("bundle", "", "path to the bundle (.tar or .age)")
+	identity := flags.String("identity-file", "", "path to the age identity; needed only for an encrypted bundle")
 	target := flags.String("target-config", "", "path to the scratch target configuration")
 	if err := flags.Parse(args); err != nil {
 		return "", "", "", err
 	}
-	if *bundle == "" || *identity == "" || (needTarget && *target == "") {
-		return "", "", "", fmt.Errorf("%s needs --bundle FILE --identity-file FILE%s", name, map[bool]string{true: " --target-config FILE"}[needTarget])
+	if *bundle == "" || (needTarget && *target == "") {
+		return "", "", "", fmt.Errorf("%s needs --bundle FILE [--identity-file FILE]%s", name, map[bool]string{true: " --target-config FILE"}[needTarget])
 	}
 	return *bundle, *identity, *target, nil
 }

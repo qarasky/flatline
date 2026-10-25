@@ -219,6 +219,7 @@ async fn seven_successes_survive_failed_eighth() {
         .start_run(
             &agent_id,
             StartRun {
+                agent_version: None,
                 client_run_id: "no-space".to_string(),
                 export_started_at: (now - chrono::Duration::minutes(10)).to_rfc3339(),
                 export_finished_at: Some(now.to_rfc3339()),
@@ -584,6 +585,7 @@ async fn verification_is_operator_only() {
         .start_run(
             &agent_id,
             StartRun {
+                agent_version: None,
                 client_run_id: "verify-run".to_string(),
                 export_started_at: (now - chrono::Duration::minutes(10)).to_rfc3339(),
                 export_finished_at: Some(now.to_rfc3339()),

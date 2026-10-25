@@ -154,6 +154,15 @@ body {
     gap: 0.3rem;
     flex-shrink: 0;
 }
+/* Backup lines continue the freshness column under "Updated" without
+   setting the header's width (the card's 0.5rem gap is pulled back in). */
+.fleet-backups {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    margin-top: -0.35rem;
+    text-align: right;
+}
 .fleet-status {
     display: inline-flex;
     align-items: center;

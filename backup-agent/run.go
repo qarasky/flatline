@@ -314,7 +314,7 @@ func failureCode(err error) string {
 	return "export_failed"
 }
 
-// pendingDescriptor survives a reboot: it names the one encrypted bundle
+// pendingDescriptor survives a reboot: it names the one bundle
 // that may be delivered, never a source file or an untrusted path.
 type pendingDescriptor struct {
 	ClientRunID      string        `json:"clientRunId"`
@@ -389,6 +389,13 @@ func loadPending(cfg Config, spool *Spool) (Bundle, bool, error) {
 	if size != descriptor.Size || digest != descriptor.SHA256 {
 		return Bundle{}, false, errors.New("pending bundle hash does not match its descriptor")
 	}
+	// The bundle's bytes, not the descriptor, decide whether it is
+	// encrypted: a descriptor from an older agent has no such field.
+	encrypted, err := isEncryptedBundle(path)
+	if err != nil {
+		return Bundle{}, false, fmt.Errorf("read pending bundle: %w", err)
+	}
+	descriptor.Summary.Encrypted = encrypted
 
 	return Bundle{
 		Path:             path,

@@ -91,9 +91,29 @@ export function backupSourceSummary(run: BackupRunSummary | null): string {
     if (!run?.sourceSummary) {
         return "—";
     }
+    // Plain bundles are the default, so only the exception is marked.
+    const encrypted = backupIsEncrypted(run) ? " · encrypted" : "";
     return `${run.sourceSummary.databaseCount} DB · ${run.sourceSummary.objectCount} objects · ${formatBytes(
         run.sourceSummary.sourceBytes
-    )}`;
+    )}${encrypted}`;
+}
+
+/**
+ * Whether a run's bundle is age-encrypted. Encryption is optional on the
+ * agent; a run without the flag comes from an agent that always encrypted.
+ * @param run Backup run summary
+ */
+export function backupIsEncrypted(run: BackupRunSummary): boolean {
+    return run.sourceSummary?.encrypted ?? true;
+}
+
+/**
+ * Download file name, matching the server's Content-Disposition: `.age` for
+ * an encrypted bundle, `.tar` for a plain one.
+ * @param run Backup run summary
+ */
+export function backupFileName(run: BackupRunSummary): string {
+    return `flatline-backup-${run.id}.${backupIsEncrypted(run) ? "age" : "tar"}`;
 }
 
 /** Local byte formatter; mirrors the fleet presentation helper without a dependency cycle. */

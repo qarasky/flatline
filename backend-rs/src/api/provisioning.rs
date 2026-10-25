@@ -63,18 +63,26 @@ Using a credential on the wrong surface returns an explicit
 /// Prefix for agent build file names served under `/agent/`.
 const AGENT_PREFIX: &str = "superboard-";
 
-/// One agent build found in the agent directory.
-struct AgentAsset {
+/// One build found in a release directory: a telemetry-agent build here,
+/// a backup-agent build for `/api/backup/v1/release`.
+pub(crate) struct AgentAsset {
     /// Target id derived from the file name, e.g. "linux-amd64".
-    platform: String,
-    file: String,
-    size: u64,
-    sha256: String,
+    pub(crate) platform: String,
+    pub(crate) file: String,
+    pub(crate) size: u64,
+    pub(crate) sha256: String,
 }
 
-/// Whether a path segment names an agent build (and nothing else).
+/// Whether a path segment names a telemetry-agent build (and nothing else).
 fn is_agent_file(name: &str) -> bool {
-    let Some(platform) = name.strip_prefix(AGENT_PREFIX) else {
+    is_build_file(name, AGENT_PREFIX)
+}
+
+/// Whether a path segment is `<prefix><platform>` with a non-empty platform
+/// of ASCII letters, digits, `-` and `_` only: no separators, no dots, so no
+/// traversal and no sibling files such as `VERSION`.
+pub(crate) fn is_build_file(name: &str, prefix: &str) -> bool {
+    let Some(platform) = name.strip_prefix(prefix) else {
         return false;
     };
     !platform.is_empty()
@@ -146,13 +154,18 @@ async fn file_digest(path: &Path, stamp: &FileStamp) -> Option<String> {
 /// so an image (or a developer machine, which builds only its own target)
 /// serves whatever it actually ships.
 async fn agent_assets(dir: &Path) -> Vec<AgentAsset> {
+    build_assets(dir, AGENT_PREFIX).await
+}
+
+/// Every `<prefix><platform>` build in `dir`, hashed (cached), sorted by name.
+pub(crate) async fn build_assets(dir: &Path, prefix: &str) -> Vec<AgentAsset> {
     let mut out = Vec::new();
     let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
         return out;
     };
     while let Ok(Some(entry)) = entries.next_entry().await {
         let file = entry.file_name().to_string_lossy().to_string();
-        if !is_agent_file(&file) {
+        if !is_build_file(&file, prefix) {
             continue;
         }
         let path = entry.path();
@@ -167,7 +180,7 @@ async fn agent_assets(dir: &Path) -> Vec<AgentAsset> {
             continue;
         };
         out.push(AgentAsset {
-            platform: file.trim_start_matches(AGENT_PREFIX).to_string(),
+            platform: file.trim_start_matches(prefix).to_string(),
             file,
             size: stamp.len,
             sha256,
@@ -493,7 +506,14 @@ pub async fn agent_file(
 
 /// Stream one agent build. The caller has already authorized the request.
 async fn agent_binary(state: &AppState, file: &str) -> Response {
-    let path = state.config.agent_dir.join(file);
+    stream_build(&state.config.agent_dir, file).await
+}
+
+/// Stream `dir/file` as an attachment with its length and digest. The
+/// caller has authorized the request and checked the name with
+/// `is_build_file`.
+pub(crate) async fn stream_build(dir: &Path, file: &str) -> Response {
+    let path = dir.join(file);
     let Ok(handle) = tokio::fs::File::open(&path).await else {
         return missing_agent();
     };

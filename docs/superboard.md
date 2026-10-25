@@ -30,7 +30,9 @@ Order follows the monitor tree: parent group `weight`, then the monitor's own
 ```
 ┌───────────────────────────────────────────────────────────────┐
 │ ⬢ web-01 ↗                            ● Host up               │
-│   uptime 11d · agent 1.8.0            Updated 2s ago          │
+│   uptime 11d · agent 1.8.1 · backup 0.3.0   Updated 2s ago    │
+│                         modernization: last backup 3h ago     │
+│                                  zhkh: last backup 2h ago     │
 │                                                               │
 │ Security Updates: 6 · reboot required      ← flags line       │
 │                                                               │
@@ -56,8 +58,18 @@ Order follows the monitor tree: parent group `weight`, then the monitor's own
 - **Title** is the monitor's display name (renamable from the board); the agent's
   reported hostname stays read-only and appears in the tooltip. `↗` opens the
   history dialog.
-- **Subline** is uptime and agent version — nothing else. OS and core count are
-  noise the operator can get from the machine.
+- **Subline** is uptime, agent version and, on a server with backup agents, the
+  backup-agent version (`backup 0.3.0`; `backup 0.2.0/0.3.0`, lowest first, while
+  an update is half done; amber when the host's self-update is failing, with the
+  reason on hover) — nothing else. OS and core count are noise the operator can
+  get from the machine.
+- **Backup lines** sit under the freshness, one per backup agent linked to the
+  server's monitor: `modernization: last backup 3h ago`, or just
+  `last backup 3h ago` when there is one agent. They tick like "Updated".
+  `no backup yet` before the first completed backup, `backups off` for a
+  disabled agent; amber when the server calls the agent `overdue` (more than
+  36 h since its last completed backup) or `failed`. Hover shows the exact time,
+  the health and the last error code. Agents with a revoked token are not shown.
 - **Status pill**: `Host up`, `Host down`, `Pending`, `Maintenance`, or a
   website-derived headline (`1 website down`, `2 websites pending`) when the
   hosted sites are in worse shape than the host. Freshness sits beside it
@@ -78,11 +90,16 @@ board does not depend on colour alone.
 Attention is expressed by the card's 1px border and the headline, never by a
 thicker accent — a troubled card must not be heavier than its neighbours.
 
-| Attention           | When                                                                                                                               |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Bad (red border)    | Host down, or a linked website is down.                                                                                            |
-| Warn (amber border) | Stale data, container issues, sustained high usage (≥90% on any of CPU/RAM/disk/GPU), pending status, or a linked website pending. |
-| Normal              | Healthy.                                                                                                                           |
+| Attention           | When                                                                                                                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bad (red border)    | Host down, or a linked website is down.                                                                                                                               |
+| Warn (amber border) | Stale data, container issues, sustained high usage (≥90% on any of CPU/RAM/disk/GPU), pending status, a linked website pending, or a backup agent `overdue`/`failed`. |
+| Normal              | Healthy.                                                                                                                                                              |
+
+A backup that is behind also counts towards the board's "need attention"
+total, and names itself in the headline (`Backup overdue`, `2 backups behind`)
+when nothing more severe applies: host down, websites down, stale data and
+container issues come first.
 
 Freshness is separate from reachability: a sample is stale after
 `max(5s, sampleInterval × 3)` when the agent reports its interval, otherwise

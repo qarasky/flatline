@@ -204,6 +204,11 @@ pub struct AgentSummary {
     pub last_completed_run: Option<RunSummary>,
     pub latest_archive_verification: Option<Verification>,
     pub latest_restore_verification: Option<Verification>,
+    /// Version the agent last reported running; NULL before any report.
+    pub reported_version: Option<String>,
+    pub version_reported_at: Option<String>,
+    /// Outcome of the host's last self-update attempt (`ok` or a code).
+    pub update_status: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -217,10 +222,14 @@ struct AgentRow {
     credential_active: i64,
     created_at: String,
     alert_state: String,
+    reported_version: Option<String>,
+    version_reported_at: Option<String>,
+    update_status: Option<String>,
 }
 
 const AGENT_COLUMNS: &str = "id, name, monitor_id, enabled, interval_seconds, retention_count, \
-                             credential_active, created_at, alert_state";
+                             credential_active, created_at, alert_state, reported_version, \
+                             version_reported_at, update_status";
 
 const RUN_COLUMNS: &str = "id, agent_id, client_run_id, status, export_started_at, \
                            export_finished_at, created_at, completed_at, total_bytes, \
@@ -547,7 +556,15 @@ impl Backups {
         Ok(BundleDownload {
             file,
             length,
-            filename: format!("flatline-backup-{}.age", run.id),
+            filename: format!(
+                "flatline-backup-{}.{}",
+                run.id,
+                if runs::summary_is_encrypted(run.source_summary.as_ref()) {
+                    "age"
+                } else {
+                    "tar"
+                }
+            ),
         })
     }
 
@@ -872,6 +889,46 @@ impl Backups {
         self.run_by_id(&id).await
     }
 
+    /// Record the version an agent reports running and, when given, the
+    /// outcome of its host's last self-update attempt. A `None` status
+    /// leaves the stored one unchanged.
+    pub async fn record_version(
+        &self,
+        agent_id: &str,
+        version: &str,
+        update_status: Option<&str>,
+    ) -> Result<(), Error> {
+        self.record_version_at(agent_id, version, update_status, Utc::now())
+            .await
+    }
+
+    async fn record_version_at(
+        &self,
+        agent_id: &str,
+        version: &str,
+        update_status: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<(), Error> {
+        runs::validate_agent_version(version)?;
+        if let Some(status) = update_status {
+            runs::validate_update_status(status)?;
+        }
+        sqlx::query(
+            "UPDATE backup_agents
+                SET reported_version = ?, version_reported_at = ?,
+                    update_status = COALESCE(?, update_status)
+              WHERE id = ?",
+        )
+        .bind(version)
+        .bind(now.to_rfc3339_opts(SecondsFormat::Millis, true))
+        .bind(update_status)
+        .bind(agent_id)
+        .execute(&self.pool)
+        .await?;
+        self.publish_change();
+        Ok(())
+    }
+
     pub async fn start_run(&self, agent_id: &str, input: StartRun) -> Result<RunSummary, Error> {
         self.start_run_at(agent_id, input, Utc::now()).await
     }
@@ -888,6 +945,16 @@ impl Backups {
     ) -> Result<RunSummary, Error> {
         let validated = input.validate(now)?;
         self.agent_row(agent_id).await?;
+        // The version is agent metadata, recorded whatever happens to the
+        // run, and never part of `same_start`: a pending bundle written by
+        // an older agent and retried after an update is still the same run.
+        // A malformed version is dropped, never a reason to refuse a backup.
+        if let Some(version) = input.agent_version.as_deref() {
+            match self.record_version_at(agent_id, version, None, now).await {
+                Ok(()) | Err(Error::BadRequest(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
         let storage = self.storage()?;
 
         let _reservation = self.reservation.lock().await;
@@ -1712,6 +1779,9 @@ impl Backups {
             latest_restore_verification: runs::parse_verification(
                 restore.as_ref().map(|(value,)| value.as_str()),
             ),
+            reported_version: row.reported_version,
+            version_reported_at: row.version_reported_at,
+            update_status: row.update_status,
         })
     }
 }

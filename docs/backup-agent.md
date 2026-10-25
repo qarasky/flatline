@@ -1,8 +1,8 @@
 # Flatline backup agent
 
 `flatline-backup` is a separate Go program that exports application data from
-one Docker host, encrypts it locally and uploads it to Flatline over the
-existing HTTPS origin. It is independent of the telemetry agent: one host may
+one Docker host, optionally encrypts it locally and uploads it to Flatline
+over the existing HTTPS origin. It is independent of the telemetry agent: one host may
 run `superboard` and several named backup agents.
 
 ## Install
@@ -13,15 +13,16 @@ install -d -m 0700 /etc/flatline-backup /var/lib/flatline-backup/meks
 install -m 0600 meks.json /etc/flatline-backup/meks.json
 flatline-backup check --config /etc/flatline-backup/meks.json
 flatline-backup install --config /etc/flatline-backup/meks.json
-systemctl daemon-reload
 ```
 
 `install` writes the named `flatline-backup@meks.service` and
-`flatline-backup@meks.timer`. The timer stays disabled until the operator adds
-`--enable-timer`, which runs `systemctl daemon-reload` and
+`flatline-backup@meks.timer`, plus the host's `flatline-backup-update.service`
+and `.timer` (see [Self-update](#self-update)), runs `systemctl daemon-reload`
+and enables the self-update timer. The backup timer stays disabled until the
+operator adds `--enable-timer`, which also runs
 `systemctl enable --now flatline-backup@meks.timer` (linking it into
-`timers.target` and starting it) and fails the install if either command
-fails. Do not enable it before a restore has been proven.
+`timers.target` and starting it). A failing systemctl fails the install. Do
+not enable the backup timer before a restore has been proven.
 
 ## Configuration
 
@@ -31,7 +32,7 @@ fails. Do not enable it before a restore has been proven.
   "name": "meks",
   "serverUrl": "https://uptime.example",
   "tokenFile": "/etc/flatline-backup/meks.token",   # flatline_agent_backup_...
-  "recipient": "age1...",
+  "recipient": "age1...",                           # optional; omit for plain bundles
   "stateDir": "/var/lib/flatline-backup/meks",
   "spoolMaxBytes": 8589934592,
   "uploadBytesPerSecond": 0,
@@ -55,24 +56,50 @@ fails. Do not enable it before a restore has been proven.
 }
 ```
 
-The config, token file, S3 credentials file and age identity must be mode 0600. The state directory must end with the instance name and be mode 0700.
+The config, token file, S3 credentials file and age identity (when used) must be mode 0600. The state directory must end with the instance name and be mode 0700.
 Remote endpoints require HTTPS; cleartext is accepted only for a literal
 loopback address. Database names and bucket names must be unique within one
 instance so restore targets are unambiguous.
 
-The age private key never exists on this host. Only the public `recipient`
-does. A separate development-host test may use a generated identity.
+### Encryption
+
+Encryption is **off by default**: without `recipient` every bundle is a plain
+tar archive (`<run>.tar` in the spool, downloaded as `.tar`). Set `recipient`
+to an age X25519 public key for sensitive data and every bundle is
+age-encrypted instead (`.age`). A `recipient` that is present but malformed is
+refused at `check`, never silently treated as "off". `check` prints which mode
+an instance is in, and the dashboard marks encrypted runs.
+
+A plain bundle is protected in transit by HTTPS and at rest only by the office
+host's disk permissions. Its integrity rests on the per-entry SHA-256 in the
+manifest, the manifest-last rule and the receiver's whole-bundle hash; an
+encrypted bundle adds age's authenticated stream on top.
+
+With encryption on, the age private key never exists on this host. Only the
+public `recipient` does. Losing the private key makes every bundle encrypted
+to it unrecoverable. A separate development-host test may use a generated
+identity.
+
+Each run reports `encrypted` in its source summary; the server stores it and
+names downloads by it. Runs from agents that predate optional encryption have
+no flag and are treated as encrypted.
 
 ## Commands
 
 - `check --config FILE` validates configuration and local secret file modes.
 - `run-once --config FILE` retries one pending bundle first, otherwise exports,
-  encrypts, persists a pending descriptor and uploads. The daily timer runs it.
-- `install --config FILE [--enable-timer]` writes the named service and timer;
-  `--enable-timer` also enables and starts the timer through systemctl.
+  encrypts when configured, persists a pending descriptor and uploads. The daily timer runs it.
+- `install --config FILE [--enable-timer]` writes the named service and timer
+  and the host's self-update units, and enables the self-update timer;
+  `--enable-timer` also enables and starts the backup timer through systemctl.
+- `install --refresh-units` re-renders every installed instance's units and the
+  self-update units from their configs and runs `daemon-reload`, without
+  changing which timers are enabled. A newly installed build runs it.
+- `self-update` checks in for every installed instance and installs a newer
+  build when the server ships one. The self-update timer runs it.
 - `version` prints the binary version.
 
-A pending encrypted bundle is retained until the server reports completion;
+A pending bundle is retained until the server reports completion;
 the next run retries it without re-exporting. Failed exports are reported with
 a bounded safe error code (never stderr). Temporary network failures, 408,
 429 and 5xx (including 503 when the office cannot check the credential)
@@ -120,7 +147,52 @@ a hung run would keep the timer from ever firing again.
 The timer uses `OnCalendar=*-*-* 02:00:00 Asia/Almaty`, a 600-second
 randomized delay, `Persistent=true` and `WantedBy=timers.target`. A
 successful oneshot is not restarted; a failed source export or upload retries
-after 30 minutes and reuses any pending encrypted bundle first.
+after 30 minutes and reuses any pending bundle first.
+
+## Self-update
+
+The backup agent updates itself on its **own version line** (`0.x`,
+`const version` in `backup-agent/main.go`), independent of the telemetry
+agent. The binary is shared by every instance on a host, so updating is per
+host: `flatline-backup-update.timer` runs `flatline-backup self-update` daily
+(`OnCalendar=daily`, `RandomizedDelaySec=3600`, `Persistent=true`), whether
+or not any backup timer is enabled.
+
+Each run:
+
+1. Finds the installed instances from the `flatline-backup@<name>.service`
+   units (their `--config` path), not from the config directory, which also
+   holds credentials files.
+2. Checks in for **every** instance with that instance's token
+   (`POST /api/backup/v1/checkin`), reporting the running version and the
+   previous run's outcome. The server records both per agent; the Superboard
+   shows the version after the telemetry agent's.
+3. Stops with `server_mismatch` if the instances report to different
+   servers, `downgrade_refused` if the server ships an older build, `no_asset`
+   if it ships none for this platform; does nothing when already current.
+4. Downloads the build to `/var/lib/flatline-backup/update/` (0700) and
+   requires its size, sha256 and its own `version` output to match the
+   release (`checksum_mismatch`, `version_mismatch`).
+5. Takes every instance's run lock, waiting up to 30 minutes for a running
+   backup (`lock_timeout` past that). The swap never happens under a backup.
+6. Copies the current binary to `/usr/local/bin/flatline-backup.prev`, renames
+   the new build into place, releases the locks, then runs the new build's
+   `install --refresh-units` and lets it check in with its new version.
+
+Every outcome other than `ok` is reported at once and again on the next
+check-in, as `updateStatus` on the agent. The service exits non-zero on a
+failure, so `systemctl --failed` and `journalctl -u flatline-backup-update`
+show it.
+
+- **Opt out** on a host by creating `/etc/flatline-backup/self-update.disabled`
+  (any content). The timer keeps running and still reports the version; it
+  never downloads or swaps.
+- **Roll back** by hand:
+  `mv /usr/local/bin/flatline-backup.prev /usr/local/bin/flatline-backup`, then
+  create the opt-out file so the next check does not reinstall the release.
+- **First hop:** builds before 0.3.0 have no self-update. Install 0.3.0 by
+  hand once and re-run `install --config …` for each instance so the update
+  units are written; from then on the host updates itself.
 
 ## Consistency of one bundle
 
@@ -145,7 +217,7 @@ next UTC day. Retrying a pending bundle does not count.
 
 ## Limits
 
-At most one pending encrypted bundle exists per instance. Local spool and
+At most one pending bundle exists per instance. Local spool and
 bundle caps default to 8 GiB, including concurrently retained intermediate
 files. Upload chunks are at most 8 MiB. The office receiver keeps 100 GiB free
 and `retentionCount` (default seven) completed recovery points per agent, plus
@@ -188,11 +260,19 @@ the operator `Authorization` header.
 
 ## Recovery
 
-Recovery is offline: it needs the downloaded bundle and the age identity, not
-Flatline.
+Recovery is offline: it needs the downloaded bundle (and, for an encrypted
+bundle, the age identity), not Flatline. The format is detected from the
+file: `--identity-file` is required for a `.age` bundle and ignored for a
+`.tar` one.
 
 ```sh
-flatline-backup keygen --output /secure/recovery-identity.txt
+# plain bundle
+flatline-backup verify --bundle bundle.tar
+flatline-backup restore --bundle bundle.tar --target-config restore-target.json
+flatline-backup compare --bundle bundle.tar --target-config restore-target.json
+
+# encrypted bundle
+flatline-backup keygen --output /secure/recovery-identity.txt   # once, when enabling encryption
 flatline-backup verify --bundle bundle.age --identity-file recovery-identity.txt
 flatline-backup restore --bundle bundle.age --identity-file recovery-identity.txt \
   --target-config restore-target.json
@@ -200,11 +280,11 @@ flatline-backup compare --bundle bundle.age --identity-file recovery-identity.tx
   --target-config restore-target.json
 ```
 
-`keygen` writes a new mode-0600 identity and prints only the public recipient.
-Keep the private identity off the source host; `restore` never contacts Flatline.
-`verify` checks every manifest entry, hash, size, exact key, content type and
-object mapping, rejects trailing plaintext and returns only the validated
-manifest. Archive verification is not a restore test.
+`keygen` writes a new mode-0600 identity and prints only the public recipient,
+which goes into the config as `recipient`. Keep the private identity off the
+source host; `restore` never contacts Flatline. `verify` checks every manifest
+entry, hash, size, exact key, content type and object mapping, rejects
+trailing data and returns only the validated manifest. Archive verification is not a restore test.
 
 `restore-target.json` maps every source database and bucket to an explicit
 scratch target. Missing, identical or populated targets are refused before any
@@ -262,8 +342,8 @@ Globals are never restored implicitly. Use the separate command with an
 explicit globals target:
 
 ```sh
-flatline-backup restore-globals --bundle bundle.age --identity-file identity.txt \
-  --target-config restore-target.json
+flatline-backup restore-globals --bundle bundle.tar --target-config restore-target.json
+# encrypted: add --identity-file identity.txt
 ```
 
 ## Packaging

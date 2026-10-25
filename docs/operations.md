@@ -87,6 +87,10 @@ ls -l /home/office/flatline/backups/nightly/daily/
   `/home/office/flatline/backups/nightly/{daily,weekly}`, 03:30 (± 15 min), a run
   missed while the host was off happens at the next boot. Everything is
   overridable in `/etc/flatline-backup.env` (see the example file).
+- **On the office host** (installed 2026-10-25) `/etc/flatline-backup.env` sets
+  `BACKUP_DIR=/mnt/mirror/flatline-nightly`: the nightlies live on the RAID1
+  mirror, not on the single disk that holds the live database. Check with
+  `ls -l /mnt/mirror/flatline-nightly/daily/`.
 - **Off-host copy:** set `OFFSITE_TARGET` (and `OFFSITE_TOOL=rsync|rclone`). The
   directory is mirrored with deletions, so the remote follows the rotation. A
   backup on the same disk does not survive the disk; set this.

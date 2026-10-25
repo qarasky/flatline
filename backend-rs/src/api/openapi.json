@@ -498,6 +498,18 @@
                                 "type": "null"
                             }
                         ]
+                    },
+                    "reportedVersion": {
+                        "type": ["string", "null"],
+                        "description": "Backup-agent version last reported by this agent (run start or self-update check-in); null before the first report."
+                    },
+                    "versionReportedAt": {
+                        "type": ["string", "null"],
+                        "format": "date-time"
+                    },
+                    "updateStatus": {
+                        "type": ["string", "null"],
+                        "description": "Outcome of the host's last self-update attempt: `ok` or a code such as `checksum_mismatch`, `downgrade_refused`, `lock_timeout`, `server_mismatch`. Null before the first check-in."
                     }
                 }
             },
@@ -569,8 +581,16 @@
                             "sourceBytes": {
                                 "type": "integer",
                                 "minimum": 0
+                            },
+                            "encrypted": {
+                                "type": "boolean",
+                                "description": "Whether the bundle is age-encrypted. Absent means true (agents before optional encryption always encrypted)."
                             }
                         }
+                    },
+                    "agentVersion": {
+                        "type": "string",
+                        "description": "Version of the sending agent (e.g. `0.3.0`). Recorded on the agent; not part of the idempotent same-run comparison, so a retried start may carry a newer version."
                     }
                 }
             },
@@ -651,6 +671,53 @@
                             "export_attempts_exhausted",
                             "unknown"
                         ]
+                    }
+                }
+            },
+            "BackupCheckIn": {
+                "type": "object",
+                "required": ["version"],
+                "properties": {
+                    "version": {
+                        "type": "string",
+                        "description": "Running backup-agent version, `MAJOR.MINOR.PATCH` with an optional `-pre`/`+build` suffix."
+                    },
+                    "platform": {
+                        "type": ["string", "null"],
+                        "description": "Informational, e.g. `linux-amd64`."
+                    },
+                    "updateStatus": {
+                        "type": ["string", "null"],
+                        "description": "Outcome of the last update attempt (`ok` or a snake_case code). Null keeps the stored value."
+                    }
+                }
+            },
+            "BackupRelease": {
+                "type": "object",
+                "properties": {
+                    "version": {
+                        "type": ["string", "null"],
+                        "description": "Backup-agent version this image ships (VERSION-BACKUP); null when the image ships none."
+                    },
+                    "assets": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "platform": {
+                                    "type": "string"
+                                },
+                                "file": {
+                                    "type": "string"
+                                },
+                                "size": {
+                                    "type": "integer"
+                                },
+                                "sha256": {
+                                    "type": "string"
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1247,7 +1314,7 @@
         "/api/v1/monitors/{id}/agent-warnings/clear": {
             "post": {
                 "summary": "Clear agent warnings",
-                "description": "Requires the `write` scope. Acknowledges every agent warning counter at once: `agent.failedPushes`, `agent.samplesDropped` and the per-collector `agent.collectorErrors`. The board shows each reported counter minus its ack, so this clears the whole \"Agent: \u2026\" line on a card. Docker collector errors are acknowledged too, though the card renders them in the container section. The counters reset when the agent restarts and the acks are dropped automatically, so new warnings are never masked.",
+                "description": "Requires the `write` scope. Acknowledges every agent warning counter at once: `agent.failedPushes`, `agent.samplesDropped` and the per-collector `agent.collectorErrors`. The board shows each reported counter minus its ack, so this clears the whole \"Agent: …\" line on a card. Docker collector errors are acknowledged too, though the card renders them in the container section. The counters reset when the agent restarts and the acks are dropped automatically, so new warnings are never masked.",
                 "parameters": [
                     {
                         "$ref": "#/components/parameters/monitorId"
@@ -3209,9 +3276,21 @@
             "post": {
                 "summary": "Abandon an own uploading run",
                 "description": "Agent credential only. Used when the agent no longer holds the bundle of its active run (for example after quarantining it), so a new export can be delivered. The run becomes `failed` with `upload_abandoned`, its capacity reservation is released and maintenance removes its bytes. Idempotent.",
-                "security": [{ "bearerAuth": [] }],
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
                 "parameters": [
-                    { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
                 ],
                 "responses": {
                     "200": {
@@ -3221,19 +3300,29 @@
                                 "schema": {
                                     "type": "object",
                                     "properties": {
-                                        "ok": { "type": "boolean" },
-                                        "run": { "$ref": "#/components/schemas/BackupRun" }
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "run": {
+                                            "$ref": "#/components/schemas/BackupRun"
+                                        }
                                     }
                                 }
                             }
                         }
                     },
-                    "401": { "description": "Invalid backup credential." },
-                    "404": { "description": "Run not found for this agent." },
+                    "401": {
+                        "description": "Invalid backup credential."
+                    },
+                    "404": {
+                        "description": "Run not found for this agent."
+                    },
                     "409": {
                         "description": "`conflict` while finalizing, `run_terminal` when already completed or ended."
                     },
-                    "503": { "description": "`busy`: a chunk or completion for this run is in flight." }
+                    "503": {
+                        "description": "`busy`: a chunk or completion for this run is in flight."
+                    }
                 }
             }
         },
@@ -3335,7 +3424,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Encrypted bundle",
+                        "description": "Bundle: age-encrypted (`.age`) or plain tar (`.tar`), per the run's `sourceSummary.encrypted`",
                         "content": {
                             "application/octet-stream": {}
                         }
@@ -3349,7 +3438,7 @@
         "/api/v1/backup-runs/{id}/download": {
             "get": {
                 "summary": "Download a completed bundle",
-                "description": "Operator only. Streams the retained encrypted bundle as an attachment with `Cache-Control: no-store`. The URL carries no credential; use the operator Authorization header. Incomplete, failed, expired and pruned runs are not downloadable.",
+                "description": "Operator only. Streams the retained bundle as an attachment with `Cache-Control: no-store`. The URL carries no credential; use the operator Authorization header. Incomplete, failed, expired and pruned runs are not downloadable.",
                 "parameters": [
                     {
                         "name": "id",
@@ -3363,7 +3452,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Encrypted bundle",
+                        "description": "Bundle: age-encrypted (`.age`) or plain tar (`.tar`), per the run's `sourceSummary.encrypted`",
                         "content": {
                             "application/octet-stream": {
                                 "schema": {
@@ -3378,6 +3467,88 @@
                     },
                     "404": {
                         "description": "No retained completed bundle."
+                    }
+                }
+            }
+        },
+        "/api/backup/v1/checkin": {
+            "post": {
+                "summary": "Self-update check-in",
+                "description": "Agent credential only. Records the version the agent runs and, when given, the outcome of its host's last self-update attempt, then answers with the backup-agent release this image ships. Run by `flatline-backup self-update` once per instance on the host, whether or not its backups are scheduled.",
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BackupCheckIn"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Recorded; the shipped release",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "release": {
+                                            "$ref": "#/components/schemas/BackupRelease"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed version or update status."
+                    },
+                    "401": {
+                        "description": "Invalid backup credential (operator and push tokens are refused)."
+                    }
+                }
+            }
+        },
+        "/api/backup/v1/release/{file}": {
+            "get": {
+                "summary": "Download a backup-agent build",
+                "description": "Agent credential only. Streams `flatline-backup-<os>-<arch>` from the image's backup-agent directory with `Cache-Control: no-store`. Any other name (VERSION-BACKUP, checksums, telemetry builds) is a 404. Verify the bytes against the check-in's `sha256`.",
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "file",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The build",
+                        "content": {
+                            "application/octet-stream": {}
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid backup credential."
+                    },
+                    "404": {
+                        "description": "No backup-agent build by that name."
                     }
                 }
             }

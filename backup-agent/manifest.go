@@ -95,9 +95,12 @@ type BundleSummary struct {
 	DatabaseCount int   `json:"databaseCount"`
 	ObjectCount   int   `json:"objectCount"`
 	SourceBytes   int64 `json:"sourceBytes"`
+	// Encrypted is true for an age-encrypted bundle, false for plain tar.
+	Encrypted bool `json:"encrypted"`
 }
 
-// Bundle is the encrypted, hashed output of WriteBundle.
+// Bundle is the hashed (and, when configured, encrypted) output of
+// WriteBundle.
 type Bundle struct {
 	Path             string
 	Size             int64
@@ -228,8 +231,8 @@ func encodeManifest(manifest Manifest) ([]byte, error) {
 	return encoded, nil
 }
 
-func summarize(manifest Manifest) BundleSummary {
-	summary := BundleSummary{}
+func summarize(manifest Manifest, encrypted bool) BundleSummary {
+	summary := BundleSummary{Encrypted: encrypted}
 	for _, entry := range manifest.Entries {
 		switch entry.Kind {
 		case kindObject:

@@ -175,7 +175,8 @@ export interface BackupRunSummary {
     totalBytes: number | null;
     receivedBytes: number;
     sha256: string | null;
-    sourceSummary: { databaseCount: number; objectCount: number; sourceBytes: number } | null;
+    /** Agent-reported. `encrypted` is absent on runs from agents that always encrypted. */
+    sourceSummary: { databaseCount: number; objectCount: number; sourceBytes: number; encrypted?: boolean } | null;
     errorCode: string | null;
     archiveVerification: BackupVerification | null;
     restoreVerification: BackupVerification | null;
@@ -197,6 +198,11 @@ export interface BackupAgentSummary {
     lastCompletedRun: BackupRunSummary | null;
     latestArchiveVerification: BackupVerification | null;
     latestRestoreVerification: BackupVerification | null;
+    /** Backup-agent version last reported (run start or self-update check-in). */
+    reportedVersion: string | null;
+    versionReportedAt: string | null;
+    /** Outcome of the host's last self-update attempt: `ok` or a code. */
+    updateStatus: string | null;
 }
 
 export interface HealthSummary {
@@ -1039,6 +1045,30 @@ export function fetchBackupAgents(
 ): Promise<{ ok: true; agents: BackupAgentSummary[]; nextCursor: string | null }> {
     const suffix = monitorId === undefined ? "" : `?monitorId=${encodeURIComponent(String(monitorId))}`;
     return request(`/api/v1/backup-agents${suffix}`, { signal });
+}
+
+/**
+ * Every backup agent, all pages, for the Superboard: one listing for the
+ * whole board (grouped by monitor on the client), never one per card.
+ * @param signal Cancels the requests
+ */
+export async function fetchAllBackupAgents(signal?: AbortSignal): Promise<BackupAgentSummary[]> {
+    const agents: BackupAgentSummary[] = [];
+    let cursor: string | null = null;
+    // Bounded: a cursor loop that never ends must not hang the board.
+    for (let page = 0; page < 100; page++) {
+        const query: string = cursor ? `?limit=200&cursor=${encodeURIComponent(cursor)}` : "?limit=200";
+        const body: { agents: BackupAgentSummary[]; nextCursor: string | null } = await request(
+            `/api/v1/backup-agents${query}`,
+            { signal }
+        );
+        agents.push(...body.agents);
+        cursor = body.nextCursor;
+        if (!cursor) {
+            break;
+        }
+    }
+    return agents;
 }
 
 /**

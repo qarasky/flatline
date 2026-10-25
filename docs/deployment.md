@@ -10,10 +10,11 @@ how a release goes out, and how to get back.
 | ------------------ | ------------------------------------------------------------------------------------------------------- |
 | Public origin      | `https://uptime.mediaboost.kz`                                                                          |
 | Tunnel target      | `http://localhost:3001` on the office host                                                              |
-| Compose file       | `/home/office/flatline/compose.rust.yaml` (repository copy: `docker/compose.rust.yaml`)                 |
+| Compose files      | `/home/office/flatline/compose.rust.yaml` + `/home/office/flatline-src/docker/compose.backups.yaml`     |
 | Environment        | `/home/office/flatline/.env` — `FLATLINE_PORT=3001`, `FLATLINE_PUBLIC_URL=https://uptime.mediaboost.kz` |
 | Data               | `/home/office/flatline/data-rust/flatline.db` (plus `initial-token.txt`, `status-page-secret`)          |
-| Backups            | `/home/office/flatline/backups/` (nightly copies in `backups/nightly/`)                                 |
+| Database backups   | Pre-release: `/home/office/flatline/backups/`. Nightly: `/mnt/mirror/flatline-nightly/` (RAID1)         |
+| Backup storage     | `/mnt/mirror/flatline-backups` (RAID1 `md0`) → `/app/backups`; client bundles from backup agents        |
 | Source tree        | `/home/office/flatline-src` — the tree the image is built from                                          |
 | Provisioning token | `/home/office/flatline/provisioning-token.txt` (0600, root)                                             |
 | Stack name         | `flatline-rust` (container `flatline-rust-flatline-1`)                                                  |
@@ -108,7 +109,8 @@ sudo chmod 600 "$BM"
 
 # 4. Promote and recreate (only once the backup printed ok).
 sudo docker tag artchsh/flatline-rust:office-new artchsh/flatline-rust:office-live
-cd /home/office/flatline && sudo docker compose -f compose.rust.yaml up -d
+cd /home/office/flatline && sudo docker compose -f compose.rust.yaml \
+  -f /home/office/flatline-src/docker/compose.backups.yaml up -d
 echo "rollback tag: office-prev-$REL  backup: $BM"
 ```
 
@@ -155,7 +157,8 @@ go back with the code.
 ```bash
 sudo docker tag artchsh/flatline-rust:office-prev-<REL> artchsh/flatline-rust:office-live
 # stop the stack, restore the backup over data-rust/flatline.db, then:
-sudo docker compose -f compose.rust.yaml up -d
+cd /home/office/flatline && sudo docker compose -f compose.rust.yaml \
+  -f /home/office/flatline-src/docker/compose.backups.yaml up -d
 ```
 
 Restore the pre-release backup (`backups/pre-<REL>.db`, same timestamp as the
@@ -182,14 +185,14 @@ provisioning history for the client hosts is in the cabinet record, not here.
 
 ### Agent versions
 
-The current release is **1.8.0**. Self-update exists only from 1.7.0, so a host
+The current release is **1.8.1**. Self-update exists only from 1.7.0, so a host
 still on 1.6.1 needs one manual hop, per host:
 
 ```bash
 curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
 ```
 
-Hosts already on 1.7.0 or newer pick up 1.8.0 themselves. `home-rpi` and
+Hosts already on 1.7.0 or newer pick up 1.8.1 themselves. `home-rpi` and
 `office-mac-server` report no agent version at all and need the same one-liner
 to join.
 
@@ -198,6 +201,21 @@ before it replaced the binary) and the audit's resource-cap fixes. Hosts on
 1.7.0 take this one update with their old helper, which is still exposed to
 G1; from 1.8.0 on, the agent rewrites its unit on first start and later updates
 are safe.
+
+1.8.1 raises the default `buffer_max_bytes` from 32 MiB to 256 MiB. At 1Hz and
+~7.5KB per sample, 32 MiB held ~74 minutes, so the office server's 5-hour power
+cut on 2026-10-23 cost each client host 5–16k samples. 256 MiB covers ~10 hours.
+Hosts that set `buffer_max_bytes` explicitly keep their value.
+
+### Backup agent versions
+
+The backup agent (`flatline-backup`) is versioned separately: **0.3.0** is the
+first build that updates itself (see [backup agent](backup-agent.md#self-update)).
+The image ships it under `/app/backup-agent` and serves it to backup agents at
+`/api/backup/v1/release/*`; hosts check daily and install newer builds on their
+own. A host on 0.2.0 needs one manual hop: install 0.3.0 from the image (verify
+it against `sha256sums-backup`) and re-run `flatline-backup install --config …`
+for each instance so the self-update units are written.
 
 ### Host-down noise
 
@@ -209,13 +227,14 @@ minutes and only real outages page.
 
 ## Release log
 
-| Date       | What shipped                                                                                                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-10-13 | Rust backend cutover (parity-verified against the Node backend, then the Node backend was retired).                                                                     |
-| 2026-10-14 | Performance/stability follow-up fixes; agent 1.6.0/1.6.1 rolled to the fleet.                                                                                           |
-| 2026-10-18 | Node backend removed from the repository; Superboard card redesign; hosted-website links; provider logos; agent-warning acknowledgements; agent 1.7.0 with self-update. |
-| 2026-10-21 | October performance and reliability audit (storage, engine, API, agent, dashboard findings) merged; backup agent integrated; agent 1.8.0.                               |
-| 2026-10-21 | Main board redesign (attention section, heartbeat strips, detail pane, motion) and the `heartbeat-strips` endpoint. Rollback tag `office-prev-20261021-144515`.         |
+| Date       | What shipped                                                                                                                                                                           |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-13 | Rust backend cutover (parity-verified against the Node backend, then the Node backend was retired).                                                                                    |
+| 2026-10-14 | Performance/stability follow-up fixes; agent 1.6.0/1.6.1 rolled to the fleet.                                                                                                          |
+| 2026-10-18 | Node backend removed from the repository; Superboard card redesign; hosted-website links; provider logos; agent-warning acknowledgements; agent 1.7.0 with self-update.                |
+| 2026-10-21 | October performance and reliability audit (storage, engine, API, agent, dashboard findings) merged; backup agent integrated; agent 1.8.0.                                              |
+| 2026-10-21 | Main board redesign (attention section, heartbeat strips, detail pane, motion) and the `heartbeat-strips` endpoint. Rollback tag `office-prev-20261021-144515`.                        |
+| 2026-10-25 | Backup storage enabled; optional backup encryption (backup agent 0.2.0); QR sign-in; nightly DB backup timer installed. Agent stays 1.8.0. Rollback tag `office-prev-20261025-054357`. |
 
 Each release is also recorded in [history](history.md) with the defects it fixed.
 
@@ -233,9 +252,16 @@ Each release is also recorded in [history](history.md) with the defects it fixed
 - The old `uptime-kuma` container is stopped but not removed, and its data
   directory is untouched. It is no longer a rollback path.
 
-## Backup storage (opt-in)
+## Backup storage
 
-Named backup agents need a dedicated mount, separate from `data-rust/`:
+**Enabled on the office host since 2026-10-25.** Every `docker compose ... up`
+there must pass both `compose.rust.yaml` and `compose.backups.yaml`: with the
+first file alone the container is recreated without the backup mount and
+uploads answer 503. `ps`, `logs` and `down` work with either form (same
+project name).
+
+Provisioning a new host (already done on office). Named backup agents need a
+dedicated mount, separate from `data-rust/`:
 
 ```bash
 sudo install -d -m 0700 /mnt/mirror/flatline-backups

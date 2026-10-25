@@ -6,7 +6,12 @@
 #   cd /home/office/flatline-src
 #   sudo docker build --platform linux/amd64 -f docker/rust.dockerfile \
 #       -t artchsh/flatline-rust:office-live .
-#   cd /home/office/flatline && sudo docker compose -f compose.rust.yaml up -d
+#   cd /home/office/flatline && sudo docker compose -f compose.rust.yaml \
+#       -f /home/office/flatline-src/docker/compose.backups.yaml up -d
+#
+# Always pass both files on the office host: backup storage has been enabled
+# there since 2026-10-25, and `up -d` with this file alone recreates the
+# container without the backup mount, so uploads silently answer 503.
 #
 # The repository copy of this file and the office copy are kept identical.
 # Steps, backup paths and the rollback procedure: docs/deployment.md.

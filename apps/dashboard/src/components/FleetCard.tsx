@@ -1,6 +1,8 @@
 import { memo, useEffect, useState, type MouseEvent } from "react";
-import type { MonitorSummary, MetricsPayload, CPUPeak, ResolvedMonitorLink } from "@/lib/api";
+import type { BackupAgentSummary, MonitorSummary, MetricsPayload, CPUPeak, ResolvedMonitorLink } from "@/lib/api";
+import { backupAttention, backupLines, backupVersion } from "@/lib/backup-card";
 import {
+    ageOf,
     agentWarnings,
     containerAgeMs,
     containerRows,
@@ -9,7 +11,6 @@ import {
     formatBytesPair,
     formatDuration,
     percentage,
-    sampleAgeMs,
     smartWarning,
     updatesStatus,
 } from "@/lib/fleet-presentation";
@@ -27,14 +28,6 @@ export interface FleetServer {
     cpuPeak10m?: CPUPeak | null;
     /** Linked websites hosted on this server, resolved worst-first on render. */
     links?: ResolvedMonitorLink[];
-}
-
-export function ageOf(value: string | null | undefined, now = Date.now()): string {
-    if (!value) {
-        return "—";
-    }
-    const age = sampleAgeMs(value, now);
-    return Number.isFinite(age) ? (formatDuration(age / 1000) ?? "0s") : "—";
 }
 
 /**
@@ -56,6 +49,35 @@ function SampleAge({ time }: { time: string }) {
     return <>{ageOf(time, now)} ago</>;
 }
 
+/**
+ * One "last backup … ago" line per backup agent, under "Updated". Ticks on
+ * its own like SampleAge, so the card's memo holds.
+ */
+function BackupLines({ agents }: { agents: BackupAgentSummary[] }) {
+    const [now, setNow] = useState(Date.now);
+    useEffect(() => {
+        const timer = window.setInterval(() => {
+            if (!document.hidden) {
+                setNow(Date.now());
+            }
+        }, 1000);
+        return () => window.clearInterval(timer);
+    }, []);
+    return (
+        <>
+            {backupLines(agents, now).map((line) => (
+                <span
+                    key={line.key}
+                    className={`fleet-freshness tnum ${line.tone === "warn" ? "text-warn" : "text-quiet"}`}
+                    title={line.title}
+                >
+                    {line.text}
+                </span>
+            ))}
+        </>
+    );
+}
+
 function temperature(value: number | undefined): string | null {
     return value !== undefined && Number.isFinite(value) && value > 0 && value < 125 ? `${Math.round(value)}°C` : null;
 }
@@ -69,15 +91,21 @@ function temperature(value: number | undefined): string | null {
  */
 const SHOW_GPU = false;
 
+/** Stable empty list, so a card without backup agents keeps its memo. */
+const NO_BACKUPS: BackupAgentSummary[] = [];
+
 /** Host reachability stays distinct from workload health and data freshness. */
 export const FleetCard = memo(function FleetCard({
     server,
+    backups = NO_BACKUPS,
     stale,
     peakFresh,
     onOpenHistory,
     onMenu,
 }: {
     server: FleetServer;
+    /** Backup agents linked to this server's monitor (the board groups them). */
+    backups?: BackupAgentSummary[];
     /** Computed by the board on its freshness tick, so the memo holds between flips. */
     stale: boolean;
     /** Whether `server.cpuPeak10m` is still inside its 10-minute window. */
@@ -97,10 +125,13 @@ export const FleetCard = memo(function FleetCard({
     const websitesDown = links.filter((link) => link.status === 0).length;
     const websitesPending = links.filter((link) => link.status === 2).length;
     const websitesUp = links.filter((link) => link.status === 1).length;
+    // An overdue or failed backup flags the card (never as "bad": a host or
+    // website being down is more severe) and counts on the board.
+    const behind = backupAttention(backups);
     const attention =
         down || websitesDown > 0
             ? "bad"
-            : stale || issues > 0 || hot || monitor.status === 2 || websitesPending > 0
+            : stale || issues > 0 || hot || monitor.status === 2 || websitesPending > 0 || behind.flagged > 0
               ? "warn"
               : "normal";
     const headline = down
@@ -111,11 +142,13 @@ export const FleetCard = memo(function FleetCard({
             ? "Stale data"
             : issues > 0
               ? `${issues} ${issues === 1 ? "issue" : "issues"}`
-              : hot
-                ? "High usage"
-                : websitesPending > 0
-                  ? `${websitesPending} website${websitesPending === 1 ? "" : "s"} pending`
-                  : hostLabel;
+              : behind.headline
+                ? behind.headline
+                : hot
+                  ? "High usage"
+                  : websitesPending > 0
+                    ? `${websitesPending} website${websitesPending === 1 ? "" : "s"} pending`
+                    : hostLabel;
     const cpu = metrics.cpu;
     const mem = metrics.mem;
     const peak = server.cpuPeak10m && peakFresh ? server.cpuPeak10m.percent : undefined;
@@ -155,6 +188,8 @@ export const FleetCard = memo(function FleetCard({
     ]
         .filter(Boolean)
         .join(" · ");
+    // The backup agent's version sits right after the telemetry agent's.
+    const backup = backupVersion(backups);
     const load = metrics.load;
     const loadTip =
         load && Number.isFinite(load.avg1)
@@ -197,9 +232,20 @@ export const FleetCard = memo(function FleetCard({
                             </span>
                         </button>
                     </h2>
-                    {subline ? (
+                    {subline || backup ? (
                         <p className="fleet-secondary mt-1" title={agentTip}>
                             {subline}
+                            {backup ? (
+                                <>
+                                    {subline ? " · " : null}
+                                    <span
+                                        className={`whitespace-nowrap${backup.tone === "warn" ? " text-warn" : ""}`}
+                                        title={backup.title}
+                                    >
+                                        {backup.text}
+                                    </span>
+                                </>
+                            ) : null}
                         </p>
                     ) : null}
                 </div>
@@ -214,6 +260,14 @@ export const FleetCard = memo(function FleetCard({
                     </span>
                 </div>
             </header>
+            {/* Under "Updated", right-aligned, but in its own full-width row:
+                inside the header column the long lines widened it and
+                truncated the server name. */}
+            {backups.some((agent) => agent.credentialActive) ? (
+                <div className="fleet-backups">
+                    <BackupLines agents={backups} />
+                </div>
+            ) : null}
 
             {updates || warning ? (
                 <div className="fleet-flags">

@@ -282,6 +282,7 @@ func (c *UploadClient) start(ctx context.Context, bundle Bundle) (RunSummary, in
 		"totalBytes":       bundle.Size,
 		"sha256":           bundle.SHA256,
 		"sourceSummary":    bundle.Summary,
+		"agentVersion":     version,
 	})
 	if err != nil {
 		return RunSummary{}, 0, err

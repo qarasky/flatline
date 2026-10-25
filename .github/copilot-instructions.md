@@ -37,8 +37,9 @@ the dashboard build. Data is SQLite, migrated at startup from
   removed.
 - **The agent is push-only.** `superboard` never listens on a port; the backend
   never connects to a client host. Silence from an agent is the down signal.
-- **Documentation lives in `docs/`.** `README.md` is the only Markdown file at
-  the repository root. If a change alters behaviour, the matching document in
+- **Documentation lives in `docs/`.** Besides `README.md`, the repository root
+  holds only `AGENTS.md` (coding-agent instructions) and `CLAUDE.md` (which
+  imports it). If a change alters behaviour, the matching document in
   `docs/` should change in the same commit.
 - **Migrations are additive and ordered.** Add a new `NNNN_name.sql`; never edit
   an applied migration. The backend refuses to start against a database with

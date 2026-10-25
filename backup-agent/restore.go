@@ -510,19 +510,11 @@ func restoreWorkDir(target RestoreTargetConfig, bundlePath string) (string, erro
 }
 
 func restoreEntries(ctx context.Context, bundlePath, identityFile, work string, manifest Manifest, target RestoreTargetConfig, executor RestoreExecutor, report *RestoreReport) error {
-	identities, err := readIdentities(identityFile)
+	decrypted, closer, err := openPayload(bundlePath, identityFile)
 	if err != nil {
 		return err
 	}
-	bundle, err := os.Open(bundlePath)
-	if err != nil {
-		return err
-	}
-	defer bundle.Close()
-	decrypted, err := age.Decrypt(bundle, identities...)
-	if err != nil {
-		return err
-	}
+	defer closer.Close()
 
 	byPath := make(map[string]Entry, len(manifest.Entries))
 	for _, entry := range manifest.Entries {
@@ -578,22 +570,9 @@ func restoreEntries(ctx context.Context, bundlePath, identityFile, work string, 
 			}
 		}
 	}
-	// The second pass must reach an authenticated end with no trailing
-	// plaintext, matching VerifyBundle's integrity contract.
-	buffer := make([]byte, 1)
-	for {
-		read, err := decrypted.Read(buffer)
-		if read > 0 {
-			return errors.New("archive has trailing plaintext")
-		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	// The second pass must reach a clean (for age, authenticated) end with
+	// no trailing data, matching VerifyBundle's integrity contract.
+	return requireCleanEnd(decrypted)
 }
 
 func restoreObject(ctx context.Context, archive *tar.Reader, entry Entry, work string, target RestoreS3Target, executor RestoreExecutor) error {
@@ -649,19 +628,11 @@ func spillVerifiedEntry(archive *tar.Reader, entry Entry, work string) (*os.File
 }
 
 func restoreGlobalsEntry(ctx context.Context, bundlePath, identityFile, globalsPath string, target RestoreTargetConfig, executor RestoreExecutor) error {
-	identities, err := readIdentities(identityFile)
+	decrypted, closer, err := openPayload(bundlePath, identityFile)
 	if err != nil {
 		return err
 	}
-	bundle, err := os.Open(bundlePath)
-	if err != nil {
-		return err
-	}
-	defer bundle.Close()
-	decrypted, err := age.Decrypt(bundle, identities...)
-	if err != nil {
-		return err
-	}
+	defer closer.Close()
 	archive := tar.NewReader(decrypted)
 	for {
 		header, err := archive.Next()

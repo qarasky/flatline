@@ -70,6 +70,7 @@ async fn harness_inner(storage: Option<(Arc<dyn FreeSpace>, Arc<dyn FaultInjecto
         web_dist: dir.path().join("no-web-build"),
         public_url: None,
         agent_dir: dir.path().join("agent"),
+        backup_agent_dir: dir.path().join("backup-agent"),
         backup_dir,
         heartbeat_retention_days: 0,
     };

@@ -45,6 +45,7 @@ fn sha(seed: char) -> String {
 
 fn valid_start(client_run_id: &str, now: chrono::DateTime<chrono::Utc>) -> StartRun {
     StartRun {
+        agent_version: None,
         client_run_id: client_run_id.to_string(),
         export_started_at: (now - chrono::Duration::minutes(30)).to_rfc3339(),
         export_finished_at: Some((now - chrono::Duration::minutes(1)).to_rfc3339()),
@@ -414,6 +415,7 @@ async fn backup_mutations_publish_backup_events() {
         .start_run_at(
             &agent.id,
             StartRun {
+                agent_version: None,
                 client_run_id: "event-run".to_string(),
                 export_started_at: (now - chrono::Duration::minutes(10)).to_rfc3339(),
                 export_finished_at: Some(now.to_rfc3339()),

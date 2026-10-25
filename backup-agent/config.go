@@ -44,12 +44,15 @@ type S3Source struct {
 
 // Config is one named agent instance. Version 1 is the only supported
 // on-disk format; secrets live in separate mode-0600 files.
+//
+// Recipient is optional: empty (the default) writes plain tar bundles; an
+// age X25519 public key encrypts every bundle, for sensitive data.
 type Config struct {
 	Version              int              `json:"version"`
 	Name                 string           `json:"name"`
 	ServerURL            string           `json:"serverUrl"`
 	TokenFile            string           `json:"tokenFile"`
-	Recipient            string           `json:"recipient"`
+	Recipient            string           `json:"recipient,omitempty"`
 	StateDir             string           `json:"stateDir"`
 	SpoolMaxBytes        int64            `json:"spoolMaxBytes"`
 	UploadBytesPerSecond int64            `json:"uploadBytesPerSecond"`
@@ -57,8 +60,14 @@ type Config struct {
 	Postgres             []PostgresSource `json:"postgres"`
 	S3                   []S3Source       `json:"s3"`
 
-	// Parsed recipient, not part of the JSON shape.
+	// Parsed recipient, not part of the JSON shape. Nil when encryption is
+	// off.
 	recipient age.Recipient `json:"-"`
+}
+
+// Encrypted reports whether bundles are age-encrypted to a recipient.
+func (c Config) Encrypted() bool {
+	return c.recipient != nil
 }
 
 // S3Credentials is the separate credentials file referenced by a source.
@@ -135,14 +144,15 @@ func (c *Config) normalizeAndValidate() error {
 		return err
 	}
 
-	if c.Recipient == "" {
-		return errors.New("recipient is required")
+	// Encryption is opt-in. A recipient that is present but malformed is an
+	// error, never a silent fallback to plain bundles.
+	if c.Recipient != "" {
+		recipient, err := age.ParseX25519Recipient(c.Recipient)
+		if err != nil {
+			return fmt.Errorf("recipient must be an age X25519 public key: %w", err)
+		}
+		c.recipient = recipient
 	}
-	recipient, err := age.ParseX25519Recipient(c.Recipient)
-	if err != nil {
-		return fmt.Errorf("recipient must be an age X25519 public key: %w", err)
-	}
-	c.recipient = recipient
 
 	if c.StateDir == "" {
 		return errors.New("stateDir is required")

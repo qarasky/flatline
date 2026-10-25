@@ -112,7 +112,7 @@ provisioning is in the [provisioning runbook](provisioning.md).
 | `interval_seconds`            | `1`                          | Seconds between live samples. An explicitly configured interval is preserved on upgrade.                                                                                                  |
 | `allow_insecure`              | `false`                      | Permit plain HTTP. Off by default because metrics (hostnames, container names, versions) are useful recon in cleartext.                                                                   |
 | `buffer_dir`                  | `/var/lib/superboard/buffer` | Disk-backed queue for undelivered samples. Holds hostnames and container names: keep it 0700, root-owned.                                                                                 |
-| `buffer_max_bytes`            | `33554432` (32 MiB)          | Byte cap on the buffer. Oldest samples are dropped first when full, so an endless outage cannot fill the disk.                                                                            |
+| `buffer_max_bytes`            | `268435456` (256 MiB)        | Byte cap on the buffer (~10 h of 1Hz samples). Oldest samples are dropped first when full, so an endless outage cannot fill the disk.                                                     |
 | `self_update`                 | `true`                       | Let the agent replace its own binary from a server-shipped release. Set `false` on a host you update by hand.                                                                             |
 | `self_update_interval_hours`  | `24`                         | How often the agent asks the server for a newer release.                                                                                                                                  |
 | `self_update_allow_downgrade` | `false`                      | Permit installing an older release, for recovering a bad rollout without host access.                                                                                                     |
@@ -230,7 +230,7 @@ changes shape.
   },
   "updates": { "total": 41, "security": 6, "rebootRequired": true },
   "agent": {
-    "version": "1.8.0",
+    "version": "1.8.1",
     "uptime": 86400,
     "samplesDropped": 4,
     "failedPushes": 3,
@@ -419,7 +419,7 @@ by the fleet.
 
 | Command                                                                                        | Purpose                                                                                                                                                       |
 | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `superboard version`                                                                           | Print the version (e.g. `superboard 1.8.0`). Release builds stamp it via `-ldflags`.                                                                          |
+| `superboard version`                                                                           | Print the version (e.g. `superboard 1.8.1`). Release builds stamp it via `-ldflags`.                                                                          |
 | `superboard check [--verbose]`                                                                 | Collect and push **once**, print the outcome, exit 0 on accept. `--verbose` prints the full payload. A fast diagnostic (1s CPU window), never a load average. |
 | `superboard install --server URL --token TOKEN [--interval SECS] [--insecure] [--config PATH]` | Write config, install the service, and start it. Must run as root; refuses to double-install.                                                                 |
 | `superboard uninstall [--config PATH]`                                                         | Stop and remove everything install created: service (or cron entry), buffer directory, and config. Must run as root.                                          |
