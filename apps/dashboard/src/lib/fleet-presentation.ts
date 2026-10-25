@@ -323,6 +323,20 @@ export function formatDuration(seconds: number | undefined): string | null {
     return `${Math.floor(seconds / 86400)}d`;
 }
 
+/**
+ * How long ago a timestamp was, as `Xs`/`Xm`/`Xh`/`Xd` ("0s" for now or the
+ * future), or "—" when there is none.
+ * @param value Timestamp
+ * @param now Current time in milliseconds
+ */
+export function ageOf(value: string | null | undefined, now = Date.now()): string {
+    if (!value) {
+        return "—";
+    }
+    const age = sampleAgeMs(value, now);
+    return Number.isFinite(age) ? (formatDuration(age / 1000) ?? "0s") : "—";
+}
+
 type AgentMetrics = NonNullable<MetricsPayload["agent"]>;
 
 /**

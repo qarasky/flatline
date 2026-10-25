@@ -198,6 +198,11 @@ export interface BackupAgentSummary {
     lastCompletedRun: BackupRunSummary | null;
     latestArchiveVerification: BackupVerification | null;
     latestRestoreVerification: BackupVerification | null;
+    /** Backup-agent version last reported (run start or self-update check-in). */
+    reportedVersion: string | null;
+    versionReportedAt: string | null;
+    /** Outcome of the host's last self-update attempt: `ok` or a code. */
+    updateStatus: string | null;
 }
 
 export interface HealthSummary {

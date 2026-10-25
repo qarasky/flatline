@@ -1,6 +1,7 @@
 import { memo, useEffect, useState, type MouseEvent } from "react";
 import type { MonitorSummary, MetricsPayload, CPUPeak, ResolvedMonitorLink } from "@/lib/api";
 import {
+    ageOf,
     agentWarnings,
     containerAgeMs,
     containerRows,
@@ -9,7 +10,6 @@ import {
     formatBytesPair,
     formatDuration,
     percentage,
-    sampleAgeMs,
     smartWarning,
     updatesStatus,
 } from "@/lib/fleet-presentation";
@@ -27,14 +27,6 @@ export interface FleetServer {
     cpuPeak10m?: CPUPeak | null;
     /** Linked websites hosted on this server, resolved worst-first on render. */
     links?: ResolvedMonitorLink[];
-}
-
-export function ageOf(value: string | null | undefined, now = Date.now()): string {
-    if (!value) {
-        return "—";
-    }
-    const age = sampleAgeMs(value, now);
-    return Number.isFinite(age) ? (formatDuration(age / 1000) ?? "0s") : "—";
 }
 
 /**
