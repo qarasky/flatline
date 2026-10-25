@@ -236,6 +236,7 @@ minutes and only real outages page.
 | 2026-10-21 | Main board redesign (attention section, heartbeat strips, detail pane, motion) and the `heartbeat-strips` endpoint. Rollback tag `office-prev-20261021-144515`.                                                    |
 | 2026-10-25 | Backup storage enabled; optional backup encryption (backup agent 0.2.0); QR sign-in; nightly DB backup timer installed. Agent stays 1.8.0. Rollback tag `office-prev-20261025-054357`.                             |
 | 2026-10-25 | Agent 1.8.1 (256 MiB buffer) to the fleet via self-update; backup-agent self-update (0.3.0, migration 0015) and Superboard backup lines; meks hopped to 0.3.0 by hand. Rollback tag `office-prev-20261025-073124`. |
+| 2026-10-25 | Backup agent 0.3.1: restore reuses one S3 client per target (0.3.0 stopped a stock Garage at ~1,000 objects). meks self-updated 0.3.0 → 0.3.1 on its update timer. Rollback tag `office-prev-20261025-075239`.     |
 
 Each release is also recorded in [history](history.md) with the defects it fixed.
 

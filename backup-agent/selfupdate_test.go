@@ -175,9 +175,12 @@ func TestSelfUpdateSwapsVerifiedBinary(t *testing.T) {
 	server := newReleaseServer(t, "0.4.0", newBinary)
 	host := newUpdateHost(t, server.server.URL)
 
-	status, err := SelfUpdate(context.Background(), host.options)
+	status, installed, err := SelfUpdate(context.Background(), host.options)
 	if err != nil || status != "ok" {
 		t.Fatalf("status = %q, err = %v", status, err)
+	}
+	if installed != "0.4.0" {
+		t.Fatalf("installed = %q, want the release it swapped in", installed)
 	}
 	if !bytes.Equal(readBinary(t, host.options.binaryPath), newBinary) {
 		t.Fatal("the verified build must replace the binary")
@@ -206,7 +209,7 @@ func TestSelfUpdateRejectsChecksumMismatch(t *testing.T) {
 	server.sha256 = strings.Repeat("0", 64)
 	host := newUpdateHost(t, server.server.URL)
 
-	status, _ := SelfUpdate(context.Background(), host.options)
+	status, _, _ := SelfUpdate(context.Background(), host.options)
 	if status != "checksum_mismatch" {
 		t.Fatalf("status = %q", status)
 	}
@@ -223,7 +226,7 @@ func TestSelfUpdateRejectsWrongVersion(t *testing.T) {
 	host := newUpdateHost(t, server.server.URL)
 	host.options.probeVersion = func(string) (string, error) { return "0.3.9", nil }
 
-	status, _ := SelfUpdate(context.Background(), host.options)
+	status, _, _ := SelfUpdate(context.Background(), host.options)
 	if status != "version_mismatch" {
 		t.Fatalf("status = %q", status)
 	}
@@ -242,7 +245,7 @@ func TestSelfUpdateWaitsForRunningBackup(t *testing.T) {
 	defer lock.Close()
 
 	started := time.Now()
-	status, _ := SelfUpdate(context.Background(), host.options)
+	status, _, _ := SelfUpdate(context.Background(), host.options)
 	if status != "lock_timeout" {
 		t.Fatalf("status = %q", status)
 	}
@@ -265,7 +268,7 @@ func TestSelfUpdateRefusesMixedServers(t *testing.T) {
 	second := newReleaseServer(t, "0.4.0", newBinary)
 	host := newUpdateHost(t, first.server.URL, second.server.URL)
 
-	status, _ := SelfUpdate(context.Background(), host.options)
+	status, _, _ := SelfUpdate(context.Background(), host.options)
 	if status != "server_mismatch" {
 		t.Fatalf("status = %q", status)
 	}
@@ -281,7 +284,7 @@ func TestSelfUpdateRefusesDowngrade(t *testing.T) {
 	server := newReleaseServer(t, "0.2.0", newBinary)
 	host := newUpdateHost(t, server.server.URL)
 
-	status, _ := SelfUpdate(context.Background(), host.options)
+	status, _, _ := SelfUpdate(context.Background(), host.options)
 	if status != "downgrade_refused" {
 		t.Fatalf("status = %q", status)
 	}
@@ -294,7 +297,10 @@ func TestSelfUpdateCurrentIsOK(t *testing.T) {
 	server := newReleaseServer(t, version, newBinary)
 	host := newUpdateHost(t, server.server.URL)
 
-	status, err := SelfUpdate(context.Background(), host.options)
+	status, installed, err := SelfUpdate(context.Background(), host.options)
+	if installed != "" {
+		t.Fatalf("nothing was installed, got %q", installed)
+	}
 	if err != nil || status != "ok" || server.downloads != 0 {
 		t.Fatalf("status = %q err = %v downloads = %d", status, err, server.downloads)
 	}
@@ -307,7 +313,7 @@ func TestSelfUpdateDisabledStillChecksIn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	status, err := SelfUpdate(context.Background(), host.options)
+	status, _, err := SelfUpdate(context.Background(), host.options)
 	if err != nil || status != "ok" {
 		t.Fatalf("status = %q, err = %v", status, err)
 	}
@@ -323,14 +329,14 @@ func TestSelfUpdateReportsPreviousStatusOnNextRun(t *testing.T) {
 	server := newReleaseServer(t, "0.4.0", newBinary)
 	server.sha256 = strings.Repeat("0", 64)
 	host := newUpdateHost(t, server.server.URL)
-	if status, _ := SelfUpdate(context.Background(), host.options); status != "checksum_mismatch" {
+	if status, _, _ := SelfUpdate(context.Background(), host.options); status != "checksum_mismatch" {
 		t.Fatalf("first run status = %q", status)
 	}
 	server.mu.Lock()
 	server.checkins = nil
 	server.mu.Unlock()
 
-	_, _ = SelfUpdate(context.Background(), host.options)
+	_, _, _ = SelfUpdate(context.Background(), host.options)
 	if statuses := server.statuses(); len(statuses) == 0 || statuses[0] != "checksum_mismatch" {
 		t.Fatalf("the next run's first check-in carries the previous outcome: %v", statuses)
 	}
@@ -354,7 +360,7 @@ func TestSelfUpdateDownloadsWithTheInstanceThatCheckedIn(t *testing.T) {
 		return client, nil
 	}
 
-	status, err := SelfUpdate(context.Background(), host.options)
+	status, _, err := SelfUpdate(context.Background(), host.options)
 	if err != nil || status != "ok" {
 		t.Fatalf("a revoked first instance must not block the host's update: status = %q, err = %v", status, err)
 	}
@@ -384,11 +390,22 @@ func TestSelfUpdateNeverHoldsOneLockWhileWaitingForAnother(t *testing.T) {
 		free <- err
 	}()
 
-	status, _ := SelfUpdate(context.Background(), host.options)
+	status, _, _ := SelfUpdate(context.Background(), host.options)
 	if status != "lock_timeout" {
 		t.Fatalf("status = %q", status)
 	}
 	if err := <-free; err != nil {
 		t.Fatalf("an idle instance's lock was held during the wait: %v", err)
+	}
+}
+
+func TestSelfUpdateMessageNamesTheInstalledBuild(t *testing.T) {
+	// The old process prints the last line after swapping: it must name the
+	// build it installed, not its own (now replaced) version.
+	if got, want := selfUpdateMessage("ok", "0.4.0"), "self-update: installed 0.4.0 (was "+version+")"; got != want {
+		t.Fatalf("after a swap: %q, want %q", got, want)
+	}
+	if got, want := selfUpdateMessage("ok", ""), "self-update: ok (running "+version+")"; got != want {
+		t.Fatalf("already current: %q, want %q", got, want)
 	}
 }

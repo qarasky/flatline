@@ -103,19 +103,19 @@ type instance struct {
 // keep the current binary as .prev, swap, refresh units, and let the new
 // binary report itself. It returns the outcome code; a non-nil error carries
 // the detail for the log.
-func SelfUpdate(ctx context.Context, options updateOptions) (string, error) {
+func SelfUpdate(ctx context.Context, options updateOptions) (status string, installed string, err error) {
 	options.defaults()
 	if err := os.MkdirAll(options.stagingDir, 0o700); err != nil {
-		return updateSwapFailed, fmt.Errorf("staging dir: %w", err)
+		return updateSwapFailed, "", fmt.Errorf("staging dir: %w", err)
 	}
 	previous := readLastStatus(options.stagingDir)
 
 	paths, err := discoverInstances(options.unitDir)
 	if err != nil {
-		return updateOK, err
+		return updateOK, "", err
 	}
 	if len(paths) == 0 {
-		return updateOK, nil
+		return updateOK, "", nil
 	}
 	instances := make([]instance, 0, len(paths))
 	for _, path := range paths {
@@ -132,7 +132,7 @@ func SelfUpdate(ctx context.Context, options updateOptions) (string, error) {
 		instances = append(instances, instance{cfg: cfg, client: client})
 	}
 	if len(instances) == 0 {
-		return updateOK, errors.New("no usable instance configuration")
+		return updateOK, "", errors.New("no usable instance configuration")
 	}
 
 	// Every instance reports first, with the previous run's outcome, so each
@@ -153,31 +153,31 @@ func SelfUpdate(ctx context.Context, options updateOptions) (string, error) {
 		}
 	}
 	if !reported {
-		return finish(ctx, options, instances, updateDownloadFailed, errors.New("no instance could check in"))
+		return finishNone(ctx, options, instances, updateDownloadFailed, errors.New("no instance could check in"))
 	}
 	if os.Getenv(reexecEnv) != "" {
-		return updateOK, nil
+		return updateOK, "", nil
 	}
 
 	server := normalizeServer(instances[0].cfg.ServerURL)
 	for _, inst := range instances[1:] {
 		if normalizeServer(inst.cfg.ServerURL) != server {
-			return finish(ctx, options, instances, updateServerMismatch,
+			return finishNone(ctx, options, instances, updateServerMismatch,
 				fmt.Errorf("instances report to different servers (%s, %s)", server, inst.cfg.ServerURL))
 		}
 	}
 	if _, err := os.Stat(options.disabledFile); err == nil {
-		return finish(ctx, options, instances, updateOK, nil)
+		return finishNone(ctx, options, instances, updateOK, nil)
 	}
 
 	if release.Version == "" {
-		return finish(ctx, options, instances, updateOK, nil)
+		return finishNone(ctx, options, instances, updateOK, nil)
 	}
 	switch order := compareVersions(release.Version, version); {
 	case order == 0:
-		return finish(ctx, options, instances, updateOK, nil)
+		return finishNone(ctx, options, instances, updateOK, nil)
 	case order < 0:
-		return finish(ctx, options, instances, updateDowngradeRefused,
+		return finishNone(ctx, options, instances, updateDowngradeRefused,
 			fmt.Errorf("server ships %s, older than the running %s", release.Version, version))
 	}
 	var asset *ReleaseAsset
@@ -187,37 +187,37 @@ func SelfUpdate(ctx context.Context, options updateOptions) (string, error) {
 		}
 	}
 	if asset == nil {
-		return finish(ctx, options, instances, updateNoAsset, fmt.Errorf("release %s has no %s build", release.Version, platformID()))
+		return finishNone(ctx, options, instances, updateNoAsset, fmt.Errorf("release %s has no %s build", release.Version, platformID()))
 	}
 
 	staged := filepath.Join(options.stagingDir, "flatline-backup.new")
 	if err := source.downloadRelease(ctx, asset.File, staged, asset.Size); err != nil {
-		return finish(ctx, options, instances, updateDownloadFailed, err)
+		return finishNone(ctx, options, instances, updateDownloadFailed, err)
 	}
 	defer os.Remove(staged)
 	size, digest, err := hashFile(staged)
 	if err != nil || size != asset.Size || !strings.EqualFold(digest, asset.SHA256) {
-		return finish(ctx, options, instances, updateChecksumMismatch,
+		return finishNone(ctx, options, instances, updateChecksumMismatch,
 			fmt.Errorf("staged build does not match the release (%d bytes, sha256 %s)", size, digest))
 	}
 	if err := os.Chmod(staged, 0o755); err != nil {
-		return finish(ctx, options, instances, updateSwapFailed, err)
+		return finishNone(ctx, options, instances, updateSwapFailed, err)
 	}
 	if got, err := options.probeVersion(staged); err != nil || got != release.Version {
-		return finish(ctx, options, instances, updateVersionMismatch,
+		return finishNone(ctx, options, instances, updateVersionMismatch,
 			fmt.Errorf("staged build reports %q (%v), want %q", got, err, release.Version))
 	}
 
 	locks, err := lockAll(instances, options.lockWait)
 	if err != nil {
-		return finish(ctx, options, instances, updateLockTimeout, err)
+		return finishNone(ctx, options, instances, updateLockTimeout, err)
 	}
 	swapErr := swapBinary(staged, options.binaryPath)
 	for _, lock := range locks {
 		lock.Close()
 	}
 	if swapErr != nil {
-		return finish(ctx, options, instances, updateSwapFailed, swapErr)
+		return finishNone(ctx, options, instances, updateSwapFailed, swapErr)
 	}
 	log.Printf("self-update: installed %s (was %s); previous build kept at %s.prev", release.Version, version, options.binaryPath)
 
@@ -229,7 +229,23 @@ func SelfUpdate(ctx context.Context, options updateOptions) (string, error) {
 	if err := options.reexec(options.binaryPath); err != nil {
 		log.Printf("self-update: the new build could not report itself: %v", err)
 	}
-	return updateOK, nil
+	return updateOK, release.Version, nil
+}
+
+// finishNone is finish for the paths that installed nothing.
+func finishNone(ctx context.Context, options updateOptions, instances []instance, status string, cause error) (string, string, error) {
+	status, err := finish(ctx, options, instances, status, cause)
+	return status, "", err
+}
+
+// selfUpdateMessage is the command's closing line. After a swap the running
+// process is the old build, so it names the build it installed instead of
+// its own version.
+func selfUpdateMessage(status, installed string) string {
+	if installed != "" {
+		return fmt.Sprintf("self-update: installed %s (was %s)", installed, version)
+	}
+	return fmt.Sprintf("self-update: %s (running %s)", status, version)
 }
 
 // finish records the outcome for the next run and, when it is a failure,

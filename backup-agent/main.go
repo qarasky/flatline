@@ -10,7 +10,7 @@ import (
 	"syscall"
 )
 
-const version = "0.3.1"
+const version = "0.3.2"
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -151,14 +151,14 @@ func runSelfUpdate(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	status, err := SelfUpdate(ctx, updateOptions{})
+	status, installed, err := SelfUpdate(ctx, updateOptions{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "self-update: %s: %v\n", status, err)
 	}
 	if status != updateOK {
 		return 1
 	}
-	fmt.Printf("self-update: %s (running %s)\n", status, version)
+	fmt.Println(selfUpdateMessage(status, installed))
 	return 0
 }
 
