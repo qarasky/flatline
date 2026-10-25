@@ -1220,10 +1220,12 @@ impl Backups {
                 .await?;
         }
 
-        // One hashing pass plus fsync/rename, on the blocking pool.
+        // One hashing pass plus fsync/rename, on the blocking pool. The
+        // published name says what the bundle is (.tar or .age).
+        let encrypted = runs::summary_is_encrypted(run.source_summary.as_ref());
         let (agent, run, digest) = (agent_id.to_string(), run_id.to_string(), sha256.clone());
         let finalized = run_blocking(&storage, move |storage| {
-            storage.finalize(&agent, &run, total as u64, &digest)
+            storage.finalize(&agent, &run, total as u64, &digest, encrypted)
         })
         .await;
         match finalized {
@@ -1371,11 +1373,16 @@ impl Backups {
         let total = row.total_bytes.unwrap_or_default() as u64;
         let sha256 = row.sha256.clone().unwrap_or_default();
         let (agent, run) = (row.agent_id.clone(), row.id.clone());
+        let summary: Option<Value> = row
+            .source_summary
+            .as_deref()
+            .and_then(|raw| serde_json::from_str(raw).ok());
+        let encrypted = runs::summary_is_encrypted(summary.as_ref());
         // `finalize` verifies an already-published bundle once, or hashes the
         // partial once and publishes it. Both run on the blocking pool so a
         // boot with several large finalizing runs cannot starve monitoring.
         run_blocking(storage, move |storage| {
-            storage.finalize(&agent, &run, total, &sha256)
+            storage.finalize(&agent, &run, total, &sha256, encrypted)
         })
         .await
         .map_err(storage_error)?;

@@ -209,9 +209,10 @@ rebuilding a host also needs its application configuration from elsewhere.
 
 On the receiving Flatline server, under `FLATLINE_BACKUP_DIR` (office:
 `/mnt/mirror/flatline-backups`, the RAID1 mirror):
-`agents/<agent-id>/<run-id>/bundle.age`, owned by the service user, mode 0700
-directories. The file is named `bundle.age` whatever its format; downloads
-are named `.tar` or `.age` from the run's `encrypted` flag. The server keeps
+`agents/<agent-id>/<run-id>/bundle.tar` (plain) or `bundle.age` (encrypted),
+from the run's `encrypted` flag, owned by the service user, mode 0700
+directories. Servers before 2026-10-25 stored every bundle as `bundle.age`;
+those files keep downloading and are deleted normally. The server keeps
 `retentionCount` (default seven) completed runs per agent plus the latest
 restore-tested and archive-verified runs, and deletes the rest.
 

@@ -30,8 +30,25 @@ pub const STORAGE_MARKER: &str = ".flatline-backup-storage";
 /// In-progress bundle name.
 pub const PARTIAL_NAME: &str = "bundle.partial";
 
-/// Published bundle name.
-pub const FINAL_NAME: &str = "bundle.age";
+/// Published name of a plain (tar) bundle.
+pub const FINAL_PLAIN: &str = "bundle.tar";
+
+/// Published name of an age-encrypted bundle. Servers before the plain name
+/// existed stored every bundle under this name, so readers accept either.
+pub const FINAL_ENCRYPTED: &str = "bundle.age";
+
+/// The published name for a bundle, from the run's `encrypted` flag.
+pub fn final_name(encrypted: bool) -> &'static str {
+    if encrypted { FINAL_ENCRYPTED } else { FINAL_PLAIN }
+}
+
+/// The published bundle in a run directory, under whichever name it has.
+fn published_in(run_dir: &Path) -> Option<PathBuf> {
+    [FINAL_PLAIN, FINAL_ENCRYPTED]
+        .into_iter()
+        .map(|name| run_dir.join(name))
+        .find(|path| fs::symlink_metadata(path).is_ok())
+}
 
 /// Injectable free-space reading. Production uses the filesystem; tests use
 /// a deterministic value so capacity arithmetic is exact.
@@ -229,8 +246,12 @@ impl Storage {
         Ok(self.run_dir(agent_id, run_id)?.join(PARTIAL_NAME))
     }
 
+    /// The published bundle, under whichever name it was stored; the
+    /// encrypted name when nothing is published yet (callers then report the
+    /// missing file).
     pub fn final_path(&self, agent_id: &str, run_id: &str) -> Result<PathBuf, StorageError> {
-        Ok(self.run_dir(agent_id, run_id)?.join(FINAL_NAME))
+        let run_dir = self.run_dir(agent_id, run_id)?;
+        Ok(published_in(&run_dir).unwrap_or_else(|| run_dir.join(FINAL_ENCRYPTED)))
     }
 
     /// Create (or verify) the run directory and its empty partial file.
@@ -253,7 +274,8 @@ impl Storage {
         self.verify_root()?;
         let run_dir = self.run_dir(agent_id, run_id)?;
         remove_regular(&run_dir.join(PARTIAL_NAME))?;
-        remove_regular(&run_dir.join(FINAL_NAME))?;
+        remove_regular(&run_dir.join(FINAL_PLAIN))?;
+        remove_regular(&run_dir.join(FINAL_ENCRYPTED))?;
         ensure_directory(&run_dir)?;
         ensure_regular(&run_dir.join(PARTIAL_NAME), true)?;
         sync_directory(&run_dir)?;
@@ -382,16 +404,18 @@ impl Storage {
         run_id: &str,
         total: u64,
         sha256: &str,
+        encrypted: bool,
     ) -> Result<(), StorageError> {
         self.verify_root()?;
         let run_dir = self.run_dir(agent_id, run_id)?;
         let partial = run_dir.join(PARTIAL_NAME);
-        let final_path = run_dir.join(FINAL_NAME);
+        let final_path = run_dir.join(final_name(encrypted));
 
         // A published file may already exist after a crash between rename and
-        // the SQLite update: verify it once, drop any leftover partial, and
-        // finish.
-        match fs::symlink_metadata(&final_path) {
+        // the SQLite update (under either name, if an older server wrote it):
+        // verify it once, drop any leftover partial, and finish.
+        let published = published_in(&run_dir).unwrap_or_else(|| final_path.clone());
+        match fs::symlink_metadata(&published) {
             Ok(metadata) => {
                 if metadata.file_type().is_symlink() || !metadata.is_file() {
                     return Err(StorageError::Io(io::Error::new(
@@ -453,7 +477,8 @@ impl Storage {
         self.verify_root()?;
         let run_dir = self.run_dir(agent_id, run_id)?;
         remove_regular(&run_dir.join(PARTIAL_NAME))?;
-        remove_regular(&run_dir.join(FINAL_NAME))?;
+        remove_regular(&run_dir.join(FINAL_PLAIN))?;
+        remove_regular(&run_dir.join(FINAL_ENCRYPTED))?;
         match fs::remove_dir(&run_dir) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
