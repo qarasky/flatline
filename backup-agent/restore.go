@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -191,7 +192,7 @@ func RestoreBundle(ctx context.Context, bundlePath, identityFile, targetConfigPa
 	if err != nil {
 		return failedReport(err), err
 	}
-	return restoreBundleWith(ctx, bundlePath, identityFile, target, dockerRestoreExecutor{})
+	return restoreBundleWith(ctx, bundlePath, identityFile, target, newDockerRestoreExecutor())
 }
 
 func restoreBundleWith(ctx context.Context, bundlePath, identityFile string, target RestoreTargetConfig, executor RestoreExecutor) (RestoreReport, error) {
@@ -254,7 +255,7 @@ func CompareRestore(ctx context.Context, bundlePath, identityFile, targetConfigP
 	if err != nil {
 		return failedReport(err), err
 	}
-	return compareRestoreWith(ctx, bundlePath, identityFile, target, dockerRestoreExecutor{})
+	return compareRestoreWith(ctx, bundlePath, identityFile, target, newDockerRestoreExecutor())
 }
 
 func compareRestoreWith(ctx context.Context, bundlePath, identityFile string, target RestoreTargetConfig, executor RestoreExecutor) (RestoreReport, error) {
@@ -364,7 +365,7 @@ func RestoreGlobals(ctx context.Context, bundlePath, identityFile, targetConfigP
 	if err != nil {
 		return failedReport(err), err
 	}
-	return restoreGlobalsWith(ctx, bundlePath, identityFile, target, dockerRestoreExecutor{})
+	return restoreGlobalsWith(ctx, bundlePath, identityFile, target, newDockerRestoreExecutor())
 }
 
 func restoreGlobalsWith(ctx context.Context, bundlePath, identityFile string, target RestoreTargetConfig, executor RestoreExecutor) (RestoreReport, error) {
@@ -751,6 +752,19 @@ func failedReport(err error) RestoreReport {
 
 type dockerRestoreExecutor struct {
 	binary string
+	// clients holds one S3 client per target for the whole restore. A client
+	// per object kept one idle connection open per object, and a default
+	// Garage (1,024 open files) stopped serving around the 1,000th object.
+	clients *s3ClientCache
+}
+
+type s3ClientCache struct {
+	mu      sync.Mutex
+	clients map[RestoreS3Target]S3API
+}
+
+func newDockerRestoreExecutor() dockerRestoreExecutor {
+	return dockerRestoreExecutor{clients: &s3ClientCache{clients: make(map[RestoreS3Target]S3API)}}
 }
 
 func (d dockerRestoreExecutor) docker() string {
@@ -761,12 +775,28 @@ func (d dockerRestoreExecutor) docker() string {
 }
 
 func (d dockerRestoreExecutor) s3Client(ctx context.Context, target RestoreS3Target) (S3API, error) {
-	return newS3Client(ctx, S3Source{
-		Endpoint:        target.Endpoint,
-		Region:          target.Region,
-		Bucket:          target.Bucket,
-		CredentialsFile: target.CredentialsFile,
-	})
+	build := func() (S3API, error) {
+		return newS3Client(ctx, S3Source{
+			Endpoint:        target.Endpoint,
+			Region:          target.Region,
+			Bucket:          target.Bucket,
+			CredentialsFile: target.CredentialsFile,
+		})
+	}
+	if d.clients == nil {
+		return build()
+	}
+	d.clients.mu.Lock()
+	defer d.clients.mu.Unlock()
+	if client, ok := d.clients.clients[target]; ok {
+		return client, nil
+	}
+	client, err := build()
+	if err != nil {
+		return nil, err
+	}
+	d.clients.clients[target] = client
+	return client, nil
 }
 
 func (d dockerRestoreExecutor) BucketEmpty(ctx context.Context, target RestoreS3Target) (bool, error) {

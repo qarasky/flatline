@@ -508,3 +508,37 @@ func TestRestoreDockerArgsSeparateContainer(t *testing.T) {
 		}
 	}
 }
+
+// A restore of ~1,000 objects used to open one S3 client, and so one kept-
+// alive connection, per object: a default Garage (1,024 open files) stopped
+// serving mid-restore. Every call for one target must share a client.
+func TestRestoreReusesOneS3ClientPerTarget(t *testing.T) {
+	fixture := newFixture(t)
+	target := RestoreS3Target{
+		Endpoint: "http://127.0.0.1:3900", Region: "garage", Bucket: "restore-media",
+		CredentialsFile: filepath.Join(fixture.dir, "credentials.json"), SourceBucket: "meks-media",
+	}
+	executor := newDockerRestoreExecutor()
+
+	first, err := executor.s3Client(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := executor.s3Client(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("every object of one target must reuse the same S3 client and its connection pool")
+	}
+
+	other := target
+	other.Bucket = "restore-docs"
+	third, err := executor.s3Client(context.Background(), other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == first {
+		t.Fatal("a different target gets its own client")
+	}
+}
