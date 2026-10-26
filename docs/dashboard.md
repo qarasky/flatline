@@ -88,8 +88,8 @@ From top to bottom:
   muted) has a dark red dot and reads `Down · muted`.
 - **Detail:** opening a monitor shows it beside the list at 1280 px and wider, and as a sheet below
   that. The open row keeps an accent edge, `Esc` closes it, and the monitor is in the URL (`?m=ID`).
-  A down monitor offers **Mute** beside **Edit**; a muted one offers **Unmute** and says since when,
-  or which server's mute covers it.
+  A down monitor offers **Mute** beside **Edit** (on a group it mutes the monitors down inside it);
+  a muted one offers **Unmute** and says since when, or which server's mute covers it.
 
 ### The 24 h strip
 

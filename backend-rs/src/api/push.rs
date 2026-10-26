@@ -202,14 +202,26 @@ pub async fn push(
 }
 
 /// A stored sample can end a mute: a newly failing disk or a newly full
-/// mount on a muted server is a new problem. Best effort; never fails the
-/// push.
+/// mount on a muted server is a new problem. The end is announced, since
+/// SMART (and a disk with no threshold) has no alert of its own. Best
+/// effort; never fails the push.
 async fn note_sample(state: &AppState, monitor: &Monitor, sample: &Value) {
     match crate::mutes::on_sample(&state.pool, monitor.id, sample, monitor.metric_disk_threshold)
         .await
     {
-        Ok(true) => state.events.invalidate(),
-        Ok(false) => {}
+        Ok(crate::mutes::SampleChange::None) => {}
+        Ok(crate::mutes::SampleChange::Shrunk) => state.events.invalidate(),
+        Ok(crate::mutes::SampleChange::Ended(reason)) => {
+            state.events.invalidate();
+            let group = crate::notify::group_path(&state.pool, monitor.parent).await;
+            let message = format!(
+                "[🔴 MUTE ENDED] [{}] [{}]\n[{reason}]",
+                group.as_deref().unwrap_or("Ungrouped"),
+                monitor.name
+            );
+            crate::notify::dispatch_message(&state.pool, &state.metrics.client, monitor.id, message)
+                .await;
+        }
         Err(error) => tracing::error!("push: mute update for {}: {error}", monitor.name),
     }
 }

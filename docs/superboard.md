@@ -156,11 +156,16 @@ A mute ends by itself. Anything new and substantial on the card deletes it and
 alerts as usual: another linked monitor going down, a disk newly failing SMART,
 or a mount newly reaching the disk-full level (the monitor's disk alert
 threshold, or 90% when none is set). A disk that was already failing or full
-when you muted does not end it. Each muted monitor that recovers drops out of
-the mute, so a later outage is new; when nothing muted is still down, the mute
-is gone. **Unmute** (same menu) ends it by hand.
+when you muted does not end it, and neither does a sample that reports no
+disks (an agent that just restarted). A mute ended by a disk is announced in
+Telegram (`[🔴 MUTE ENDED] … [/dev/sdb failing SMART]`), since a failing disk has
+no alert of its own. Each muted monitor that recovers drops out of the mute, so
+a later outage is new; when nothing muted is still down, the mute is gone.
+**Unmute** (same menu) ends it by hand.
 
-The mute is stored on the server, so every screen, the wall included, shows it.
+Muting a group from the dashboard mutes the monitors down inside it; one going
+down later ends the mute. The mute is stored on the server, so every screen, the
+wall included, shows it.
 
 ### Provider logos
 

@@ -19,6 +19,13 @@ use sqlx::SqlitePool;
 
 use crate::heartbeats::{DOWN, PENDING};
 
+/// Serialises every read-modify-write of `monitor_mutes`. The rows are
+/// shared across monitors (one website's recovery and another's, a mute
+/// request and a recovery), so the per-monitor heartbeat lock is not enough:
+/// a lost update could keep a recovered monitor in a snapshot and silence its
+/// next outage.
+static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Disk-full level when the monitor has no disk alert threshold: the
 /// Superboard card's "hot" level.
 pub const DISK_FULL_DEFAULT: f64 = 90.0;
@@ -164,6 +171,18 @@ pub(crate) async fn save(pool: &SqlitePool, mute: &Mute) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// Shrink an existing mute in place. A plain UPDATE: a mute deleted in the
+/// meantime is never written back.
+async fn update_snapshot(pool: &SqlitePool, mute: &Mute) -> sqlx::Result<()> {
+    sqlx::query("UPDATE monitor_mutes SET monitors = ?, full_mounts = ? WHERE monitor_id = ?")
+        .bind(encode(&mute.monitors))
+        .bind(encode(&mute.full_mounts))
+        .bind(mute.subject)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// JSON-encode a snapshot list for storage.
 fn encode<T: serde::Serialize>(list: &[T]) -> String {
     serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
@@ -192,13 +211,25 @@ pub(crate) async fn statuses(pool: &SqlitePool, ids: &[i64]) -> sqlx::Result<Has
         .collect())
 }
 
-/// `(id, latest status)` for the subject and every website on its card.
+/// `(id, latest status)` for the subject and every website on its card; for
+/// a group, every monitor inside it.
 pub async fn card_monitors(pool: &SqlitePool, subject: i64) -> sqlx::Result<Vec<(i64, i64)>> {
     let (_, resolved) = crate::links::resolve(pool, subject)
         .await
         .map_err(|error| sqlx::Error::Protocol(format!("resolve links: {error:?}")))?;
-    let own = statuses(pool, &[subject]).await?;
-    let mut out = vec![(subject, own.get(&subject).copied().unwrap_or(PENDING))];
+    let kind: Option<String> = sqlx::query_scalar("SELECT type FROM monitors WHERE id = ?")
+        .bind(subject)
+        .fetch_optional(pool)
+        .await?;
+    let mut ids = vec![subject];
+    if kind.as_deref() == Some("group") {
+        ids.extend(leaves(&tree(pool).await?, subject));
+    }
+    let own = statuses(pool, &ids).await?;
+    let mut out: Vec<(i64, i64)> = ids
+        .iter()
+        .map(|id| (*id, own.get(id).copied().unwrap_or(PENDING)))
+        .collect();
     for link in resolved {
         if let (Some(id), Some(status)) = (
             link.get("id").and_then(Value::as_i64),
@@ -218,6 +249,7 @@ pub async fn mute(
     sample: Option<&Value>,
     disk_threshold: Option<i64>,
 ) -> Result<Mute, MuteError> {
+    let _guard = LOCK.lock().await;
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM monitors WHERE id = ?")
         .bind(subject)
         .fetch_optional(pool)
@@ -287,6 +319,7 @@ fn leaves(tree: &HashMap<i64, Vec<(i64, String)>>, root: i64) -> Vec<i64> {
 /// Delete the monitor's own mute and every mute covering it; for a group,
 /// every mute covering one of its leaves. Returns the deleted subjects.
 pub async fn unmute(pool: &SqlitePool, monitor_id: i64) -> sqlx::Result<Vec<i64>> {
+    let _guard = LOCK.lock().await;
     let mutes = list(pool).await?;
     if mutes.is_empty() {
         return Ok(Vec::new());
@@ -397,6 +430,7 @@ pub async fn on_status(pool: &SqlitePool, monitor_id: i64, status: i64) -> sqlx:
     if status == PENDING {
         return Ok(false);
     }
+    let _guard = LOCK.lock().await;
     let mut changed = false;
     for mut mute in list(pool).await? {
         let covered = mute.monitors.contains(&monitor_id);
@@ -417,7 +451,7 @@ pub async fn on_status(pool: &SqlitePool, monitor_id: i64, status: i64) -> sqlx:
             if mute.monitors.is_empty() {
                 delete(pool, mute.subject).await?;
             } else {
-                save(pool, &mute).await?;
+                update_snapshot(pool, &mute).await?;
             }
             changed = true;
         }
@@ -425,39 +459,73 @@ pub async fn on_status(pool: &SqlitePool, monitor_id: i64, status: i64) -> sqlx:
     Ok(changed)
 }
 
+/// What a sample did to its subject's mute.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SampleChange {
+    None,
+    /// A snapshot mount dropped back under the level.
+    Shrunk,
+    /// Something new ended the mute; the reason names it for the operator.
+    Ended(String),
+}
+
+/// Whether the sample reports this mount with a reading under `level`. A
+/// mount missing from the sample (an agent that just restarted sends no
+/// disks yet) is not a reading.
+fn mount_below(sample: &Value, mount: &str, level: f64) -> bool {
+    sample
+        .get("disk")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.get("mount").and_then(Value::as_str) == Some(mount))
+        .filter_map(|entry| entry.get("percent").and_then(Value::as_f64))
+        .any(|percent| percent.is_finite() && percent < level)
+}
+
 /// A muted subject reported a sample. A disk failing SMART or a mount over
 /// the disk-full level that the snapshot does not hold is new and ends the
-/// mute; a snapshot mount back under the level leaves the snapshot, so a
-/// later breach is new. Returns whether the mute changed.
+/// mute; a snapshot mount reported back under the level leaves the
+/// snapshot, so a later breach is new.
 pub async fn on_sample(
     pool: &SqlitePool,
     subject: i64,
     sample: &Value,
     disk_threshold: Option<i64>,
-) -> sqlx::Result<bool> {
+) -> sqlx::Result<SampleChange> {
+    let _guard = LOCK.lock().await;
     let Some(mut mute) = get(pool, subject).await? else {
-        return Ok(false);
+        return Ok(SampleChange::None);
     };
-    let failing = smart_failed(sample);
-    let full = full_mounts(sample, disk_threshold);
-    let new_failure = failing.iter().any(|disk| !mute.smart_failed.contains(disk));
-    let new_breach = full.iter().any(|mount| !mute.full_mounts.contains(mount));
-    if new_failure || new_breach {
+    let level = disk_threshold.map_or(DISK_FULL_DEFAULT, |t| t as f64);
+    let new_failures: Vec<String> = smart_failed(sample)
+        .into_iter()
+        .filter(|disk| !mute.smart_failed.contains(disk))
+        .map(|disk| format!("{disk} failing SMART"))
+        .collect();
+    let new_breaches: Vec<String> = full_mounts(sample, disk_threshold)
+        .into_iter()
+        .filter(|mount| !mute.full_mounts.contains(mount))
+        .map(|mount| format!("{mount} at or above {level}% full"))
+        .collect();
+    if !new_failures.is_empty() || !new_breaches.is_empty() {
         delete(pool, subject).await?;
-        return Ok(true);
+        let reasons: Vec<String> = new_failures.into_iter().chain(new_breaches).collect();
+        return Ok(SampleChange::Ended(reasons.join(", ")));
     }
     let before = mute.full_mounts.len();
-    mute.full_mounts.retain(|mount| full.contains(mount));
+    mute.full_mounts.retain(|mount| !mount_below(sample, mount, level));
     if mute.full_mounts.len() == before {
-        return Ok(false);
+        return Ok(SampleChange::None);
     }
-    save(pool, &mute).await?;
-    Ok(true)
+    update_snapshot(pool, &mute).await?;
+    Ok(SampleChange::Shrunk)
 }
 
 /// Deleted monitors leave every snapshot; a mute left empty is deleted (a
 /// deleted subject's own row goes with it by cascade).
 pub async fn forget(pool: &SqlitePool, ids: &[i64]) -> sqlx::Result<bool> {
+    let _guard = LOCK.lock().await;
     let mut changed = false;
     for mut mute in list(pool).await? {
         let before = mute.monitors.len();
@@ -468,7 +536,7 @@ pub async fn forget(pool: &SqlitePool, ids: &[i64]) -> sqlx::Result<bool> {
         if mute.monitors.is_empty() {
             delete(pool, mute.subject).await?;
         } else {
-            save(pool, &mute).await?;
+            update_snapshot(pool, &mute).await?;
         }
         changed = true;
     }

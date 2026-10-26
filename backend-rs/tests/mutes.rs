@@ -590,3 +590,87 @@ async fn host_recovery_resumes_backup_alerts() {
     assert_eq!(sent(&captured, "backup-down").await, 0, "muted host: overdue is silent");
     assert_eq!(sent(&captured, "backup-up").await, 1, "website-only mute: overdue pages");
 }
+
+// -- Final review fixes ------------------------------------------------------
+
+#[tokio::test]
+async fn concurrent_recoveries_both_leave_the_snapshot() {
+    let h = harness().await;
+    let s = create(&h, "s", "push", json!({})).await;
+    let mut sites = Vec::new();
+    for i in 0..6 {
+        sites.push(create(&h, &format!("w{i}"), "http", json!({})).await);
+    }
+    link(&h, s, json!(sites)).await;
+    beat(&h, s, DOWN).await;
+    for id in &sites {
+        beat(&h, *id, DOWN).await;
+    }
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+
+    let pool = h.pool.clone();
+    let tasks: Vec<_> = sites
+        .iter()
+        .map(|id| {
+            let pool = pool.clone();
+            let id = *id;
+            tokio::spawn(async move {
+                flatline_backend::mutes::on_status(&pool, id, UP).await.unwrap()
+            })
+        })
+        .collect();
+    for task in tasks {
+        task.await.unwrap();
+    }
+    assert_eq!(current(&h, s).await.unwrap().monitors, vec![s], "every recovery is kept");
+}
+
+#[tokio::test]
+async fn a_sample_without_disks_keeps_the_full_mounts() {
+    let h = harness().await;
+    let (s, a, _b) = server_with_sites(&h).await;
+    beat(&h, a, DOWN).await;
+    push_sample(&h, s, disks(95.0, "passed")).await;
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+
+    // An agent that just restarted reports no disks yet.
+    push_sample(&h, s, json!({ "cpu": { "percent": 5.0 }, "disk": null })).await;
+    assert_eq!(current(&h, s).await.unwrap().full_mounts, vec!["/".to_string()]);
+    push_sample(&h, s, disks(95.0, "passed")).await;
+    assert!(current(&h, s).await.is_some(), "the same breach is not new");
+}
+
+#[tokio::test]
+async fn a_mute_ended_by_a_disk_is_announced() {
+    let h = harness().await;
+    let (url, captured) = alert_stub().await;
+    let n = alert_notification(&h, &url).await;
+    let s = create(&h, "srv", "push", json!({ "notificationIDList": [n] })).await;
+    let a = create(&h, "site-a", "http", json!({})).await;
+    link(&h, s, json!([a])).await;
+    beat(&h, a, DOWN).await;
+    push_sample(&h, s, disks(40.0, "passed")).await;
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+
+    push_sample(&h, s, disks(40.0, "failed")).await;
+    assert_eq!(sent(&captured, "/dev/sdb").await, 1, "{:?}", captured.lock().unwrap());
+}
+
+#[tokio::test]
+async fn muting_a_group_mutes_its_down_monitors() {
+    let h = harness().await;
+    let g = create(&h, "g", "group", json!({})).await;
+    let a = create(&h, "a", "http", json!({ "parent": g })).await;
+    let b = create(&h, "b", "http", json!({ "parent": g })).await;
+    beat(&h, a, DOWN).await;
+    beat(&h, b, UP).await;
+    beat(&h, g, DOWN).await;
+
+    let (status, body) = mute(&h, g).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["mute"]["monitors"], json!([g.min(a), g.max(a)]));
+    assert_eq!(listing(&h).await[&a]["mutedBy"], json!([g]));
+
+    beat(&h, b, DOWN).await;
+    assert!(current(&h, g).await.is_none(), "a new down monitor in the group ends its mute");
+}
