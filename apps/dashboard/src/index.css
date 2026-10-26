@@ -21,6 +21,9 @@
        still legible on the dark card. The label always names the severity,
        so meaning never rides on colour alone. */
     --color-critical: #c0262c;
+    /* Muted red: an acknowledged outage. Still reads as broken, no longer as
+       an alarm; dimmer than bad and than critical. */
+    --color-bad-dim: #8a3a3d;
     --color-maint: #4c8dff;
 }
 
@@ -130,6 +133,9 @@ body {
 .fleet-card[data-attention="bad"] {
     border-color: #e5484d;
 }
+.fleet-card[data-attention="muted"] {
+    border-color: var(--color-bad-dim);
+}
 .fleet-heading {
     display: flex;
     justify-content: space-between;
@@ -182,6 +188,16 @@ body {
     color: var(--color-bad);
     border-color: #e5484d66;
     background: #e5484d0a;
+}
+[data-attention="muted"] .fleet-status {
+    color: var(--color-bad-dim);
+    border-color: #8a3a3d66;
+    background: #8a3a3d0a;
+}
+.fleet-muted {
+    font-size: var(--fleet-small);
+    color: var(--color-bad-dim);
+    line-height: 1.5;
 }
 /* CPU, then RAM and Disk on their own full-width rows. */
 .fleet-primary {

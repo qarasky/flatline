@@ -47,3 +47,11 @@ test("ages and bucket text", () => {
     assert.equal(bucketSummary({ status: 0, beats: 90, failed: 61 }), "Down · 90 checks, 61 failed");
     assert.equal(bucketSummary({ status: 1, beats: 1, failed: 0 }), "Up · 1 check");
 });
+
+test("muted attention items leave the summary sentence", () => {
+    const totals = { total: 10, up: 9, down: 1, pending: 0, maintenance: 0, paused: 0 };
+    const muted = { key: "down:1", monitorId: 1, kind: "down", muted: true };
+    const warn = { key: "agent:2", monitorId: 2, kind: "agent", muted: false };
+    assert.deepEqual(summarySentence(totals, [warn, muted]), { text: "1 monitor needs attention", tone: "warn" });
+    assert.deepEqual(summarySentence(totals, [muted]), { text: "Nothing new · 1 muted", tone: "quiet" });
+});

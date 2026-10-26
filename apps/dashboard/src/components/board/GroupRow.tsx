@@ -5,6 +5,7 @@ import { STATUS_LABEL } from "@/lib/board-format";
 import type { GroupNode } from "@/lib/board-model";
 import { duration, enterTransition } from "@/lib/motion";
 import { useBoardActions } from "./board-context";
+import { isCovered } from "@/lib/mute";
 import { StatusDot } from "./StatusDot";
 
 /** Up / down counts that still tell the truth when the group is collapsed. */
@@ -96,7 +97,7 @@ export const GroupRow = memo(function GroupRow({
                     <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
                 </m.svg>
             </button>
-            <StatusDot status={group.worst} />
+            <StatusDot status={group.worst} muted={isCovered(group.monitor)} />
 
             <div className="flex min-w-0 items-baseline gap-2 py-2">
                 <span className="truncate text-sm font-semibold">{group.monitor.name}</span>

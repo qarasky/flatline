@@ -5,6 +5,8 @@ import {
     fetchBackupRuns,
     fetchHeartbeats,
     fetchMonitor,
+    muteMonitor,
+    unmuteMonitor,
     type BackupAgentSummary,
     type BackupRunSummary,
     type MonitorSummary,
@@ -12,6 +14,8 @@ import {
 import { backupFileName } from "@/lib/backup-presentation";
 import { prependBeat, type HeartbeatEntry } from "@/lib/heartbeat-log";
 import { subscribeLive } from "@/lib/live-hub";
+import { ageOf } from "@/lib/fleet-presentation";
+import { isCovered } from "@/lib/mute";
 import { BackupAgents } from "@/components/BackupAgents";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -168,9 +172,31 @@ export function MonitorDetail({
     const [backups, setBackups] = useState<BackupAgentSummary[]>([]);
     const [backupRuns, setBackupRuns] = useState<Record<string, BackupRunSummary[]>>({});
     const [backupError, setBackupError] = useState<string | null>(null);
+    const [muteError, setMuteError] = useState<string | null>(null);
+    const [muting, setMuting] = useState(false);
+    // Name of the monitor whose mute covers this one, when it is not this one.
+    const [mutedWith, setMutedWith] = useState<string | null>(null);
     const currentMonitor = useRef(id);
     currentMonitor.current = id;
     const loadGeneration = useRef(0);
+
+    const coveringSubject = monitor?.mutedBy?.find((subject) => subject !== monitor.id) ?? null;
+    const ownMute = monitor?.mutedBy?.includes(monitor.id) ?? false;
+    useEffect(() => {
+        setMutedWith(null);
+        if (coveringSubject === null || ownMute) {
+            return;
+        }
+        const controller = new AbortController();
+        fetchMonitor(coveringSubject, controller.signal)
+            .then((m) => setMutedWith(m.monitor.name))
+            .catch(() => setMutedWith(`#${coveringSubject}`));
+        return () => controller.abort();
+    }, [coveringSubject, ownMute]);
+
+    useEffect(() => {
+        setMuteError(null);
+    }, [id]);
 
     useEffect(() => {
         let cancelled = false;
@@ -323,6 +349,25 @@ export function MonitorDetail({
 
     const status = statusOf(monitor.status);
     const downs = beats.filter((b) => b.status === 0);
+    const covered = isCovered(monitor);
+
+    // Mute a known outage, or clear every mute covering this monitor. The
+    // live invalidate reloads the monitor with its new state.
+    async function toggleMute(current: MonitorSummary) {
+        setMuting(true);
+        setMuteError(null);
+        try {
+            if (isCovered(current)) {
+                await unmuteMonitor(current.id);
+            } else {
+                await muteMonitor(current.id);
+            }
+        } catch (e) {
+            setMuteError(e instanceof Error ? e.message : "Mute failed.");
+        } finally {
+            setMuting(false);
+        }
+    }
 
     return (
         <div className="px-4 py-4">
@@ -337,13 +382,38 @@ export function MonitorDetail({
                 </Badge>
                 {!monitor.active ? <span className="text-xs text-quiet">paused</span> : null}
                 <span className="text-xs text-quiet">{monitor.type}</span>
+                {covered ? (
+                    <span className="text-xs text-bad-dim">
+                        {ownMute
+                            ? monitor.mute?.mutedAt
+                                ? `Muted ${ageOf(monitor.mute.mutedAt)} ago`
+                                : "Muted"
+                            : `Muted with ${mutedWith ?? "…"}`}
+                    </span>
+                ) : null}
 
-                <div className="ml-auto">
+                <div className="ml-auto flex items-center gap-2">
+                    {covered || monitor.status === 0 ? (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={muting}
+                            onClick={() => void toggleMute(monitor)}
+                            title={
+                                covered
+                                    ? "Alerts and the red colour come back"
+                                    : "Acknowledge this outage: dark red, no repeat alerts until something new breaks"
+                            }
+                        >
+                            {covered ? "Unmute" : "Mute"}
+                        </Button>
+                    ) : null}
                     <Button variant="outline" size="sm" onClick={() => onEdit(monitor)}>
                         Edit
                     </Button>
                 </div>
             </div>
+            {muteError ? <p className="mb-3 text-xs text-destructive">{muteError}</p> : null}
 
             {monitor.url ? <p className="mb-4 truncate text-xs text-quiet">{monitor.url}</p> : null}
 

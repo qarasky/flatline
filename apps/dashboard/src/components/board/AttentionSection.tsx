@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { AnimatePresence, m } from "motion/react";
-import type { AttentionItem, AttentionKind } from "@/lib/attention";
+import { unmutedCount, type AttentionItem, type AttentionKind } from "@/lib/attention";
 import { curve, duration, enterTransition, exitTransition } from "@/lib/motion";
 import { StatusDot } from "./StatusDot";
 
 const SHOWN = 6;
 
-function KindMark({ kind }: { kind: AttentionKind }) {
+function KindMark({ kind, muted }: { kind: AttentionKind; muted: boolean }) {
     if (kind === "down") {
-        return <StatusDot status="down" />;
+        return <StatusDot status="down" muted={muted} />;
     }
     if (kind === "pending") {
         return <StatusDot status="pending" />;
@@ -35,6 +35,7 @@ export function AttentionSection({
     calm: boolean;
 }) {
     const [all, setAll] = useState(false);
+    const muted = items.length - unmutedCount(items);
     const shown = all ? items : items.slice(0, SHOWN);
 
     return (
@@ -54,7 +55,11 @@ export function AttentionSection({
                 >
                     <div className="rounded-lg border border-bad/30 bg-bad/[0.04]">
                         <h2 className="flex items-baseline gap-2 px-5 pt-4 pb-2 text-sm font-semibold">
-                            Needs attention <span className="tnum text-xs font-normal text-quiet">{items.length}</span>
+                            Needs attention{" "}
+                            <span className="tnum text-xs font-normal text-quiet">{unmutedCount(items)}</span>
+                            {muted > 0 ? (
+                                <span className="tnum text-xs font-normal text-bad-dim">· {muted} muted</span>
+                            ) : null}
                         </h2>
                         <ul className="pb-2">
                             <AnimatePresence initial={false} mode="popLayout">
@@ -72,15 +77,15 @@ export function AttentionSection({
                                             onClick={() => item.monitorId !== null && onOpen(item.monitorId)}
                                             className="grid w-full grid-cols-[12px_112px_minmax(160px,300px)_minmax(0,1fr)] items-center gap-3 px-5 py-2 text-left transition-colors hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
                                         >
-                                            <KindMark kind={item.kind} />
+                                            <KindMark kind={item.kind} muted={item.muted} />
                                             <span
-                                                className={`text-xs font-medium ${item.kind === "down" ? "text-bad" : "text-warn"}`}
+                                                className={`text-xs font-medium ${item.muted ? (item.kind === "down" ? "text-bad-dim" : "text-quiet") : item.kind === "down" ? "text-bad" : "text-warn"}`}
                                             >
                                                 {item.title}
                                             </span>
                                             <span className="truncate text-sm font-medium">{item.name}</span>
                                             <span className="tnum truncate text-left text-xs text-muted">
-                                                {item.detail}
+                                                {item.muted ? `${item.detail} · muted` : item.detail}
                                             </span>
                                         </button>
                                     </m.li>

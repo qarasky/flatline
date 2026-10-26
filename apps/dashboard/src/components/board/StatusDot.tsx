@@ -19,13 +19,24 @@ export function statusTone(status: StatusKey): string {
  * bars) so it is readable without colour; a word always accompanies it
  * somewhere on the row.
  */
-export function StatusDot({ status, size = 12, title }: { status: StatusKey; size?: number; title?: string }) {
+export function StatusDot({
+    status,
+    size = 12,
+    title,
+    muted = false,
+}: {
+    status: StatusKey;
+    size?: number;
+    title?: string;
+    /** An acknowledged outage: a down mark in the dim red. */
+    muted?: boolean;
+}) {
     return (
         <svg
             viewBox="0 0 12 12"
             width={size}
             height={size}
-            className={`board-status-dot shrink-0 ${TONE[status]}`}
+            className={`board-status-dot shrink-0 ${muted && status === "down" ? "text-bad-dim" : TONE[status]}`}
             role="img"
             aria-label={title ?? STATUS_LABEL[status]}
         >

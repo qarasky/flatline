@@ -7,6 +7,7 @@ import type { Strip } from "@/lib/heartbeat-strip";
 import { HIGHLIGHT_MS, curve } from "@/lib/motion";
 import { useBoardActions } from "./board-context";
 import { HeartbeatStrip } from "./HeartbeatStrip";
+import { isCovered } from "@/lib/mute";
 import { StatusDot, statusTone } from "./StatusDot";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -53,7 +54,9 @@ export const MonitorRow = memo(function MonitorRow({
 }: MonitorRowProps) {
     const actions = useBoardActions();
     const status = statusKeyOf(monitor);
-    const label = STATUS_LABEL[status];
+    // An acknowledged outage reads as down, in the dim red, and says so.
+    const muted = status === "down" && isCovered(monitor);
+    const label = muted ? `${STATUS_LABEL[status]} · muted` : STATUS_LABEL[status];
 
     return (
         <div
@@ -95,7 +98,7 @@ export const MonitorRow = memo(function MonitorRow({
                 className="board-reveal"
                 data-selecting={selecting || undefined}
             />
-            <StatusDot status={status} />
+            <StatusDot status={status} muted={muted} />
 
             <div className="flex min-w-0 flex-col justify-center gap-0.5 py-2 board-compact-inline">
                 <button
@@ -116,7 +119,7 @@ export const MonitorRow = memo(function MonitorRow({
             </div>
 
             <span
-                className={`board-row-word text-xs ${status === "up" ? "text-quiet" : `${statusTone(status)} font-medium`}`}
+                className={`board-row-word text-xs ${status === "up" ? "text-quiet" : muted ? "text-bad-dim font-medium" : `${statusTone(status)} font-medium`}`}
             >
                 {label}
             </span>

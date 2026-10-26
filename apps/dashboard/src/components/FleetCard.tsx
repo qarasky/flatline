@@ -15,6 +15,7 @@ import {
     updatesStatus,
 } from "@/lib/fleet-presentation";
 import { linkStatusLabel, linkTone, sortLinks } from "@/lib/links";
+import { cardMute } from "@/lib/mute";
 import { ContainerRows } from "@/components/ContainerRows";
 import { CoreSquares } from "@/components/CoreSquares";
 import { MetricBar, UsageBar } from "@/components/MetricBar";
@@ -47,6 +48,20 @@ function SampleAge({ time }: { time: string }) {
         return () => window.clearInterval(timer);
     }, []);
     return <>{ageOf(time, now)} ago</>;
+}
+
+/** "muted 2d ago" under the status badge. Ticks on its own like SampleAge. */
+function MutedAge({ since }: { since: string | null }) {
+    const [now, setNow] = useState(Date.now);
+    useEffect(() => {
+        const timer = window.setInterval(() => {
+            if (!document.hidden) {
+                setNow(Date.now());
+            }
+        }, 1000);
+        return () => window.clearInterval(timer);
+    }, []);
+    return <span className="fleet-muted tnum">{since ? `muted ${ageOf(since, now)} ago` : "muted"}</span>;
 }
 
 /**
@@ -98,12 +113,15 @@ const NO_BACKUPS: BackupAgentSummary[] = [];
 export const FleetCard = memo(function FleetCard({
     server,
     backups = NO_BACKUPS,
+    covered,
     stale,
     peakFresh,
     onOpenHistory,
     onMenu,
 }: {
     server: FleetServer;
+    /** Monitor ids some active mute covers (the board derives them from the listing). */
+    covered: ReadonlySet<number>;
     /** Backup agents linked to this server's monitor (the board groups them). */
     backups?: BackupAgentSummary[];
     /** Computed by the board on its freshness tick, so the memo holds between flips. */
@@ -128,9 +146,14 @@ export const FleetCard = memo(function FleetCard({
     // An overdue or failed backup flags the card (never as "bad": a host or
     // website being down is more severe) and counts on the board.
     const behind = backupAttention(backups);
+    // A red card whose every down monitor is muted is an acknowledged
+    // outage: dark red, not an alarm.
+    const mute = cardMute(monitor, links, covered);
     const attention =
         down || websitesDown > 0
-            ? "bad"
+            ? mute.muted
+                ? "muted"
+                : "bad"
             : stale || issues > 0 || hot || monitor.status === 2 || websitesPending > 0 || behind.flagged > 0
               ? "warn"
               : "normal";
@@ -203,7 +226,7 @@ export const FleetCard = memo(function FleetCard({
             className="fleet-card"
             data-attention={attention}
             data-stale={stale || undefined}
-            aria-label={`${displayName}: ${headline}`}
+            aria-label={`${displayName}: ${headline}${attention === "muted" ? ", muted" : ""}`}
             onContextMenu={(e) => {
                 e.preventDefault();
                 onMenu(e, monitor);
@@ -254,6 +277,7 @@ export const FleetCard = memo(function FleetCard({
                         <span className="size-2 rounded-full bg-current" />
                         {headline}
                     </span>
+                    {attention === "muted" ? <MutedAge since={mute.since} /> : null}
                     <span className={`fleet-freshness tnum ${stale ? "text-warn" : "text-quiet"}`}>
                         {stale ? "Stale · " : "Updated "}
                         <SampleAge time={time} />

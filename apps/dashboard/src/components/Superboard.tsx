@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ApiError,
     clearAgentWarnings,
+    muteMonitor,
+    unmuteMonitor,
     fetchAllBackupAgents,
     fetchBulkMonitorLinks,
     fetchLatestMetricsBulk,
@@ -23,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { agentWarningCounts, fleetAttention, isPeakFresh, isSampleStale, matchGroups } from "@/lib/fleet-presentation";
 import { backupAttention, groupBackupsByMonitor } from "@/lib/backup-card";
+import { cardMute, coveredIds } from "@/lib/mute";
 import { serialRefresh } from "@/lib/serial-refresh";
 import { fleetPageSize } from "@/lib/fleet-layout";
 import { ServerHistory } from "@/components/ServerHistory";
@@ -139,6 +142,9 @@ function Superboard({
     // Backup agents by monitor id, kept beside the servers so live metric
     // updates never drop them. One listing for the whole board.
     const [backups, setBackups] = useState<Map<number, BackupAgentSummary[]>>(() => new Map());
+    // Monitors an active mute covers, from the listing; every mute change
+    // publishes invalidate, which reloads it.
+    const [covered, setCovered] = useState<ReadonlySet<number>>(() => new Set());
     const [error, setError] = useState<string | null>(null);
     const [loaded, setLoaded] = useState(false);
 
@@ -205,8 +211,40 @@ function Superboard({
                 },
             });
         }
+
+        // Mute only a red card; a muted one offers Unmute, which clears every
+        // mute covering what is down on it (the server's own and any set on
+        // its websites from the dashboard).
+        const links = server?.links ?? [];
+        const red = monitor.status === 0 || links.some((link) => link.status === 0);
+        const mute = cardMute(monitor, links, covered);
+        if (red && !mute.muted) {
+            items.push({
+                label: "Mute",
+                onSelect: () => {
+                    setMenu(null);
+                    void muteMonitor(menu.monitor.id).catch((failure) => {
+                        setError(failure instanceof Error ? failure.message : "Mute failed.");
+                    });
+                },
+            });
+        } else if (mute.muted) {
+            items.push({
+                label: "Unmute",
+                onSelect: () => {
+                    setMenu(null);
+                    void (async () => {
+                        for (const id of mute.coveredDown) {
+                            await unmuteMonitor(id);
+                        }
+                    })().catch((failure) => {
+                        setError(failure instanceof Error ? failure.message : "Unmute failed.");
+                    });
+                },
+            });
+        }
         return items;
-    }, [menu, servers]);
+    }, [menu, servers, covered]);
     // Resolved scope names for the wall header; raw filter when unresolvable.
     const [scopeNames, setScopeNames] = useState<string[]>([]);
     const scopeTitle = scopeNames.length > 0 ? scopeNames.join(", ") : filter;
@@ -308,6 +346,7 @@ function Superboard({
                 }
 
                 setScopeNames(matched.map((g) => g.name));
+                setCovered(coveredIds(monitors));
                 // Operator-controlled order: parent group weight, then the
                 // monitor's own weight, then name. Ties fall back to name so
                 // the board never reshuffles between refreshes.
@@ -506,20 +545,22 @@ function Superboard({
 
     useEffect(() => () => window.clearTimeout(resumeTimer.current), []);
 
-    const down = servers.filter((s) => s.monitor.status === 0).length;
+    // Muted outages leave "down" and "need attention" and are counted on
+    // their own. A website-only mute still counts when the server has a
+    // problem of its own (its alerts are not muted).
+    const down = servers.filter((s) => s.monitor.status === 0 && !covered.has(s.monitor.id)).length;
+    let mutedCount = 0;
     const attentionCount = servers.filter((s) => {
         const state = fleetAttention(s.metrics, s.time, s.monitor.interval || 60, now);
         const websiteDown = s.links?.some((link) => link.status === 0) ?? false;
         const backupsBehind = backupAttention(backups.get(s.monitor.id) ?? []).flagged > 0;
-        return (
-            backupsBehind ||
-            s.monitor.status === 0 ||
-            s.monitor.status === 2 ||
-            state.stale ||
-            state.issues > 0 ||
-            state.hot ||
-            websiteDown
-        );
+        const yellow = backupsBehind || s.monitor.status === 2 || state.stale || state.issues > 0 || state.hot;
+        const mute = cardMute(s.monitor, s.links ?? [], covered);
+        if (mute.muted) {
+            mutedCount += 1;
+            return !mute.hostMuted && yellow;
+        }
+        return yellow || s.monitor.status === 0 || websiteDown;
     }).length;
     const rotated = pageCount > 1;
 
@@ -557,6 +598,7 @@ function Superboard({
                         key={server.monitor.id}
                         server={server}
                         backups={backups.get(server.monitor.id)}
+                        covered={covered}
                         stale={isSampleStale(server.metrics, server.time, server.monitor.interval || 60, now)}
                         peakFresh={isPeakFresh(server.cpuPeak10m?.at, now)}
                         onOpenHistory={openHistory}
@@ -589,9 +631,19 @@ function Superboard({
                         ) : (
                             <Badge tone={attentionCount > 0 ? "degraded" : "neutral"}>
                                 <span className="size-1.5 rounded-full bg-current" />
-                                {attentionCount > 0 ? `${attentionCount} need attention` : "All hosts up"}
+                                {attentionCount > 0
+                                    ? `${attentionCount} need attention`
+                                    : mutedCount > 0
+                                      ? "Nothing new"
+                                      : "All hosts up"}
                             </Badge>
                         )}
+                        {mutedCount > 0 ? (
+                            <Badge tone="neutral">
+                                <span className="size-1.5 rounded-full bg-bad-dim" />
+                                {mutedCount} muted
+                            </Badge>
+                        ) : null}
                         {position}
                         <Clock />
                     </span>
@@ -610,6 +662,7 @@ function Superboard({
                     <span className="text-xs text-quiet">
                         <span className="tnum">{servers.length}</span> {servers.length === 1 ? "server" : "servers"}
                         {down > 0 ? <span className="ml-1 font-semibold text-bad">· {down} down</span> : null}
+                        {mutedCount > 0 ? <span className="ml-1 text-bad-dim">· {mutedCount} muted</span> : null}
                     </span>
                     <div className="ml-auto flex items-center gap-3">
                         {position}

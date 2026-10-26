@@ -76,15 +76,20 @@ From top to bottom:
   for how long, and opens the monitor in one click. Agent warnings come from one bulk metrics read
   for push monitors and backups from `/api/v1/backup-agents`, both loaded with each live-stream
   snapshot (and on backup events); they are not polled, so they refresh on reconnect rather than
-  on every beat.
+  on every beat. Muted items (an acknowledged outage, see
+  [muting](superboard.md#muting-a-known-outage)) stay listed after the others with a dark red mark;
+  the count leaves them out and shows `· N muted` beside it.
 - **The list:** the group tree, following the same `parent`/`weight` ordering as the Superboard.
   A row is `[status dot] name (target in quiet text) | status word | 24 h strip | uptime`.
   Ping, last check and type replace the target text on hover or focus. The checkbox and the `⋯` menu
   appear on hover, focus, or whenever something is selected. Group rows show a worst-of dot and
   up/down counts, so a collapsed group still shows trouble. Status is a dot **and** a word, and the
-  dot's shape differs per status.
+  dot's shape differs per status. A muted down monitor (or a group whose down monitors are all
+  muted) has a dark red dot and reads `Down · muted`.
 - **Detail:** opening a monitor shows it beside the list at 1280 px and wider, and as a sheet below
   that. The open row keeps an accent edge, `Esc` closes it, and the monitor is in the URL (`?m=ID`).
+  A down monitor offers **Mute** beside **Edit**; a muted one offers **Unmute** and says since when,
+  or which server's mute covers it.
 
 ### The 24 h strip
 

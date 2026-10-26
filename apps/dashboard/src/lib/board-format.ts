@@ -62,15 +62,23 @@ export function summarySentence(
     if (totals.total === 0) {
         return { text: "No monitors yet", tone: "quiet" };
     }
-    const subjects = new Set(attention.map((item) => (item.monitorId !== null ? `m${item.monitorId}` : item.key)));
+    // Muted items are an acknowledged outage: they neither count nor turn
+    // the sentence red.
+    const open = attention.filter((item) => !item.muted);
+    const mutedDown = attention.filter((item) => item.muted && item.kind === "down").length;
+    const subjects = new Set(open.map((item) => (item.monitorId !== null ? `m${item.monitorId}` : item.key)));
     if (subjects.size > 0) {
-        const unlinked = attention.some((item) => item.monitorId === null);
+        const unlinked = open.some((item) => item.monitorId === null);
         const noun = unlinked ? "item" : "monitor";
         const n = subjects.size;
         return {
             text: `${n} ${noun}${n === 1 ? " needs" : "s need"} attention`,
-            tone: totals.down > 0 ? "bad" : "warn",
+            tone: totals.down > mutedDown ? "bad" : "warn",
         };
+    }
+    const mutedSubjects = new Set(attention.map((item) => item.monitorId ?? item.key)).size;
+    if (mutedSubjects > 0) {
+        return { text: `Nothing new · ${mutedSubjects} muted`, tone: "quiet" };
     }
     const active = totals.total - totals.paused;
     if (active === 0) {

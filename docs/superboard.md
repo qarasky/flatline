@@ -93,6 +93,7 @@ thicker accent — a troubled card must not be heavier than its neighbours.
 | Attention           | When                                                                                                                                                                  |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Bad (red border)    | Host down, or a linked website is down.                                                                                                                               |
+| Muted (dark red)    | Bad, but every down monitor on the card is [muted](#muting-a-known-outage).                                                                                           |
 | Warn (amber border) | Stale data, container issues, sustained high usage (≥90% on any of CPU/RAM/disk/GPU), pending status, a linked website pending, or a backup agent `overdue`/`failed`. |
 | Normal              | Healthy.                                                                                                                                                              |
 
@@ -133,6 +134,33 @@ the current counters so the line disappears. Only failures past the
 acknowledged point bring it back; an agent restart drops the acknowledgements
 rather than hiding new ones. The count in the menu is the same count the line
 prints.
+
+### Muting a known outage
+
+Some outages are known and cannot be fixed yet (a client who stopped paying, a
+box waiting for a part). Right-click a red card and choose **Mute**; the same
+action is on a down monitor's detail view in the dashboard.
+
+- The card turns **dark red** (border and status badge) and shows
+  `muted 2d ago` under the badge. It still reads as broken.
+- It leaves the header's "down" and "need attention" counts and is counted as
+  `N muted` instead. A server whose host is up and only a website is muted
+  still counts when it has a problem of its own (stale data, containers, high
+  usage, backups behind).
+- Telegram stops repeating what was muted: resend reminders for the muted
+  monitors, a group whose down monitors are all muted, and, when the host
+  itself is down and muted, the server's CPU/RAM alerts and its backups'
+  `failed`/`overdue` alerts. Recovery messages are always sent.
+
+A mute ends by itself. Anything new and substantial on the card deletes it and
+alerts as usual: another linked monitor going down, a disk newly failing SMART,
+or a mount newly reaching the disk-full level (the monitor's disk alert
+threshold, or 90% when none is set). A disk that was already failing or full
+when you muted does not end it. Each muted monitor that recovers drops out of
+the mute, so a later outage is new; when nothing muted is still down, the mute
+is gone. **Unmute** (same menu) ends it by hand.
+
+The mute is stored on the server, so every screen, the wall included, shows it.
 
 ### Provider logos
 
