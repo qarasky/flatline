@@ -234,6 +234,43 @@
                         },
                         "description": "Acknowledged per-collector `agent.collectorErrors` counts, keyed by collector name."
                     },
+                    "mute": {
+                        "type": ["object", "null"],
+                        "description": "This monitor's own mute as a subject, or null. `monitors` lists the snapshot monitors still down; `hostMuted` is true when the monitor itself is among them (its own CPU/RAM and backup alerts are then silenced too); `smartFailed` and `fullMounts` are the disk problems present at mute time.",
+                        "properties": {
+                            "mutedAt": {
+                                "type": "string"
+                            },
+                            "monitors": {
+                                "type": "array",
+                                "items": {
+                                    "type": "integer"
+                                }
+                            },
+                            "hostMuted": {
+                                "type": "boolean"
+                            },
+                            "smartFailed": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "fullMounts": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "mutedBy": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer"
+                        },
+                        "description": "Subjects whose active mute covers this monitor; empty when not muted. A group is covered when it is down and every down monitor inside it is covered."
+                    },
                     "pushToken": {
                         "type": ["string", "null"],
                         "description": "Host-agent push token (`flatline_agent_push_...`). Bearer secret: keep it on the host."
@@ -1353,6 +1390,84 @@
                                 }
                             }
                         }
+                    }
+                }
+            }
+        },
+        "/api/v1/monitors/{id}/mute": {
+            "post": {
+                "summary": "Mute a known outage",
+                "description": "Snapshot what is down on the monitor (itself and the websites linked to it) and the disks its latest sample reports failing or full. The board shows the outage dark red and Telegram stops repeating it. Anything new on the monitor (another linked monitor down, a newly failing or newly full disk) deletes the mute, and so does full recovery. Muting again replaces the snapshot. 400 when nothing on the monitor is down.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The new mute",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "id": {
+                                            "type": "integer"
+                                        },
+                                        "mute": {
+                                            "$ref": "#/components/schemas/Monitor/properties/mute"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Nothing on the monitor is down"
+                    },
+                    "404": {
+                        "description": "Unknown monitor"
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Unmute",
+                "description": "Delete the monitor's own mute and every mute covering it; for a group, every mute covering a monitor inside it. Idempotent: `unmuted` is empty when nothing was muted.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/monitorId"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The subjects whose mute was deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean"
+                                        },
+                                        "id": {
+                                            "type": "integer"
+                                        },
+                                        "unmuted": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "integer"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Unknown monitor"
                     }
                 }
             }

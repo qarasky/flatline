@@ -9,6 +9,7 @@ use sqlx::SqlitePool;
 use crate::AppState;
 use crate::api::ApiError;
 use crate::heartbeats::Beat;
+use crate::mutes;
 use crate::monitors::{
     Monitor, TYPES, apply_interval_defaults, apply_payload, generate_push_token, monitor_json,
     validate_parent,
@@ -214,11 +215,13 @@ pub async fn list(
     let beats = latest_beats(&state.pool, &ids).await?;
 
     let uptimes = uptime_windows_for(&state.engine, &ids).await;
+    let coverage = mutes::coverage(&state.pool).await.map_err(internal)?;
 
     let mut result = Vec::with_capacity(monitors.len());
     for monitor in &monitors {
         let uptime = uptimes.get(&monitor.id).copied().unwrap_or_default();
-        let object = monitor_json(monitor, beats.get(&monitor.id), &uptime);
+        let mut object = monitor_json(monitor, beats.get(&monitor.id), &uptime);
+        with_mute(&mut object, &coverage, monitor.id);
         // Status filtering happens after resolution, like the Node backend:
         // it depends on the latest heartbeat, not a column.
         if let Some(wanted) = &query.status {
@@ -275,10 +278,81 @@ pub async fn get_one(
     let monitor = load(&state.pool, id).await?;
     let beats = latest_beats(&state.pool, &[id]).await?;
     let uptime = state.engine.uptime_windows(id).await;
+    let coverage = mutes::coverage(&state.pool).await.map_err(internal)?;
+    let mut object = monitor_json(&monitor, beats.get(&id), &uptime);
+    with_mute(&mut object, &coverage, id);
     Ok(Json(json!({
         "ok": true,
-        "monitor": monitor_json(&monitor, beats.get(&id), &uptime),
+        "monitor": object,
     })))
+}
+
+/// Add the mute fields to a monitor object: `mute`, the monitor's own mute
+/// as a subject (or null), and `mutedBy`, the subjects whose mute covers it.
+fn with_mute(object: &mut Value, coverage: &mutes::Coverage, id: i64) {
+    if let Some(map) = object.as_object_mut() {
+        map.insert(
+            "mute".to_string(),
+            coverage
+                .mutes
+                .get(&id)
+                .map_or(Value::Null, mutes::Mute::to_json),
+        );
+        map.insert(
+            "mutedBy".to_string(),
+            json!(coverage.muted_by.get(&id).cloned().unwrap_or_default()),
+        );
+    }
+}
+
+/// POST /api/v1/monitors/{id}/mute
+///
+/// Mute a known outage: snapshot what is down on the monitor (itself and the
+/// websites linked to it) and the disk problems its latest sample reports.
+/// The board shows it dark red and Telegram stops repeating it until
+/// something new breaks or everything recovers. Muting again replaces the
+/// snapshot.
+pub async fn mute(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, ApiError> {
+    let monitor = load(&state.pool, id).await?;
+    let sample = match state.metrics.sample(id) {
+        Some((_, sample)) => Some(sample),
+        None => crate::metrics::ingest::load_latest(&state.pool, id)
+            .await
+            .map(|(_, sample)| sample),
+    };
+    let mute = match mutes::mute(&state.pool, id, sample.as_ref(), monitor.metric_disk_threshold).await {
+        Ok(mute) => mute,
+        Err(mutes::MuteError::NotFound) => {
+            return Err(ApiError::not_found(format!("No monitor with id {id}.")));
+        }
+        Err(mutes::MuteError::NothingDown) => {
+            return Err(ApiError::bad(
+                "Nothing on this monitor is down, so there is nothing to mute.",
+            ));
+        }
+        Err(mutes::MuteError::Db(error)) => return Err(internal(error)),
+    };
+    state.events.invalidate();
+    Ok(Json(json!({ "ok": true, "id": id, "mute": mute.to_json() })))
+}
+
+/// DELETE /api/v1/monitors/{id}/mute
+///
+/// Unmute: delete the monitor's own mute and every mute covering it (for a
+/// group, every mute covering a monitor inside it). Idempotent.
+pub async fn unmute(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, ApiError> {
+    let _monitor = load(&state.pool, id).await?;
+    let unmuted = mutes::unmute(&state.pool, id).await.map_err(internal)?;
+    if !unmuted.is_empty() {
+        state.events.invalidate();
+    }
+    Ok(Json(json!({ "ok": true, "id": id, "unmuted": unmuted })))
 }
 
 /// GET /api/v1/monitors/{id}/heartbeats

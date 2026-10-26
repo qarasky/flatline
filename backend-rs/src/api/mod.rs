@@ -246,6 +246,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/monitors/{id}/agent-warnings/clear",
             post(monitors::clear_agent_warnings),
         )
+        .route(
+            "/api/v1/monitors/{id}/mute",
+            post(monitors::mute).delete(monitors::unmute),
+        )
         .route("/api/v1/monitors/links", get(links::bulk))
         .route("/api/v1/monitors/heartbeat-strips", get(strips::strips))
         .route(

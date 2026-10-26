@@ -161,11 +161,25 @@ for 5 minutes.
 | GET    | `/api/v1/monitors/{id}/heartbeats?limit=`                | Recent heartbeats, newest first                  |
 | POST   | `/api/v1/monitors/{id}/push-failures/clear`              | Acknowledge `failedPushes`                       |
 | POST   | `/api/v1/monitors/{id}/agent-warnings/clear`             | Acknowledge all agent warning counters           |
+| POST   | `/api/v1/monitors/{id}/mute`                             | Mute a known outage (400 when nothing is down)   |
+| DELETE | `/api/v1/monitors/{id}/mute`                             | Unmute it and every mute covering it             |
 | GET    | `/api/v1/monitors/links?ids=1,2,3`                       | Bulk links for many monitors (max 200)           |
 | GET    | `/api/v1/monitors/heartbeat-strips?ids=&hours=&buckets=` | Bucketed status strips (max 200 ids)             |
 | GET    | `/api/v1/monitors/{id}/links`                            | Raw and resolved links                           |
 | PUT    | `/api/v1/monitors/{id}/links`                            | Replace; body `{"linkedMonitorIds":[1,2]}`       |
 | DELETE | `/api/v1/monitors/{id}/links`                            | Clear all links                                  |
+
+#### Mutes
+
+Muting acknowledges a known outage. The server snapshots what is down on the
+monitor (itself and the websites linked to it) and the disks its latest sample
+reports failing SMART or over the disk-full level. The board then shows it dark
+red and Telegram stops repeating it. Every monitor object carries `mute` (its
+own mute as a subject, or `null`) and `mutedBy` (the subjects whose mute covers
+it; a down group is covered when every down monitor inside it is). A mute ends
+by itself when something new breaks on the monitor or when everything in the
+snapshot has recovered. What it silences is described in
+[superboard.md](superboard.md#muting-a-known-outage).
 
 #### Heartbeat strips
 
