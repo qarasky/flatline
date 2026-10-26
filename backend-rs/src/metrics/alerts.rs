@@ -305,6 +305,18 @@ pub(crate) async fn evaluate(metrics: &Metrics, monitor: &Monitor, now_ms: i64) 
             continue;
         };
 
+        // CPU and RAM on a muted host are part of what the operator muted.
+        // The slot stays un-alerted, so no recovery follows and an unmute
+        // alerts at the next sample. Disk is substantial and always pages.
+        if action == Action::Alert
+            && matches!(metric, "cpu" | "ram")
+            && crate::mutes::host_muted(&metrics.pool, monitor.id)
+                .await
+                .unwrap_or(false)
+        {
+            continue;
+        }
+
         if action == Action::Alert {
             let mut state = metrics.alert_state.lock().unwrap();
             let slot = state.slot(monitor.id, metric);

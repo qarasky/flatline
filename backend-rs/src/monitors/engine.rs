@@ -1069,7 +1069,21 @@ impl Engine {
             }
         }
 
-        if recorded.notify {
+        // A covered monitor's down alerts (resends, a covered group's
+        // transitions) are what the operator muted. A failed lookup sends.
+        let muted = recorded.notify
+            && recorded.beat.status == heartbeats::DOWN
+            && crate::mutes::is_covered(&self.pool, monitor.id)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::error!("engine: mute lookup for {}: {error}", monitor.name);
+                    false
+                });
+        if muted {
+            tracing::debug!("engine: {} is muted; alert not sent", monitor.name);
+        }
+
+        if recorded.notify && !muted {
             let message = recorded
                 .beat
                 .msg

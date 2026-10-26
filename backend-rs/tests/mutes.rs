@@ -387,3 +387,206 @@ async fn deleting_a_snapshot_monitor_shrinks_the_mute() {
     assert_eq!(status, StatusCode::OK);
     assert!(current(&h, s).await.is_none());
 }
+
+// -- Telegram ----------------------------------------------------------------
+
+use axum::routing::post;
+use axum::{Json, Router};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+async fn alert_stub() -> (String, Arc<Mutex<Vec<Value>>>) {
+    let captured: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let stub = {
+        let captured = Arc::clone(&captured);
+        Router::new().route(
+            "/bot{token}/sendMessage",
+            post(move |Json(body): Json<Value>| {
+                let captured = Arc::clone(&captured);
+                async move {
+                    captured.lock().unwrap().push(body);
+                    Json(json!({ "ok": true, "result": true }))
+                }
+            }),
+        )
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, stub).await.unwrap();
+    });
+    (format!("http://{addr}"), captured)
+}
+
+async fn alert_notification(h: &Harness, base_url: &str) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO notifications (name, type, config) VALUES ('alerts', 'telegram', ?) RETURNING id",
+    )
+    .bind(
+        json!({
+            "telegramServerUrl": base_url,
+            "telegramBotToken": "TEST:TOKEN",
+            "telegramChatID": "-100123",
+        })
+        .to_string(),
+    )
+    .fetch_one(&h.pool)
+    .await
+    .unwrap()
+}
+
+/// Sent texts containing `needle`, after letting the queues drain.
+async fn sent(captured: &Arc<Mutex<Vec<Value>>>, needle: &str) -> usize {
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    captured
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|body| body["text"].as_str())
+        .filter(|text| text.contains(needle))
+        .count()
+}
+
+#[tokio::test]
+async fn muted_monitor_resends_are_silent() {
+    let h = harness().await;
+    let (url, captured) = alert_stub().await;
+    let n = alert_notification(&h, &url).await;
+    let s = create(&h, "srv", "push", json!({ "notificationIDList": [n] })).await;
+    let a = create(&h, "site-a", "http", json!({ "resendInterval": 1, "notificationIDList": [n] })).await;
+    let b = create(&h, "site-b", "http", json!({ "notificationIDList": [n] })).await;
+    link(&h, s, json!([a, b])).await;
+    beat(&h, s, UP).await;
+    beat(&h, b, UP).await;
+    beat(&h, a, DOWN).await;
+    assert_eq!(sent(&captured, "[site-a]").await, 1, "the outage pages once");
+
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+    beat(&h, a, DOWN).await;
+    beat(&h, a, DOWN).await;
+    assert_eq!(sent(&captured, "[site-a]").await, 1, "resends are silent while muted");
+
+    assert_eq!(unmute(&h, s).await.0, StatusCode::OK);
+    beat(&h, a, DOWN).await;
+    assert_eq!(sent(&captured, "[site-a]").await, 2, "unmuted resends resume");
+
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+    beat(&h, b, DOWN).await;
+    assert_eq!(sent(&captured, "[site-b]").await, 1, "a new outage pages while muted");
+}
+
+#[tokio::test]
+async fn recovery_is_sent_while_muted() {
+    let h = harness().await;
+    let (url, captured) = alert_stub().await;
+    let n = alert_notification(&h, &url).await;
+    let s = create(&h, "srv", "push", json!({})).await;
+    let a = create(&h, "site-a", "http", json!({ "notificationIDList": [n] })).await;
+    link(&h, s, json!([a])).await;
+    beat(&h, s, UP).await;
+    beat(&h, a, DOWN).await;
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+    beat(&h, a, UP).await;
+    assert_eq!(sent(&captured, "UP").await, 1, "{:?}", captured.lock().unwrap());
+}
+
+#[tokio::test]
+async fn covered_group_is_silent() {
+    let h = harness().await;
+    let (url, captured) = alert_stub().await;
+    let n = alert_notification(&h, &url).await;
+    let g = create(&h, "grp", "group", json!({ "resendInterval": 1, "notificationIDList": [n] })).await;
+    let s = create(&h, "srv", "push", json!({})).await;
+    let a = create(&h, "site-a", "http", json!({ "parent": g })).await;
+    link(&h, s, json!([a])).await;
+    beat(&h, s, UP).await;
+    beat(&h, a, DOWN).await;
+    beat(&h, g, DOWN).await;
+    assert_eq!(sent(&captured, "[grp]").await, 1);
+
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+    beat(&h, g, DOWN).await;
+    beat(&h, g, DOWN).await;
+    assert_eq!(sent(&captured, "[grp]").await, 1, "a covered group's resends are silent");
+}
+
+#[tokio::test]
+async fn host_muted_silences_cpu_ram_not_disk() {
+    let h = harness().await;
+    let (url, captured) = alert_stub().await;
+    let n = alert_notification(&h, &url).await;
+    let s = create(
+        &h,
+        "srv",
+        "push",
+        json!({ "metricCpuThreshold": 50, "metricDiskThreshold": 80, "notificationIDList": [n] }),
+    )
+    .await;
+    // Artificial on purpose: the host is "muted" while it pushes, which
+    // isolates the alert path from the mute lifecycle.
+    sqlx::query("INSERT INTO monitor_mutes (monitor_id, muted_at, monitors) VALUES (?, '2026-10-26 00:00:00.000', ?)")
+        .bind(s)
+        .bind(json!([s]).to_string())
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    let monitor = monitor(&h, s).await;
+    let sample = json!({
+        "cpu": { "percent": 95.0 },
+        "disk": [{ "mount": "/", "percent": 85.0 }]
+    });
+    let now = chrono::Utc::now().timestamp_millis();
+    for offset in [0, 61_000] {
+        let time = flatline_backend::metrics::sql_time_millis(now + offset);
+        h.state.metrics.store(s, &time, &sample, true).await.unwrap();
+        h.state.metrics.evaluate_alerts_at(&monitor, now + offset).await;
+    }
+    assert_eq!(sent(&captured, "[cpu]").await, 0, "CPU is silenced while the host is muted");
+    assert_eq!(sent(&captured, "[disk]").await, 1, "a disk breach always pages");
+}
+
+#[tokio::test]
+async fn host_recovery_resumes_backup_alerts() {
+    use flatline_backend::backups::NewAgent;
+    let h = harness().await;
+    let (url, captured) = alert_stub().await;
+    let n = alert_notification(&h, &url).await;
+    let t0 = chrono::Utc::now() - chrono::Duration::days(3);
+
+    // Host muted: its backups are expected to fall behind.
+    let down_host = create(&h, "down-host", "push", json!({ "notificationIDList": [n] })).await;
+    beat(&h, down_host, DOWN).await;
+    assert_eq!(mute(&h, down_host).await.0, StatusCode::OK);
+
+    // Only a website muted: the running server's backups still matter.
+    let up_host = create(&h, "up-host", "push", json!({ "notificationIDList": [n] })).await;
+    let site = create(&h, "site", "http", json!({})).await;
+    link(&h, up_host, json!([site])).await;
+    beat(&h, up_host, UP).await;
+    beat(&h, site, DOWN).await;
+    assert_eq!(mute(&h, up_host).await.0, StatusCode::OK);
+
+    for (name, monitor_id) in [("backup-down", down_host), ("backup-up", up_host)] {
+        h.state
+            .backups
+            .register_agent_at(
+                NewAgent {
+                    name: name.to_string(),
+                    monitor_id: Some(monitor_id),
+                    enabled: true,
+                    interval_seconds: 86400,
+                    retention_count: 7,
+                },
+                t0,
+            )
+            .await
+            .unwrap();
+    }
+    h.state
+        .backups
+        .evaluate_health((t0 + chrono::Duration::hours(37)).timestamp_millis())
+        .await
+        .unwrap();
+    assert_eq!(sent(&captured, "backup-down").await, 0, "muted host: overdue is silent");
+    assert_eq!(sent(&captured, "backup-up").await, 1, "website-only mute: overdue pages");
+}

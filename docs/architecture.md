@@ -152,6 +152,13 @@ backlog goes out as one summary listing each alert's headline in order; a queue
 holds at most 200 alerts, and the summary says how many of the oldest were
 dropped. Metric threshold alerts share the same queues.
 
+Mutes (`mutes.rs`, table `monitor_mutes`) are checked where alerts are decided:
+the record path ends or shrinks mutes on a status change before it decides to
+page, then skips the down alert of a covered monitor; the metric path skips CPU
+and RAM alerts of a muted host; backup health skips `failed` and `overdue` for
+a muted host. Recoveries are never muted. The push route ends a mute on a newly
+failing or newly full disk.
+
 ## Live updates
 
 The dashboard and Superboard hold one SSE connection to `/api/v1/events`:

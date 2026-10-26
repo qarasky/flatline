@@ -267,6 +267,9 @@ a restore test; see [Recovery](#recovery) for the restore procedure.
   through the same rate-limited per-chat queue as monitor alerts. An
   agent without a monitor (never linked, or its monitor was deleted) or whose
   monitor has no Telegram link alerts the default notifications instead.
+  While the agent's server is muted with its host down
+  ([muting](superboard.md#muting-a-known-outage)), `failed` and `overdue`
+  alerts are not sent (the state is still recorded); the recovery message is.
 - Backup changes publish a `{"type":"backups"}` live event, not the generic
   `invalidate`; the dashboard reloads backup rows only on that event, on
   mount and after a reconnect.

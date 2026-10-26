@@ -66,7 +66,19 @@ impl Backups {
                 _ => None,
             };
 
-            if let Some(message) = message {
+            // A muted host's backups are expected to fall behind: failure
+            // and overdue stay silent (still persisted); recovery is sent.
+            let host_muted = match row.monitor_id {
+                Some(monitor_id) if current != "healthy" => {
+                    crate::mutes::host_muted(&self.pool, monitor_id)
+                        .await
+                        .unwrap_or(false)
+                }
+                _ => false,
+            };
+            if let Some(message) = message
+                && !host_muted
+            {
                 self.deliver_alert(row.monitor_id, message).await;
             }
         }

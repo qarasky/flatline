@@ -198,6 +198,10 @@ only thing that can take a monitor down.
 State is in-process and bounded; an agent or backend restart may re-send one
 alert after the debounce.
 
+While a server's host is muted (it is down and part of a
+[mute](#muting-a-known-outage)), its CPU and RAM alerts are not sent. Disk
+alerts always are.
+
 ## Auto-pagination and parameters
 
 Page size is measured from the viewport against a 340×420 minimum card, with a
