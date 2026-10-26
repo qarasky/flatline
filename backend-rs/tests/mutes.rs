@@ -231,3 +231,159 @@ async fn openapi_documents_mute() {
     let schema = body["components"]["schemas"]["Monitor"]["properties"].clone();
     assert!(schema["mute"].is_object() && schema["mutedBy"].is_object(), "{schema}");
 }
+
+async fn current(h: &Harness, subject: i64) -> Option<flatline_backend::mutes::Mute> {
+    flatline_backend::mutes::get(&h.pool, subject).await.unwrap()
+}
+
+async fn push_token(h: &Harness, id: i64) -> String {
+    sqlx::query_scalar("SELECT push_token FROM monitors WHERE id = ?")
+        .bind(id)
+        .fetch_one(&h.pool)
+        .await
+        .unwrap()
+}
+
+/// A push with a metrics sample (records an UP beat too).
+async fn push_sample(h: &Harness, id: i64, metrics: Value) {
+    let token = push_token(h, id).await;
+    let (status, body) = send(
+        &h.app,
+        request(
+            "POST",
+            &format!("/api/push/{token}"),
+            None,
+            Some(json!({ "metrics": metrics })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+fn disks(root: f64, sdb: &str) -> Value {
+    json!({
+        "disk": [{ "mount": "/", "percent": root }],
+        "smart": { "available": true, "disks": [
+            { "device": "/dev/sda", "health": "passed" },
+            { "device": "/dev/sdb", "health": sdb }
+        ]}
+    })
+}
+
+#[tokio::test]
+async fn new_website_down_ends_mute() {
+    let h = harness().await;
+    let (s, a, b) = server_with_sites(&h).await;
+    beat(&h, s, DOWN).await;
+    beat(&h, a, DOWN).await;
+    beat(&h, b, UP).await;
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+
+    let mut events = h.state.events.subscribe();
+    beat(&h, b, DOWN).await;
+    assert!(current(&h, s).await.is_none(), "a new down website ends the mute");
+    let mut saw_invalidate = false;
+    while let Ok(event) = events.try_recv() {
+        saw_invalidate |= event.kind() == "invalidate";
+    }
+    assert!(saw_invalidate, "the end of a mute is published");
+}
+
+#[tokio::test]
+async fn new_group_child_down_ends_mute() {
+    let h = harness().await;
+    let g = create(&h, "g", "group", json!({})).await;
+    let s = create(&h, "s", "push", json!({})).await;
+    let a = create(&h, "a", "http", json!({ "parent": g })).await;
+    link(&h, s, json!([g])).await;
+    beat(&h, s, UP).await;
+    beat(&h, a, DOWN).await;
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+
+    let d = create(&h, "d", "http", json!({ "parent": g })).await;
+    beat(&h, d, DOWN).await;
+    assert!(current(&h, s).await.is_none());
+}
+
+#[tokio::test]
+async fn recovery_shrinks_then_ends_mute() {
+    let h = harness().await;
+    let (s, a, _b) = server_with_sites(&h).await;
+    beat(&h, s, DOWN).await;
+    beat(&h, a, DOWN).await;
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+
+    beat(&h, a, UP).await;
+    assert_eq!(current(&h, s).await.unwrap().monitors, vec![s]);
+    beat(&h, a, DOWN).await;
+    assert!(current(&h, s).await.is_none(), "down again after recovery is new");
+
+    // Second scenario: everything recovers.
+    beat(&h, a, DOWN).await;
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+    beat(&h, s, UP).await;
+    assert_eq!(current(&h, s).await.unwrap().monitors, vec![a]);
+    beat(&h, a, UP).await;
+    assert!(current(&h, s).await.is_none(), "full recovery ends the mute");
+}
+
+#[tokio::test]
+async fn pending_does_not_end_mute() {
+    let h = harness().await;
+    let (s, a, _b) = server_with_sites(&h).await;
+    beat(&h, s, UP).await;
+    beat(&h, a, DOWN).await;
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+    flatline_backend::mutes::on_status(&h.pool, a, flatline_backend::heartbeats::PENDING)
+        .await
+        .unwrap();
+    assert_eq!(current(&h, s).await.unwrap().monitors, vec![a]);
+}
+
+#[tokio::test]
+async fn new_failing_disk_ends_mute() {
+    let h = harness().await;
+    let (s, a, _b) = server_with_sites(&h).await;
+    beat(&h, a, DOWN).await;
+    push_sample(&h, s, disks(40.0, "passed")).await;
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+
+    push_sample(&h, s, disks(40.0, "passed")).await;
+    assert!(current(&h, s).await.is_some());
+    push_sample(&h, s, disks(40.0, "failed")).await;
+    assert!(current(&h, s).await.is_none(), "a newly failing disk ends the mute");
+}
+
+#[tokio::test]
+async fn disk_already_full_at_mute_time_does_not_end_mute() {
+    let h = harness().await;
+    let (s, a, _b) = server_with_sites(&h).await;
+    beat(&h, a, DOWN).await;
+    push_sample(&h, s, disks(95.0, "passed")).await;
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+    assert_eq!(current(&h, s).await.unwrap().full_mounts, vec!["/".to_string()]);
+
+    push_sample(&h, s, disks(96.0, "passed")).await;
+    assert!(current(&h, s).await.is_some(), "still the same breach");
+    push_sample(&h, s, disks(50.0, "passed")).await;
+    assert!(current(&h, s).await.unwrap().full_mounts.is_empty());
+    push_sample(&h, s, disks(95.0, "passed")).await;
+    assert!(current(&h, s).await.is_none(), "a new breach ends the mute");
+}
+
+#[tokio::test]
+async fn deleting_a_snapshot_monitor_shrinks_the_mute() {
+    let h = harness().await;
+    let (s, a, _b) = server_with_sites(&h).await;
+    beat(&h, s, UP).await;
+    beat(&h, a, DOWN).await;
+    assert_eq!(mute(&h, s).await.0, StatusCode::OK);
+
+    let (status, _) = send(
+        &h.app,
+        request("DELETE", &format!("/api/v1/monitors/{a}"), Some(&h.token), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(current(&h, s).await.is_none());
+}

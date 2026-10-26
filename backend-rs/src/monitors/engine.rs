@@ -1057,6 +1057,18 @@ impl Engine {
         let uptime = self.uptime_windows_locked(&guard).await;
         self.publish_heartbeat(monitor, &recorded.beat, uptime);
 
+        // A status change can end or shrink a mute; decided before the alert
+        // so a new outage that ends a mute is sent as usual.
+        if recorded.is_first || recorded.previous_status != Some(recorded.beat.status) {
+            match crate::mutes::on_status(&self.pool, monitor.id, recorded.beat.status).await {
+                Ok(true) => self.events.invalidate(),
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::error!("engine: mute update for {}: {error}", monitor.name)
+                }
+            }
+        }
+
         if recorded.notify {
             let message = recorded
                 .beat

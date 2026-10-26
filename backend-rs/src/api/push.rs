@@ -158,6 +158,7 @@ pub async fn push(
                 .await
             {
                 Ok(()) => {
+                    note_sample(&state, &monitor, &metrics_value).await;
                     state.metrics.evaluate_alerts_async(&monitor);
                     Json(json!({ "ok": true })).into_response()
                 }
@@ -186,6 +187,7 @@ pub async fn push(
                 .await
             {
                 Ok(()) => {
+                    note_sample(&state, &monitor, metrics_value).await;
                     state.metrics.evaluate_alerts_async(&monitor);
                     Json(json!({ "ok": true })).into_response()
                 }
@@ -196,6 +198,19 @@ pub async fn push(
             tracing::error!("push: record heartbeat for {}: {error}", monitor.name);
             unavailable("Heartbeat not recorded: storage unavailable, retry later.")
         }
+    }
+}
+
+/// A stored sample can end a mute: a newly failing disk or a newly full
+/// mount on a muted server is a new problem. Best effort; never fails the
+/// push.
+async fn note_sample(state: &AppState, monitor: &Monitor, sample: &Value) {
+    match crate::mutes::on_sample(&state.pool, monitor.id, sample, monitor.metric_disk_threshold)
+        .await
+    {
+        Ok(true) => state.events.invalidate(),
+        Ok(false) => {}
+        Err(error) => tracing::error!("push: mute update for {}: {error}", monitor.name),
     }
 }
 

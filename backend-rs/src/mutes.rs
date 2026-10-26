@@ -388,6 +388,93 @@ pub async fn host_muted(pool: &SqlitePool, subject: i64) -> sqlx::Result<bool> {
     Ok(get(pool, subject).await?.is_some_and(|mute| mute.host_muted()))
 }
 
+/// A monitor's status changed. Down and not in a snapshot on whose card it
+/// sits: something new broke, so that mute ends. Up (or in maintenance): it
+/// leaves every snapshot, so a later outage is new; a mute left with no
+/// monitor is deleted. Pending changes nothing. Returns whether any mute
+/// changed.
+pub async fn on_status(pool: &SqlitePool, monitor_id: i64, status: i64) -> sqlx::Result<bool> {
+    if status == PENDING {
+        return Ok(false);
+    }
+    let mut changed = false;
+    for mut mute in list(pool).await? {
+        let covered = mute.monitors.contains(&monitor_id);
+        if status == DOWN {
+            if covered {
+                continue;
+            }
+            let on_card = card_monitors(pool, mute.subject)
+                .await?
+                .iter()
+                .any(|(id, _)| *id == monitor_id);
+            if on_card {
+                delete(pool, mute.subject).await?;
+                changed = true;
+            }
+        } else if covered {
+            mute.monitors.retain(|id| *id != monitor_id);
+            if mute.monitors.is_empty() {
+                delete(pool, mute.subject).await?;
+            } else {
+                save(pool, &mute).await?;
+            }
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+/// A muted subject reported a sample. A disk failing SMART or a mount over
+/// the disk-full level that the snapshot does not hold is new and ends the
+/// mute; a snapshot mount back under the level leaves the snapshot, so a
+/// later breach is new. Returns whether the mute changed.
+pub async fn on_sample(
+    pool: &SqlitePool,
+    subject: i64,
+    sample: &Value,
+    disk_threshold: Option<i64>,
+) -> sqlx::Result<bool> {
+    let Some(mut mute) = get(pool, subject).await? else {
+        return Ok(false);
+    };
+    let failing = smart_failed(sample);
+    let full = full_mounts(sample, disk_threshold);
+    let new_failure = failing.iter().any(|disk| !mute.smart_failed.contains(disk));
+    let new_breach = full.iter().any(|mount| !mute.full_mounts.contains(mount));
+    if new_failure || new_breach {
+        delete(pool, subject).await?;
+        return Ok(true);
+    }
+    let before = mute.full_mounts.len();
+    mute.full_mounts.retain(|mount| full.contains(mount));
+    if mute.full_mounts.len() == before {
+        return Ok(false);
+    }
+    save(pool, &mute).await?;
+    Ok(true)
+}
+
+/// Deleted monitors leave every snapshot; a mute left empty is deleted (a
+/// deleted subject's own row goes with it by cascade).
+pub async fn forget(pool: &SqlitePool, ids: &[i64]) -> sqlx::Result<bool> {
+    let mut changed = false;
+    for mut mute in list(pool).await? {
+        let before = mute.monitors.len();
+        mute.monitors.retain(|id| !ids.contains(id));
+        if mute.monitors.len() == before {
+            continue;
+        }
+        if mute.monitors.is_empty() {
+            delete(pool, mute.subject).await?;
+        } else {
+            save(pool, &mute).await?;
+        }
+        changed = true;
+    }
+    Ok(changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

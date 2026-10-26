@@ -760,6 +760,10 @@ pub async fn delete(
         state.engine.stop(*monitor_id);
         state.metrics.forget(*monitor_id);
     }
+    // A deleted monitor can never recover; it leaves every mute snapshot.
+    if let Err(error) = mutes::forget(&state.pool, &deleted).await {
+        tracing::error!("delete: drop deleted monitors from mutes: {error}");
+    }
     state.events.invalidate();
 
     Ok(Json(json!({
