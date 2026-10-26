@@ -6,6 +6,7 @@
 
 import type { BackupAgentSummary, MonitorSummary } from "./api";
 import { isFlapping, parseTime, statusSince, type Strip } from "./heartbeat-strip";
+import { isCovered } from "./mute";
 
 export type AttentionKind = "down" | "pending" | "flapping" | "stale" | "agent" | "backup";
 
@@ -21,6 +22,8 @@ export interface AttentionItem {
     detail: string;
     /** When it started, epoch ms, when known. */
     sinceMs: number | null;
+    /** Part of an acknowledged outage: listed after everything else. */
+    muted: boolean;
 }
 
 /** A push monitor is stale after this many intervals without a beat. */
@@ -90,7 +93,7 @@ export function deriveAttention(input: AttentionInput): AttentionItem[] {
             continue;
         }
         const strip = input.strips.get(monitor.id);
-        const base = { monitorId: monitor.id, name: monitor.name };
+        const base = { monitorId: monitor.id, name: monitor.name, muted: false };
         const lastCheckMs = parseTime(monitor.lastCheck);
 
         if (monitor.status === 0) {
@@ -100,6 +103,7 @@ export function deriveAttention(input: AttentionInput): AttentionItem[] {
                 ...base,
                 key: `down:${monitor.id}`,
                 kind: "down",
+                muted: isCovered(monitor),
                 title: "Down",
                 detail: text ? `for ${text}` : monitor.lastMessage?.trim() || "no detail",
                 sinceMs: run?.ms ?? null,
@@ -134,6 +138,8 @@ export function deriveAttention(input: AttentionInput): AttentionItem[] {
                 ...base,
                 key: `stale:${monitor.id}`,
                 kind: "stale",
+                // A muted host is expected to stop pushing.
+                muted: isCovered(monitor),
                 title: "No push",
                 detail: `last beat ${formatDuration(nowMs - lastCheckMs)} ago`,
                 sinceMs: lastCheckMs,
@@ -155,6 +161,7 @@ export function deriveAttention(input: AttentionInput): AttentionItem[] {
             title: "Agent warning",
             detail: text.replace(/^Agent:\s*/, ""),
             sinceMs: null,
+            muted: false,
         });
     }
 
@@ -170,15 +177,23 @@ export function deriveAttention(input: AttentionInput): AttentionItem[] {
             title: agent.health === "failed" ? "Backup failed" : "Backup overdue",
             detail: agent.lastErrorCode ? agent.lastErrorCode : "check the backup agent",
             sinceMs: null,
+            // A muted host's backups are expected to fall behind.
+            muted: isCovered(input.monitors.find((m) => m.id === agent.monitorId)),
         });
     }
 
     return items.sort(
         (a, b) =>
+            Number(a.muted) - Number(b.muted) ||
             KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) ||
             (a.sinceMs ?? Infinity) - (b.sinceMs ?? Infinity) ||
             a.name.localeCompare(b.name)
     );
+}
+
+/** Items that are not part of an acknowledged outage. */
+export function unmutedCount(items: AttentionItem[]): number {
+    return items.filter((item) => !item.muted).length;
 }
 
 /** Monitors with at least one attention item (the "needs attention" preset). */

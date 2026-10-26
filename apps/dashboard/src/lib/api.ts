@@ -148,10 +148,25 @@ export interface MonitorSummary {
     pushFailuresAck?: number;
     samplesDroppedAck?: number;
     collectorErrorsAck?: Record<string, number>;
+    /** This monitor's own mute as a subject (null when none). */
+    mute?: MonitorMute | null;
+    /** Subjects whose active mute covers this monitor; empty when not muted. */
+    mutedBy?: number[];
     uptime24h: number | null;
     uptime7d: number | null;
     uptime30d: number | null;
     tags?: { id: number; name: string; color: string }[];
+}
+
+/** An acknowledged outage, as stored on its subject monitor. */
+export interface MonitorMute {
+    mutedAt: string;
+    /** Snapshot monitors still down. */
+    monitors: number[];
+    /** The subject itself is down and muted (its CPU/RAM and backup alerts are silenced too). */
+    hostMuted: boolean;
+    smartFailed: string[];
+    fullMounts: string[];
 }
 
 /** One operator-recorded archive or restore verification. */
@@ -627,6 +642,16 @@ export function clearAgentWarnings(id: number): Promise<{
     reported: Record<string, unknown>;
 }> {
     return request(`/api/v1/monitors/${id}/agent-warnings/clear`, { method: "POST" });
+}
+
+/** Mute a known outage on a monitor (and the websites linked to it). 400 when nothing is down. */
+export function muteMonitor(id: number): Promise<{ ok: true; id: number; mute: MonitorMute }> {
+    return request(`/api/v1/monitors/${id}/mute`, { method: "POST" });
+}
+
+/** Unmute a monitor: its own mute and every mute covering it. */
+export function unmuteMonitor(id: number): Promise<{ ok: true; id: number; unmuted: number[] }> {
+    return request(`/api/v1/monitors/${id}/mute`, { method: "DELETE" });
 }
 
 /**

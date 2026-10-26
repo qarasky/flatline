@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { attentionMonitorIds, deriveAttention, formatDuration } from "../src/lib/attention.ts";
+import { attentionMonitorIds, deriveAttention, formatDuration, unmutedCount } from "../src/lib/attention.ts";
 import { stripsFromResponse, windowStart } from "../src/lib/heartbeat-strip.ts";
 
 const NOW = Date.parse("2026-10-21T10:47:00Z");
@@ -120,4 +120,36 @@ test("agent warnings and failed or overdue backups are included", () => {
     );
     assert.equal(items[0].detail, "3 push failures");
     assert.deepEqual([...attentionMonitorIds(items)], [1]);
+});
+
+test("muted items sort last and are not counted", () => {
+    const items = deriveAttention({
+        monitors: [mon(1, { status: 0, mutedBy: [9] }), mon(2, { status: 2 })],
+        strips: new Map(),
+        nowMs: NOW,
+    });
+    assert.deepEqual(
+        items.map((i) => [i.kind, i.monitorId, i.muted]),
+        [
+            ["pending", 2, false],
+            ["down", 1, true],
+        ]
+    );
+    assert.equal(unmutedCount(items), 1);
+});
+
+test("a muted host's stale and backup items are muted too", () => {
+    const items = deriveAttention({
+        monitors: [mon(1, { type: "push", status: 1, mutedBy: [1], lastCheck: iso(NOW - 3600_000) })],
+        strips: new Map(),
+        nowMs: NOW,
+        backups: [{ id: "b", name: "bk", monitorId: 1, enabled: true, health: "overdue" }],
+    });
+    assert.deepEqual(
+        items.map((i) => [i.kind, i.muted]),
+        [
+            ["stale", true],
+            ["backup", true],
+        ]
+    );
 });
