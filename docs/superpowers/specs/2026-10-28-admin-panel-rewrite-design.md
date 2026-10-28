@@ -251,6 +251,10 @@ Follow Kore (`~/.t3/projects/kore`: `Caddyfile`, `docker-compose.yml`,
 
 ## Order of work
 
+> **Updated 2026-10-28:** [accounts](2026-10-28-accounts-design.md) (email and
+> password sign-in, a Members section) is inserted as part 2. The steps below
+> after step 1 shift by one: Monitors is part 3, and the cutover is part 7.
+
 1. Next app skeleton in the repo (`apps/web`), tokens, Inter, shadcn setup, the
    sidebar layout, cookie sign-in (backend + app) and the localStorage
    migration.
