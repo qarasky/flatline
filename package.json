@@ -15,7 +15,10 @@
         "fmt:check": "prettier --check .",
         "test:dashboard": "node --import=tsx --test apps/dashboard/test/*.mjs",
         "build:dashboard": "npm --prefix apps/dashboard run build",
-        "typecheck:dashboard": "npm --prefix apps/dashboard run typecheck"
+        "typecheck:dashboard": "npm --prefix apps/dashboard run typecheck",
+        "test:web": "npm --prefix apps/web test",
+        "typecheck:web": "npm --prefix apps/web run typecheck",
+        "build:web": "npm --prefix apps/web run build"
     },
     "devDependencies": {
         "prettier": "^3.8.1",

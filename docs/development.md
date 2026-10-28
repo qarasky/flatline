@@ -65,6 +65,9 @@ cd superboard && go run . check --server http://127.0.0.1:3001 --token <push tok
 | Dashboard tests   | `npm run test:dashboard` (pure presentation modules, `node --test` over `apps/dashboard/test/*.mjs`).                |
 | Dashboard types   | `npm run typecheck:dashboard`                                                                                        |
 | Dashboard build   | `npm run build:dashboard`                                                                                            |
+| Web app tests     | `npm run test:web` (Vitest over `apps/web/__tests__/`).                                                              |
+| Web app types     | `npm run typecheck:web`                                                                                              |
+| Web app build     | `npm run build:web` (Next.js standalone output).                                                                     |
 | Agent build + vet | `cd superboard && go build ./... && go vet ./...`                                                                    |
 | Agent tests       | `cd superboard && go test ./...`                                                                                     |
 | Backup agent      | `cd backup-agent && go test ./... && go vet ./...` (add `-race`)                                                     |
@@ -87,8 +90,20 @@ have been verified with.
 | `superboard/`                    | The Go agent (`mockagent/` is the dev fleet).                                 |
 | `backup-agent/`                  | The separate backup agent and its offline/restore tests.                      |
 | `apps/dashboard/src/components/` | UI components; `lib/` holds the pure presentation logic that the tests cover. |
+| `apps/web/`                      | The Next.js admin panel that replaces `apps/dashboard/` (in progress).        |
 | `packages/shared/`               | Types shared with the dashboard.                                              |
 | `docs/`                          | These documents.                                                              |
+
+### Web app (in progress)
+
+`apps/web/` is the Next.js rewrite of the operator UI
+([design](superpowers/specs/2026-10-28-admin-panel-rewrite-design.md)). It
+uses the App Router with server rendering, Tailwind CSS 4 and shadcn
+components (`components/ui/`, themed in `app/globals.css`). Signed-in pages
+read the `fl_session` cookie on the server and call the backend at `API_URL`
+(default `http://127.0.0.1:3001`); in the browser they call the same origin,
+which `next.config.ts` rewrites to the backend in development. Until the
+rewrite is finished the old dashboard keeps running beside it.
 
 ## Conventions
 

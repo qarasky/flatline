@@ -8,6 +8,8 @@ data
 private
 tmp
 dist
+apps/web/.next
+apps/web/next-env.d.ts
 backend-rs/target
 superboard/flatline-superboard
 

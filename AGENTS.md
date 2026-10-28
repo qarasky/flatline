@@ -16,6 +16,7 @@ document. This file holds only what an agent needs before it opens that index.
 | `superboard/`      | Go telemetry agent on each host; `superboard/mockagent` for dev.   |
 | `backup-agent/`    | Go backup agent (`flatline-backup`), independent of `superboard`.  |
 | `apps/dashboard/`  | React/Vite dashboard, Superboard and status pages.                 |
+| `apps/web/`        | Next.js admin panel replacing `apps/dashboard/` (in progress).     |
 | `packages/shared/` | Types shared by the dashboard and its tests.                       |
 | `docker/`          | Dockerfile, office compose file, backups override, nightly backup. |
 | `docs/`            | All documentation; `provisioning.md` is served from the binary.    |
@@ -29,6 +30,7 @@ Run the ones that cover what you touched before calling work done.
 | Formatting   | `npm run fmt:check` (fix with `npm run fmt`; never hand-format)       |
 | Backend      | `cargo test --manifest-path backend-rs/Cargo.toml`                    |
 | Dashboard    | `npm run test:dashboard && npm run typecheck:dashboard`               |
+| Web app      | `npm run test:web && npm run typecheck:web`                           |
 | Agent        | `cd superboard && gofmt -l . && go vet ./... && go test ./...`        |
 | Backup agent | `cd backup-agent && go vet ./... && go test -race ./...`              |
 | Local stack  | `./dev.sh` (backend `:3001`, dashboard `:3003`, mock fleet), `status` |
