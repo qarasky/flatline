@@ -18,13 +18,14 @@
 ./dev.sh stop     # stop everything
 ```
 
-`dev.sh` builds and starts three things, detached, logging to `.dev-logs/`:
+`dev.sh` builds and starts four things, detached, logging to `.dev-logs/`:
 
-| Process          | Port | Notes                                                                                     |
-| ---------------- | ---- | ----------------------------------------------------------------------------------------- |
-| Backend          | 3001 | Binds `0.0.0.0`, runs migrations, writes the operator token on first boot.                |
-| Dashboard (Vite) | 3003 | Proxies `/api` and `/agent` to the backend, so the browser is same-origin.                |
-| Mock fleet       | —    | `superboard/mockagent`: creates a demo fleet through the public API and pushes telemetry. |
+| Process          | Port | Notes                                                                                            |
+| ---------------- | ---- | ------------------------------------------------------------------------------------------------ |
+| Backend          | 3001 | Binds `0.0.0.0`, runs migrations, writes the operator token on first boot.                       |
+| Web app (Next)   | 3003 | The new admin panel. Rewrites `/api` and `/agent` to the backend, so the browser is same-origin. |
+| Dashboard (Vite) | 3004 | The old dashboard, until the rewrite replaces it. Proxies `/api` and `/agent` the same way.      |
+| Mock fleet       | —    | `superboard/mockagent`: creates a demo fleet through the public API and pushes telemetry.        |
 
 It also builds the agent binary into `.dev-data/agent/` so the download endpoints
 work locally. The first run prints the operator token (also in

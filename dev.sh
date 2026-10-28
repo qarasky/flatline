@@ -3,10 +3,11 @@
 # Start the Flatline dev servers, detached so they survive the shell that
 # launched them.
 #
-# The backend is the Rust service in backend-rs/. The operator dashboard is the
-# Vite app in apps/dashboard: Vite proxies /api and /agent to the backend
-# (see apps/dashboard/vite.config.ts), so the app is same-origin in dev exactly
-# as it is in production.
+# The backend is the Rust service in backend-rs/. The operator UI is the
+# Next.js app in apps/web, which rewrites /api and /agent to the backend (see
+# apps/web/next.config.ts), so the app is same-origin in dev exactly as it is
+# in production. The old Vite dashboard (apps/dashboard) runs beside it until
+# the rewrite replaces it.
 #
 # Mock data: the Go mock agent (superboard/mockagent) creates a demo fleet
 # through the public API and pushes telemetry for it, so the Superboard shows
@@ -33,7 +34,8 @@ DATA_DIR="${FLATLINE_DATA_DIR:-$ROOT/.dev-data}"
 AGENT_DIR="$DATA_DIR/agent"
 
 BACKEND_PORT="${FLATLINE_BACKEND_PORT:-3001}"
-DASH_PORT="${FLATLINE_DASHBOARD_PORT:-3003}"
+WEB_PORT="${FLATLINE_WEB_PORT:-3003}"
+DASH_PORT="${FLATLINE_DASHBOARD_PORT:-3004}"
 
 mkdir -p "$LOGS" "$DATA_DIR" "$AGENT_DIR"
 
@@ -81,6 +83,7 @@ start_one() {
 case "${1:-start}" in
     stop)
         echo "Stopping Flatline dev servers:"
+        stop_one "web" "next dev.*--port $WEB_PORT"
         stop_one "dashboard" "vite.*--port $DASH_PORT"
         stop_one "backend" "flatline-backend"
         stop_one "mock-agent" "mockagent"
@@ -89,6 +92,7 @@ case "${1:-start}" in
         ;;
     status)
         printf '%s: %s\n' "backend" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$BACKEND_PORT/api/v1/auth/setup" 2>/dev/null || echo down)"
+        printf '%s: %s\n' "web" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$WEB_PORT/sign-in" 2>/dev/null || echo down)"
         printf '%s: %s\n' "dashboard" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$DASH_PORT/" 2>/dev/null || echo down)"
         exit 0
         ;;
@@ -172,7 +176,19 @@ if [ -x "$DATA_DIR/mockagent" ]; then
     fi
 fi
 
-# --- dashboard -------------------------------------------------------------
+# --- web app ---------------------------------------------------------------
+
+# Same-origin in dev: Next rewrites /api and /agent to the backend, and
+# server-rendered pages call the backend at API_URL.
+(
+    cd "$ROOT/apps/web"
+    [ -d node_modules ] || npm ci --no-audit --no-fund >/dev/null
+    API_URL="http://127.0.0.1:$BACKEND_PORT" \
+    FLATLINE_DEV_ORIGINS="$(ipconfig getifaddr en0 2>/dev/null || true)" \
+    start_one "web" npx next dev --hostname 0.0.0.0 --port "$WEB_PORT"
+)
+
+# --- dashboard (old, until the rewrite replaces it) ------------------------
 
 # Same-origin in dev: Vite proxies /api and /agent to the backend (see
 # vite.config.ts), so the app talks to its own origin exactly as it does in
@@ -189,7 +205,8 @@ LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || echo "this-host")"
 
 echo
 echo "  backend     http://$LAN_IP:$BACKEND_PORT"
-echo "  dashboard   http://$LAN_IP:$DASH_PORT"
+echo "  web         http://$LAN_IP:$WEB_PORT"
+echo "  dashboard   http://$LAN_IP:$DASH_PORT   (old)"
 echo "  superboard  http://$LAN_IP:$DASH_PORT/superboard   (kiosk: /superboard/kiosk, scope: /superboard/kiosk/work)"
 echo
 if [ -n "$TOKEN" ]; then
