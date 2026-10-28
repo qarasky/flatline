@@ -251,6 +251,7 @@ minutes and only real outages page.
 | 2026-10-25 | Agent 1.8.1 (256 MiB buffer) to the fleet via self-update; backup-agent self-update (0.3.0, migration 0015) and Superboard backup lines; meks hopped to 0.3.0 by hand. Rollback tag `office-prev-20261025-073124`.                                                       |
 | 2026-10-25 | Backup agent 0.3.1: restore reuses one S3 client per target (0.3.0 stopped a stock Garage at ~1,000 objects). meks self-updated 0.3.0 → 0.3.1 on its update timer. Rollback tag `office-prev-20261025-075239`.                                                           |
 | 2026-10-27 | Mute a known outage (migration 0016); plain backup bundles stored as `bundle.tar` (meks's six existing bundles renamed by hand). Backup agent 0.3.2 (self-update names the build it installed); telemetry agent stays 1.8.1. Rollback tag `office-prev-20261027-130458`. |
+| 2026-10-28 | Agent 1.8.2: the buffer queues one sample per 30 s, so an outage backlog drains in minutes (after the 2026-10-27/28 power cuts the client hosts stayed ~5 h stale; their queues were cleared by hand). Rollback tag `office-prev-20261028-111008`.                       |
 
 Each release is also recorded in [history](history.md) with the defects it fixed.
 
