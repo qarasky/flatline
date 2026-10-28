@@ -18,6 +18,11 @@ describe("safeNext", () => {
         "javascript:alert(1)",
         "/sign-in",
         "/sign-in?next=/x",
+        // The URL parser strips tab, CR and LF first: "/\t/evil" is "//evil".
+        "/\t/evil.example",
+        "/\n/evil.example",
+        "/\r/evil.example",
+        "/\u0000/evil.example",
     ];
     for (const value of bad) {
         it(`falls back to /monitors for ${JSON.stringify(value)}`, () => {
