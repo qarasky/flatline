@@ -25,7 +25,7 @@ import (
 // version is a var, not a const, so release builds can stamp it with
 // -ldflags "-X main.version=..." (the Dockerfile also derives the VERSION
 // file from `superboard version`).
-var version = "1.8.1"
+var version = "1.8.2"
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `superboard %s — Flatline fleet agent

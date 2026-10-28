@@ -112,7 +112,7 @@ provisioning is in the [provisioning runbook](provisioning.md).
 | `interval_seconds`            | `1`                          | Seconds between live samples. An explicitly configured interval is preserved on upgrade.                                                                                                  |
 | `allow_insecure`              | `false`                      | Permit plain HTTP. Off by default because metrics (hostnames, container names, versions) are useful recon in cleartext.                                                                   |
 | `buffer_dir`                  | `/var/lib/superboard/buffer` | Disk-backed queue for undelivered samples. Holds hostnames and container names: keep it 0700, root-owned.                                                                                 |
-| `buffer_max_bytes`            | `268435456` (256 MiB)        | Byte cap on the buffer (~10 h of 1Hz samples). Oldest samples are dropped first when full, so an endless outage cannot fill the disk.                                                     |
+| `buffer_max_bytes`            | `268435456` (256 MiB)        | Byte cap on the buffer (days of outage: one sample per 30 s is queued). Oldest samples are dropped first when full, so an endless outage cannot fill the disk.                            |
 | `self_update`                 | `true`                       | Let the agent replace its own binary from a server-shipped release. Set `false` on a host you update by hand.                                                                             |
 | `self_update_interval_hours`  | `24`                         | How often the agent asks the server for a newer release.                                                                                                                                  |
 | `self_update_allow_downgrade` | `false`                      | Permit installing an older release, for recovering a bad rollout without host access.                                                                                                     |
@@ -230,7 +230,7 @@ changes shape.
   },
   "updates": { "total": 41, "security": 6, "rebootRequired": true },
   "agent": {
-    "version": "1.8.1",
+    "version": "1.8.2",
     "uptime": 86400,
     "samplesDropped": 4,
     "failedPushes": 3,
@@ -320,6 +320,11 @@ Sample every `interval_seconds` (default 1) and push **from memory**; the
   not missing history, and a prior run's pending samples are recovered at
   startup. A hard kill (SIGKILL, power loss) can lose the one or two samples in
   flight, as unsynced buffer writes could before.
+- **One sample per 30 s on disk.** A sample within 30 s (by `sampledAt`) of
+  the last one queued is left out: the server archives one sample per 30 s, so
+  the rest would only be discarded. At 1Hz a full-rate backlog drained no
+  faster than new samples arrived and never caught up. Every sample carries
+  snapshots and running totals, so nothing the server keeps is lost.
 - **Oldest-first drain**, paced gently: after an outage the first accepted push
   is a probe, then the drain waits a **random 0–30s** (a fleet that lost the
   server together must not start draining together) and sends at most 4
@@ -419,7 +424,7 @@ by the fleet.
 
 | Command                                                                                        | Purpose                                                                                                                                                       |
 | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `superboard version`                                                                           | Print the version (e.g. `superboard 1.8.1`). Release builds stamp it via `-ldflags`.                                                                          |
+| `superboard version`                                                                           | Print the version (e.g. `superboard 1.8.2`). Release builds stamp it via `-ldflags`.                                                                          |
 | `superboard check [--verbose]`                                                                 | Collect and push **once**, print the outcome, exit 0 on accept. `--verbose` prints the full payload. A fast diagnostic (1s CPU window), never a load average. |
 | `superboard install --server URL --token TOKEN [--interval SECS] [--insecure] [--config PATH]` | Write config, install the service, and start it. Must run as root; refuses to double-install.                                                                 |
 | `superboard uninstall [--config PATH]`                                                         | Stop and remove everything install created: service (or cron entry), buffer directory, and config. Must run as root.                                          |

@@ -36,6 +36,9 @@ type sampleBuffer struct {
 	entries []bufferEntry // oldest first
 	bytes   int64
 	seq     uint64
+	// lastKept is the sample time of the newest sample written, for
+	// thinning the queue to bufferSpacing.
+	lastKept time.Time
 
 	// wake is signalled (non-blocking, capacity one) whenever a sample is
 	// appended, so an idle sender does not poll.
@@ -45,6 +48,10 @@ type sampleBuffer struct {
 	// path never touches it.
 	writes atomic.Uint64
 }
+
+// bufferSpacing is the least sample time between two queued samples: the
+// server's archive cadence (HISTORY_INTERVAL_MS in the backend's ingest).
+const bufferSpacing = 30 * time.Second
 
 type bufferEntry struct {
 	path string
@@ -125,6 +132,9 @@ func (b *sampleBuffer) reserveSeq() uint64 {
 // one. A write failure is logged and counted: a full disk must degrade to
 // lost samples, never to a stopped agent.
 func (b *sampleBuffer) append(payload *Payload) bool {
+	if b.thin(payload) {
+		return true
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("buffer: encode failed: %v", err)
@@ -169,6 +179,27 @@ func (b *sampleBuffer) append(payload *Payload) bool {
 	default:
 	}
 	return true
+}
+
+// thin reports whether payload falls within bufferSpacing of the last sample
+// queued, and so is left out. The server archives one sample per 30 s, so
+// the samples in between would be pushed only to be discarded: at one sample
+// a second they made a backlog drain (paced by the round trip) slower than
+// the sampler, and a five-hour outage never caught up. Samples carry
+// snapshots and running totals, so the next kept one loses nothing. A sample
+// without a readable sampledAt is always kept.
+func (b *sampleBuffer) thin(payload *Payload) bool {
+	at, err := time.Parse(time.RFC3339, payload.SampledAt)
+	if err != nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.lastKept.IsZero() && at.Before(b.lastKept.Add(bufferSpacing)) {
+		return true
+	}
+	b.lastKept = at
+	return false
 }
 
 // enforceCapLocked drops oldest samples until the directory fits its cap.

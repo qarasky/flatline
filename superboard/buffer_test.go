@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,39 @@ func TestBufferRoundTripPreservesOrder(t *testing.T) {
 	}
 	if _, _, ok := b.next(); ok {
 		t.Fatal("empty buffer must report no sample")
+	}
+}
+
+func sampledAt(p *Payload, at time.Time) *Payload {
+	p.SampledAt = at.UTC().Format(sampleTimeFormat)
+	return p
+}
+
+func TestBufferKeepsOneSamplePerArchiveInterval(t *testing.T) {
+	// An outage at one sample a second queued 18,000 samples in five hours,
+	// more than a drain paced by a 0.5 s round trip ever caught up with. The
+	// server archives one sample per 30 s, so the queue keeps only those.
+	b, err := openSampleBuffer(filepath.Join(t.TempDir(), "buf"), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 10, 28, 6, 0, 0, 0, time.UTC)
+	for i := range 95 {
+		b.append(sampledAt(testPayload(float64(i)), start.Add(time.Duration(i)*time.Second)))
+	}
+
+	var kept []float64
+	for {
+		entry, payload, ok := b.next()
+		if !ok {
+			break
+		}
+		kept = append(kept, payload.CPU.Percent)
+		b.ack(entry)
+	}
+	want := []float64{0, 30, 60, 90}
+	if !slices.Equal(kept, want) {
+		t.Fatalf("kept samples %v, want %v", kept, want)
 	}
 }
 

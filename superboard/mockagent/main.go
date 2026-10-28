@@ -352,7 +352,7 @@ func sample(def serverDef, st *state, now time.Time) map[string]any {
 			"device": "sda", "readBytes": int(st.diskRead), "writeBytes": int(st.diskWrite),
 		}},
 		"agent": map[string]any{
-			"version":        "1.8.1",
+			"version":        "1.8.2",
 			"uptime":         int(st.uptime),
 			"samplesDropped": 0,
 			"failedPushes":   0,
@@ -397,7 +397,7 @@ func sample(def serverDef, st *state, now time.Time) map[string]any {
 			container("ffmpeg", "jrottenberg/ffmpeg:6", 410, 1.1*gib, 2*gib),
 		}
 		metrics["agent"] = map[string]any{
-			"version": "1.8.1", "uptime": int(st.uptime), "samplesDropped": 0, "failedPushes": 0,
+			"version": "1.8.2", "uptime": int(st.uptime), "samplesDropped": 0, "failedPushes": 0,
 			"collectorErrors": map[string]any{"gpu": 2},
 		}
 	case "neglected":

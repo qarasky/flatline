@@ -367,6 +367,55 @@ func TestDeliverySpillsOnFailureAndKeepsOrder(t *testing.T) {
 	}
 }
 
+// During an outage the queue holds one sample per archive interval, the
+// backlog drains thinned, and live delivery resumes after it.
+func TestDeliveryThinsTheOutageBacklog(t *testing.T) {
+	var fail sync.Mutex
+	failing := true
+	fake := &fakePusher{fn: func(int, *Payload) error {
+		fail.Lock()
+		defer fail.Unlock()
+		if failing {
+			return &pushRetryError{status: 530, msg: "530"}
+		}
+		return nil
+	}}
+	buffer, err := openSampleBuffer(filepath.Join(t.TempDir(), "buf"), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := newTestDelivery(fake, buffer, 10*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.run(ctx) }()
+
+	start := time.Date(2026, 10, 28, 4, 0, 0, 0, time.UTC)
+	at := func(second int) *Payload {
+		return sampledAt(testPayload(float64(second)), start.Add(time.Duration(second)*time.Second))
+	}
+	d.offer(at(0))
+	waitFor(t, 2*time.Second, "the failed push to spill", func() bool { return buffer.pending() == 1 })
+	for second := 1; second < 90; second++ {
+		d.offer(at(second))
+	}
+	if got := buffer.pending(); got != 3 {
+		t.Fatalf("pending = %d after 90 s of outage, want 3 (one per 30 s)", got)
+	}
+
+	fail.Lock()
+	failing = false
+	fail.Unlock()
+	waitForDrain(t, buffer, 5*time.Second)
+	d.offer(at(95))
+	waitFor(t, 2*time.Second, "live delivery after the drain", func() bool { return len(fake.delivered()) == 4 })
+	cancel()
+	<-done
+
+	if got := fake.delivered(); !equalFloats(got, []float64{0, 30, 60, 95}) {
+		t.Fatalf("delivered %v, want [0 30 60 95]", got)
+	}
+}
+
 // Shutdown spills whatever is still in memory; the next run recovers it.
 func TestDeliveryShutdownSpillsMemory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "buf")

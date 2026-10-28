@@ -190,15 +190,15 @@ provisioning history for the client hosts is in the cabinet record, not here.
 
 ### Agent versions
 
-The current release is **1.8.1**. Self-update exists only from 1.7.0, so a host
+The current release is **1.8.2**. Self-update exists only from 1.7.0, so a host
 still on 1.6.1 needs one manual hop, per host:
 
 ```bash
 curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
 ```
 
-Hosts already on 1.7.0 or newer pick up 1.8.1 themselves. Every monitored host
-was on 1.8.0 when 1.8.1 shipped, so the whole fleet updates on its own.
+Hosts already on 1.7.0 or newer pick up 1.8.2 themselves. Every monitored host
+was on 1.8.1 when 1.8.2 shipped, so the whole fleet updates on its own.
 
 1.8.0 carries the G1 fix (a restart during self-update could kill the helper
 before it replaced the binary) and the audit's resource-cap fixes. Hosts on
@@ -210,6 +210,12 @@ are safe.
 ~7.5KB per sample, 32 MiB held ~74 minutes, so the office server's 5-hour power
 cut on 2026-10-23 cost each client host 5–16k samples. 256 MiB covers ~10 hours.
 Hosts that set `buffer_max_bytes` explicitly keep their value.
+
+1.8.2 queues one sample per 30 s instead of every 1Hz sample. After the
+2026-10-27/28 power cuts the client hosts held ~17k samples each (about five
+hours) and drained at roughly the rate they sampled, so their cards stayed five
+hours stale; the queues were cleared by hand on 2026-10-28. A five-hour outage
+now queues ~600 samples and drains in minutes, and the 256 MiB cap covers days.
 
 ### Backup agent versions
 
