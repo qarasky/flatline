@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
-import { createSession, migrateLegacyToken, signInMessage } from "@/lib/legacy-token";
+import { createSession, keepMigrating, migrateLegacyToken, signInMessage } from "@/lib/legacy-token";
 import { safeNext } from "@/lib/safe-next";
 
 export function SignInForm({ next, expired }: { next: string | null; expired: boolean }) {
@@ -24,19 +24,43 @@ export function SignInForm({ next, expired }: { next: string | null; expired: bo
     };
 
     // A browser the old dashboard signed in (the wall TV) still holds its
-    // token in localStorage: swap it for a session without asking.
+    // token in localStorage: swap it for a session without asking. If
+    // Flatline cannot be reached yet, show the form and keep retrying in the
+    // background, so a screen nobody sits at still signs itself in.
     useEffect(() => {
         if (started.current) {
             return;
         }
         started.current = true;
-        void migrateLegacyToken({ storage: window.localStorage, createSession }).then((result) => {
+        const controller = new AbortController();
+        const deps = { storage: window.localStorage, createSession };
+        void migrateLegacyToken(deps).then(async (result) => {
             if (result === "migrated") {
                 enter();
-            } else {
-                setMigrating(false);
+                return;
+            }
+            setMigrating(false);
+            if (result !== "error") {
+                return;
+            }
+            const wait = (ms: number) =>
+                new Promise<void>((resolve) => {
+                    const timer = window.setTimeout(resolve, ms);
+                    controller.signal.addEventListener("abort", () => {
+                        window.clearTimeout(timer);
+                        resolve();
+                    });
+                });
+            if ((await keepMigrating({ ...deps, wait, signal: controller.signal })) === "migrated") {
+                enter();
             }
         });
+        return () => {
+            // Stop retrying when the page goes away. React's development
+            // double mount also lands here; the second mount starts again.
+            controller.abort();
+            started.current = false;
+        };
     }, []);
 
     async function submit(event: React.FormEvent) {

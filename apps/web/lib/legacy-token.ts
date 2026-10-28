@@ -1,4 +1,5 @@
 import { api, isApiError } from "@/lib/api";
+import { retryDelayMs } from "@/lib/retry";
 import { LEGACY_TOKEN_KEY } from "@/lib/session";
 
 export type SessionResult = "ok" | "rejected" | "error";
@@ -43,6 +44,30 @@ export async function migrateLegacyToken(deps: {
         // Unwritable storage: the session cookie is what matters now.
     }
     return result === "ok" ? "migrated" : "rejected";
+}
+
+/**
+ * Migrate, retrying with backoff while Flatline cannot be reached. The old
+ * kiosk reloads into the new app right after a deploy, when the backend may
+ * still be starting; a screen nobody sits at must sign itself in once it is
+ * up instead of waiting on the form.
+ */
+export async function keepMigrating(deps: {
+    storage: Pick<Storage, "getItem" | "removeItem">;
+    createSession: (token: string) => Promise<SessionResult>;
+    wait: (ms: number) => Promise<void>;
+    signal?: AbortSignal;
+}): Promise<"migrated" | "none" | "rejected" | "error"> {
+    for (let attempt = 0; ; attempt++) {
+        const result = await migrateLegacyToken(deps);
+        if (result !== "error" || deps.signal?.aborted) {
+            return result;
+        }
+        await deps.wait(retryDelayMs(attempt));
+        if (deps.signal?.aborted) {
+            return "error";
+        }
+    }
 }
 
 /** What the sign-in form says when signing in failed. */

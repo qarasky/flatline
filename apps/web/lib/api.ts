@@ -10,7 +10,7 @@
  * message and hint.
  */
 
-import { CSRF_HEADER, SESSION_COOKIE } from "@/lib/session";
+import { CSRF_HEADER, HOME_PATH, PATH_HEADER, SESSION_COOKIE, SIGN_IN_PATH } from "@/lib/session";
 
 export const DEFAULT_API_URL = "http://127.0.0.1:3001";
 
@@ -79,6 +79,19 @@ async function sessionToken(): Promise<string | undefined> {
     return (await cookies()).get(SESSION_COOKIE)?.value;
 }
 
+/**
+ * A server-rendered page whose session the API rejected (a revoked token)
+ * goes to sign-in, marked `expired` so the gate does not bounce it back.
+ * Doing it here covers every server fetch, not only the layout's check, which
+ * Next does not re-run when moving between pages.
+ */
+async function toSignIn(): Promise<void> {
+    const [{ headers }, { redirect }] = await Promise.all([import("next/headers"), import("next/navigation")]);
+    const path = (await headers()).get(PATH_HEADER) ?? HOME_PATH;
+    // Throws Next's redirect signal; nothing after this runs.
+    redirect(`${SIGN_IN_PATH}?expired=1&next=${encodeURIComponent(path)}`);
+}
+
 async function toError(response: Response): Promise<ApiError> {
     try {
         const body: unknown = await response.json();
@@ -121,6 +134,9 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
         throw new ApiError(503, "unreachable", "Could not reach Flatline.");
     }
     if (!response.ok) {
+        if (server && response.status === 401) {
+            await toSignIn();
+        }
         throw await toError(response);
     }
     if (response.status === 204) {

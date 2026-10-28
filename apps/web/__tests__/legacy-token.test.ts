@@ -50,3 +50,36 @@ describe("migrateLegacyToken", () => {
         expect(await migrateLegacyToken({ storage: broken, createSession: session("ok") })).toBe("none");
     });
 });
+
+describe("keepMigrating", () => {
+    it("retries while Flatline cannot be reached, so an unattended screen signs itself in", async () => {
+        const { keepMigrating } = await import("@/lib/legacy-token");
+        const store = storage({ "flatline.token": "flatline_op_tv" });
+        const results: SessionResult[] = ["error", "error", "ok"];
+        const create = vi.fn(async () => results.shift() ?? "ok");
+        const waits: number[] = [];
+        const outcome = await keepMigrating({
+            storage: store,
+            createSession: create,
+            wait: async (ms) => void waits.push(ms),
+        });
+        expect(outcome).toBe("migrated");
+        expect(create).toHaveBeenCalledTimes(3);
+        expect(waits).toEqual([2_000, 4_000]);
+        expect(store.map.has("flatline.token")).toBe(false);
+    });
+
+    it("stops when told to", async () => {
+        const { keepMigrating } = await import("@/lib/legacy-token");
+        const store = storage({ "flatline.token": "flatline_op_tv" });
+        const controller = new AbortController();
+        const outcome = await keepMigrating({
+            storage: store,
+            createSession: async () => "error",
+            wait: async () => controller.abort(),
+            signal: controller.signal,
+        });
+        expect(outcome).toBe("error");
+        expect(store.map.get("flatline.token")).toBe("flatline_op_tv");
+    });
+});
