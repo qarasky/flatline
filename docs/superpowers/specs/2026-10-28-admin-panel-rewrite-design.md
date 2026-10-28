@@ -261,8 +261,9 @@ Follow Kore (`~/.t3/projects/kore`: `Caddyfile`, `docker-compose.yml`,
 6. Caddy and compose, `dev.sh`, docs; delete `apps/dashboard`; cut production
    over with the usual backup and rollback tag.
 
-Each step leaves the repository building and the old dashboard working until
-step 6 removes it.
+Each step leaves the repository building. The old dashboard stays in the tree
+only as a reference while the new app is built, and step 6 deletes it with
+everything else listed under "No rollback".
 
 ## Constraints
 
@@ -280,13 +281,15 @@ step 6 removes it.
 - Existing dashboard tests keep passing in their new home; the checks table in
   `AGENTS.md` names the new commands.
 
-## Rollback
+## No rollback
 
-Rollback is the previous image tag plus the previous compose files (the
-`office-prev-<REL>` tag and the pre-release database backup, as today). Backing
-out the `web` container alone is **not** supported: the Rust image no longer
-carries the old dashboard. The project adds no migration, so the old backend
-still accepts the database. _(Builder check; writer's call.)_
+This is a full migration with no fallback, by the operator's decision. The
+old dashboard (`apps/dashboard`), the Rust image's dashboard bundle,
+`web::fallback`, `FLATLINE_WEB_DIST` and the single-container compose files
+are deleted, not kept alongside. No rollback path is planned or tested. The
+release still takes the usual pre-release database backup
+(`docs/deployment.md`), because that procedure is cheap and protects the data,
+not the old UI.
 
 ## Left to the builder
 
