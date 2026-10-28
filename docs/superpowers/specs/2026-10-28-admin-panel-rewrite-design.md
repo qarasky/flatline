@@ -167,8 +167,9 @@ it as a bearer header. Server rendering cannot read `localStorage`, so the
 browser session moves to a cookie.
 
 - **Backend accepts a session cookie.** On `/api/v1` (and `/api/v1/events`), the
-  backend accepts the operator token from an `HttpOnly`, `Secure`,
-  `SameSite=Strict` cookie when no `Authorization` header is present. Bearer
+  backend accepts the operator token from an `HttpOnly`, `Secure` (over HTTPS),
+  `SameSite=Lax` cookie (Lax, not Strict, so a link opened from Telegram arrives
+  signed in; the CSRF rule below protects writes) when no `Authorization` header is present. Bearer
   tokens keep working exactly as today for the API, agents and AI clients.
 - **Cookie-authenticated writes need CSRF protection.** A non-GET request
   authenticated by the cookie must prove it comes from this origin (an `Origin`
