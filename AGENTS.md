@@ -25,15 +25,15 @@ document. This file holds only what an agent needs before it opens that index.
 
 Run the ones that cover what you touched before calling work done.
 
-| Area         | Command                                                               |
-| ------------ | --------------------------------------------------------------------- |
-| Formatting   | `npm run fmt:check` (fix with `npm run fmt`; never hand-format)       |
-| Backend      | `cargo test --manifest-path backend-rs/Cargo.toml`                    |
-| Dashboard    | `npm run test:dashboard && npm run typecheck:dashboard`               |
-| Web app      | `npm run test:web && npm run typecheck:web`                           |
-| Agent        | `cd superboard && gofmt -l . && go vet ./... && go test ./...`        |
-| Backup agent | `cd backup-agent && go vet ./... && go test -race ./...`              |
-| Local stack  | `./dev.sh` (backend `:3001`, dashboard `:3003`, mock fleet), `status` |
+| Area         | Command                                                                                |
+| ------------ | -------------------------------------------------------------------------------------- |
+| Formatting   | `npm run fmt:check` (fix with `npm run fmt`; never hand-format)                        |
+| Backend      | `cargo test --manifest-path backend-rs/Cargo.toml`                                     |
+| Dashboard    | `npm run test:dashboard && npm run typecheck:dashboard`                                |
+| Web app      | `npm run test:web && npm run typecheck:web`                                            |
+| Agent        | `cd superboard && gofmt -l . && go vet ./... && go test ./...`                         |
+| Backup agent | `cd backup-agent && go vet ./... && go test -race ./...`                               |
+| Local stack  | `./dev.sh` (backend `:3001`, web `:3003`, old dashboard `:3004`, mock fleet), `status` |
 
 Do not run `cargo fmt` across the tree: it is not uniformly `rustfmt`-formatted.
 

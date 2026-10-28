@@ -81,8 +81,8 @@ cd flatline
 ./dev.sh
 ```
 
-`./dev.sh` builds the backend and agent, starts the dashboard on `:3003`
-(backend on `:3001`, proxied), and starts the mock fleet: a Go agent that
+`./dev.sh` builds the backend and agent, starts the web app on `:3003` and the
+old dashboard on `:3004` (backend on `:3001`, proxied), and starts the mock fleet: a Go agent that
 creates a demo set of hosts through the public API, pushes believable telemetry,
 creates a few demo websites and leaves agent warnings on two hosts. It prints
 the operator token — also in `./.dev-data/initial-token.txt`. `./dev.sh stop`

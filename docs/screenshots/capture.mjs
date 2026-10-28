@@ -1,6 +1,6 @@
 // Regenerate the documentation screenshots from the local dev stack.
 //
-//   ./dev.sh                                   # backend :3001, dashboard :3003, mock fleet
+//   ./dev.sh                                   # backend :3001, old dashboard :3004, mock fleet
 //   npm ci && npx playwright install chromium  # from the repository root
 //   node docs/screenshots/capture.mjs
 //
@@ -11,7 +11,7 @@ import { chromium } from "playwright";
 import { readFileSync } from "node:fs";
 
 const token = readFileSync(".dev-data/initial-token.txt", "utf8").trim();
-const base = "http://127.0.0.1:3003";
+const base = "http://127.0.0.1:3004";
 
 const browser = await chromium.launch();
 const context = await browser.newContext({

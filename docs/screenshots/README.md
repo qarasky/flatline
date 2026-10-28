@@ -16,7 +16,7 @@ hand-drawn, and no production database is opened.
 From the repository root, with the dev stack running:
 
 ```sh
-./dev.sh                                    # backend :3001, dashboard :3003, mock fleet
+./dev.sh                                    # backend :3001, old dashboard :3004, mock fleet
 npm ci
 npx playwright install chromium
 node docs/screenshots/capture.mjs

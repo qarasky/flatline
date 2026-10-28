@@ -209,7 +209,7 @@ so the UI never relies on colour alone.
 ```bash
 cd apps/dashboard
 npm ci
-npm run dev        # http://localhost:3003, proxies /api and /agent to :3001
+npm run dev        # Vite's port; ./dev.sh runs it on :3004 beside the new web app on :3003
 npm run typecheck  # tsc --noEmit
 npm run build      # tsx -b + vite build into dist/
 ```
