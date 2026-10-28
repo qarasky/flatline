@@ -180,7 +180,7 @@ browser session moves to a cookie.
 - **The cookie is long-lived** (a kiosk must stay signed in for months) and
   **carries the operator token itself**, so a token revoked in Tokens stops
   working through the cookie with no extra code, and no session table (and no
-  migration) is needed. _(Writer's call: it keeps rollback a plain image swap.)_
+  migration) is needed. _(Writer's call.)_
 - **Migration without re-pairing.** On the first visit after the switch, a
   browser that still has the old `localStorage` token exchanges it for the
   cookie silently and deletes it. The wall TV must come back signed in.
@@ -259,7 +259,7 @@ Follow Kore (`~/.t3/projects/kore`: `Caddyfile`, `docker-compose.yml`,
 4. Superboard, kiosk, status pages and device sign-in, ported.
 5. Notifications and Tokens.
 6. Caddy and compose, `dev.sh`, docs; delete `apps/dashboard`; cut production
-   over with the usual backup and rollback tag.
+   over with the usual pre-release database backup.
 
 Each step leaves the repository building. The old dashboard stays in the tree
 only as a reference while the new app is built, and step 6 deletes it with
