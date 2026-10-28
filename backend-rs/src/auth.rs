@@ -593,23 +593,108 @@ pub fn bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
         .filter(|token| !token.is_empty())
 }
 
-/// Middleware: every `/api/v1` route requires a valid bearer token.
-/// The push endpoint authenticates by monitor token in the path instead and
-/// is mounted separately.
+/// The web app's session cookie. It carries the operator token itself, so
+/// revoking the token ends the session with no session store.
+pub const SESSION_COOKIE: &str = "fl_session";
+
+/// Header a cookie-authenticated write must carry (value `1`). A page on
+/// another site cannot add a custom header to a same-site request without
+/// a CORS preflight, which this API never grants.
+pub const CSRF_HEADER: &str = "x-flatline-csrf";
+
+/// Session cookie lifetime: 400 days, the most browsers allow. A kiosk
+/// stays signed in until its token is revoked.
+pub const SESSION_MAX_AGE: i64 = 34_560_000;
+
+/// Where a request's operator token came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenSource {
+    Bearer,
+    Cookie,
+}
+
+/// The verified operator token, for handlers that need it again (the SSE
+/// stream keys and revalidates by it).
+#[derive(Debug, Clone)]
+pub struct OperatorToken(pub String);
+
+/// The request's token: the bearer header first, else the session cookie.
+pub fn request_token(headers: &axum::http::HeaderMap) -> Option<(String, TokenSource)> {
+    if let Some(token) = bearer(headers) {
+        return Some((token.to_string(), TokenSource::Bearer));
+    }
+    crate::status_pages::parse_cookies(headers)
+        .remove(SESSION_COOKIE)
+        .filter(|token| !token.is_empty())
+        .map(|token| (token, TokenSource::Cookie))
+}
+
+/// Whether the request reached the proxy in front over HTTPS.
+pub fn request_is_https(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .is_some_and(|proto| proto.trim().eq_ignore_ascii_case("https"))
+}
+
+/// The `Set-Cookie` value that signs a browser in.
+pub fn session_cookie(token: &str, secure: bool) -> String {
+    format!(
+        "{SESSION_COOKIE}={token}; Max-Age={SESSION_MAX_AGE}; Path=/; HttpOnly; SameSite=Lax{}",
+        if secure { "; Secure" } else { "" }
+    )
+}
+
+/// The `Set-Cookie` value that signs a browser out.
+pub fn clear_session_cookie(secure: bool) -> String {
+    format!(
+        "{SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax{}",
+        if secure { "; Secure" } else { "" }
+    )
+}
+
+/// Middleware: every `/api/v1` route requires a valid operator token, as a
+/// bearer header or the web app's session cookie. The push endpoint
+/// authenticates by monitor token in the path instead and is mounted
+/// separately.
 ///
 /// 401 only for a token that is missing or invalid; a token store failure
 /// answers 503 and the failed-check limiter 429, so a busy database never
-/// signs a client out.
+/// signs a client out. A cookie-authenticated write without the CSRF header
+/// answers 403.
 pub async fn require_token(
     State(state): State<AppState>,
-    request: Request<Body>,
+    mut request: Request<Body>,
     next: Next,
 ) -> Response {
-    let Some(token) = bearer(request.headers()) else {
+    let Some((token, source)) = request_token(request.headers()) else {
         return unauthorized();
     };
-    match verify_token(&state.pool, token).await {
-        Ok(TokenVerdict::Operator) => next.run(request).await,
+    match verify_token(&state.pool, &token).await {
+        Ok(TokenVerdict::Operator) => {
+            let safe = matches!(
+                *request.method(),
+                axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+            );
+            let csrf_ok = request
+                .headers()
+                .get(CSRF_HEADER)
+                .is_some_and(|value| value.as_bytes() == b"1");
+            if source == TokenSource::Cookie && !safe && !csrf_ok {
+                return crate::api::ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "csrf_required",
+                    "Cookie-authenticated writes must send X-Flatline-CSRF: 1.",
+                )
+                .with_hint(
+                    "Send the header `X-Flatline-CSRF: 1` with the request, or authenticate with `Authorization: Bearer <token>` instead of the cookie.",
+                )
+                .into_response();
+            }
+            request.extensions_mut().insert(OperatorToken(token));
+            next.run(request).await
+        }
         Ok(TokenVerdict::Agent(kind)) => agent_token_on_operator_api(kind),
         Ok(TokenVerdict::Invalid) => unauthorized(),
         Err(error) => verify_error_response(&error),

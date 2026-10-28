@@ -8,6 +8,7 @@
 
 use axum::Json;
 use axum::extract::State;
+use axum::http::{HeaderMap, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
@@ -70,6 +71,41 @@ pub async fn login(
         // A busy database is not a wrong token: 503 (or 429), never 401.
         Err(error) => Ok(auth::verify_error_response(&error)),
     }
+}
+
+/// POST /api/v1/auth/session — public, beside `login`.
+///
+/// Body `{token}`. Verifies the operator token exactly like `login` and, on
+/// success, sets the web app's `HttpOnly` session cookie holding it. A
+/// failure answers as `login` does and never sets a cookie.
+pub async fn create_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    let token = body
+        .get("token")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let response = login(State(state), Json(json!({ "password": token }))).await?;
+    if !response.status().is_success() {
+        return Ok(response);
+    }
+    let cookie = auth::session_cookie(&token, auth::request_is_https(&headers));
+    Ok((
+        [(header::SET_COOKIE, cookie)],
+        Json(json!({ "ok": true, "tokenKind": "operator" })),
+    )
+        .into_response())
+}
+
+/// DELETE /api/v1/auth/session — public: signing out works with a missing
+/// or revoked cookie.
+pub async fn delete_session(headers: HeaderMap) -> Response {
+    let cookie = auth::clear_session_cookie(auth::request_is_https(&headers));
+    ([(header::SET_COOKIE, cookie)], Json(json!({ "ok": true }))).into_response()
 }
 
 /// GET /api/v1/auth/me — token-authenticated.

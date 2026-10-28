@@ -52,7 +52,7 @@ pub struct ApiErrorExtra {
 }
 
 impl ApiError {
-    fn new(status: StatusCode, error: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(status: StatusCode, error: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,
             error,
@@ -144,6 +144,10 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/api/v1/auth/setup", get(auth::setup_status))
         .route("/api/v1/auth/login", post(auth::login))
+        .route(
+            "/api/v1/auth/session",
+            post(auth::create_session).delete(auth::delete_session),
+        )
         .route("/api/v1/auth/device/start", post(device::start))
         .route("/api/v1/auth/device/poll", post(device::poll))
         .route("/api/v1/openapi.json", get(openapi::document))

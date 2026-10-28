@@ -34,7 +34,7 @@ Legacy `flatline_<hex>` tokens minted before the split are still accepted;
 they are resolved by the store that holds them (operator table, monitor push
 token, backup-agent hash). New tokens are always minted with a family prefix.
 
-**Operator bearer token.** Every `/api/v1` route except `auth/setup`,
+**Operator bearer token.** Every `/api/v1` route except `auth/setup`, `auth/session`,
 `auth/login` and `openapi.json` requires
 `Authorization: Bearer flatline_op_<hex>`. Tokens come from the dashboard's
 **Agents** panel, backed by `POST /api/v1/api-keys`, or from the bootstrapped
@@ -45,6 +45,18 @@ it back together with `tokenKind:"operator"`, `GET /api/v1/auth/me` reports the
 credential kind and capabilities, and `GET /api/v1/api-keys` lists operator
 tokens only. The `username` field is ignored — these routes exist so the
 dashboard's sign-in flow works unchanged.
+
+**Browser session cookie.** The web app signs a browser in with
+`POST /api/v1/auth/session` and body `{"token": "flatline_op_..."}`. On success
+the answer sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/;
+Max-Age=34560000`, plus `Secure` when the request arrived over HTTPS) holding
+the token itself, so revoking the token ends the session; a failure answers as
+`auth/login` does and sets nothing. `DELETE /api/v1/auth/session` clears the
+cookie and works with a missing or revoked one. Every `/api/v1` route (the SSE
+stream included) accepts the cookie when no `Authorization` header is sent. A
+cookie-authenticated request other than GET, HEAD or OPTIONS must also send
+`X-Flatline-CSRF: 1`, or it is refused with `403 csrf_required`; bearer requests
+need no such header.
 
 An agent token used for sign-in or on `/api/v1` is not a generic 401: the API
 answers `401` with `error:"agent_token_on_operator_api"`, the presented

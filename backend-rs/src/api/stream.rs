@@ -9,8 +9,9 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::time::Duration;
 
+use axum::Extension;
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, header};
+use axum::http::header;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
@@ -26,17 +27,11 @@ const LIFETIME_SECS: u64 = 15 * 60;
 /// GET /api/v1/events
 pub async fn events(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth::OperatorToken(token)): Extension<auth::OperatorToken>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
-    // The middleware already verified the token; re-read it for the stream
-    // key and for periodic revalidation.
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .unwrap_or_default()
-        .to_string();
+    // The middleware verified the token (bearer or session cookie) and
+    // passed it on, for the stream key and periodic revalidation.
 
     let key = auth::hash_token(&token);
     let guard = state
