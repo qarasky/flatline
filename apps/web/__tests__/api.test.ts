@@ -3,9 +3,15 @@ import { describe, expect, it } from "vitest";
 import { requestInit } from "@/lib/api";
 
 describe("requestInit", () => {
-    it("sends the cookie's token as a bearer header on the server", () => {
-        expect(requestInit({ server: true, token: "flatline_op_x", method: "GET" }).headers).toMatchObject({
-            Authorization: "Bearer flatline_op_x",
+    it("forwards the session cookie on the server", () => {
+        const headers = requestInit({ server: true, session: "fls_x", method: "GET" }).headers;
+        expect(headers).toMatchObject({ Cookie: "fl_session=fls_x" });
+        expect(headers).not.toHaveProperty("Authorization");
+    });
+
+    it("marks server writes for CSRF, since they ride on the cookie too", () => {
+        expect(requestInit({ server: true, session: "fls_x", method: "POST" }).headers).toMatchObject({
+            "X-Flatline-CSRF": "1",
         });
     });
 
@@ -20,7 +26,7 @@ describe("requestInit", () => {
         expect(requestInit({ server: false, method: "GET" }).headers).not.toHaveProperty("X-Flatline-CSRF");
     });
 
-    it("adds no CSRF header on the server, which uses the bearer header", () => {
-        expect(requestInit({ server: true, method: "POST" }).headers).not.toHaveProperty("X-Flatline-CSRF");
+    it("sends no cookie on the server without a session", () => {
+        expect(requestInit({ server: true, method: "GET" }).headers).not.toHaveProperty("Cookie");
     });
 });

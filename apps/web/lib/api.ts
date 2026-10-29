@@ -1,8 +1,8 @@
 /**
  * Client for the Flatline API, usable from server and client components.
  *
- * - On the server it calls `API_URL` directly with the session cookie's token
- *   as a bearer header, so server-rendered pages fetch as the operator.
+ * - On the server it calls `API_URL` directly and forwards the session cookie,
+ *   so server-rendered pages fetch as the signed-in person.
  * - In the browser it calls the same-origin `/api/...` path and lets the
  *   cookie ride along; writes add the CSRF header the backend requires.
  *
@@ -10,7 +10,7 @@
  * message and hint.
  */
 
-import { CSRF_HEADER, HOME_PATH, PATH_HEADER, SESSION_COOKIE, SIGN_IN_PATH } from "@/lib/session";
+import { CSRF_HEADER, HOME_PATH, PASSWORD_PATH, PATH_HEADER, SESSION_COOKIE, SIGN_IN_PATH } from "@/lib/session";
 
 export const DEFAULT_API_URL = "http://127.0.0.1:3001";
 
@@ -42,7 +42,7 @@ export interface RequestOptions {
 }
 
 /** The fetch options for one call: headers, credentials and body. */
-export function requestInit(opts: { server: boolean; token?: string; method?: string; body?: unknown }): RequestInit {
+export function requestInit(opts: { server: boolean; session?: string; method?: string; body?: unknown }): RequestInit {
     const method = (opts.method ?? "GET").toUpperCase();
     const headers: Record<string, string> = { Accept: "application/json" };
     const init: RequestInit = { method, headers, cache: "no-store" };
@@ -53,14 +53,15 @@ export function requestInit(opts: { server: boolean; token?: string; method?: st
     }
 
     if (opts.server) {
-        if (opts.token) {
-            headers.Authorization = `Bearer ${opts.token}`;
+        if (opts.session) {
+            headers.Cookie = `${SESSION_COOKIE}=${opts.session}`;
         }
     } else {
         init.credentials = "same-origin";
-        if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
-            headers[CSRF_HEADER] = "1";
-        }
+    }
+    // Both sides authenticate with the cookie, so both mark writes for CSRF.
+    if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+        headers[CSRF_HEADER] = "1";
     }
     return init;
 }
@@ -73,15 +74,15 @@ function apiBase(): string {
     return (process.env.API_URL || DEFAULT_API_URL).replace(/\/+$/, "");
 }
 
-async function sessionToken(): Promise<string | undefined> {
+async function sessionId(): Promise<string | undefined> {
     // Imported lazily so this module stays usable from client components.
     const { cookies } = await import("next/headers");
     return (await cookies()).get(SESSION_COOKIE)?.value;
 }
 
 /**
- * A server-rendered page whose session the API rejected (a revoked token)
- * goes to sign-in, marked `expired` so the gate does not bounce it back.
+ * A server-rendered page whose session the API rejected (signed out, removed,
+ * reset or a revoked token) goes to sign-in, marked `expired` so the gate does not bounce it back.
  * Doing it here covers every server fetch, not only the layout's check, which
  * Next does not re-run when moving between pages.
  */
@@ -118,7 +119,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     const server = isServer();
     const init = requestInit({
         server,
-        token: server ? await sessionToken() : undefined,
+        session: server ? await sessionId() : undefined,
         method: options.method,
         body: options.body,
     });
@@ -137,7 +138,13 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
         if (server && response.status === 401) {
             await toSignIn();
         }
-        throw await toError(response);
+        const error = await toError(response);
+        if (server && error.code === "password_change_required") {
+            // A starting password: nothing else works until it is changed.
+            const { redirect } = await import("next/navigation");
+            redirect(PASSWORD_PATH);
+        }
+        throw error;
     }
     if (response.status === 204) {
         return undefined as T;

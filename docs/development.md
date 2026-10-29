@@ -101,10 +101,17 @@ have been verified with.
 ([design](superpowers/specs/2026-10-28-admin-panel-rewrite-design.md)). It
 uses the App Router with server rendering, Tailwind CSS 4 and shadcn
 components (`components/ui/`, themed in `app/globals.css`). Signed-in pages
-read the `fl_session` cookie on the server and call the backend at `API_URL`
-(default `http://127.0.0.1:3001`); in the browser they call the same origin,
-which `next.config.ts` rewrites to the backend in development. Until the
+forward the `fl_session` session cookie from the server to the backend at
+`API_URL` (default `http://127.0.0.1:3001`); in the browser they call the same
+origin, which `next.config.ts` rewrites to the backend in development. Until the
 rewrite is finished the old dashboard keeps running beside it.
+
+People sign in with an email and password; "Use a token instead" signs in with
+an operator token. On a fresh database no account exists yet, so the sign-in
+page offers "Create the first account", which asks for an operator token (the
+dev stack prints where its token is) besides the new account's details. An
+account with a starting password is held on `/account/password` until it
+chooses its own.
 
 ## Conventions
 

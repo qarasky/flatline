@@ -5,7 +5,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { requireOperator } from "@/lib/auth-server";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-    await requireOperator();
+    const me = await requireOperator();
 
     // shadcn's sidebar remembers its state in this cookie; reading it here
     // renders the right width on the server, with no jump after load.
@@ -13,7 +13,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
     return (
         <SidebarProvider defaultOpen={defaultOpen}>
-            <AppSidebar />
+            <AppSidebar me={me} />
             <SidebarInset>{children}</SidebarInset>
         </SidebarProvider>
     );

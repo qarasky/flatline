@@ -3,7 +3,7 @@
  * and header names must match the backend (`backend-rs/src/auth.rs`).
  */
 
-/** The backend's session cookie; it holds the operator token. */
+/** The backend's session cookie; it holds a server-side session id. */
 export const SESSION_COOKIE = "fl_session";
 
 /** Header every cookie-authenticated write sends (value `1`). */
@@ -16,6 +16,9 @@ export const LEGACY_TOKEN_KEY = "flatline.token";
 export const HOME_PATH = "/monitors";
 
 export const SIGN_IN_PATH = "/sign-in";
+
+/** Where an account changes its password, and must before anything else. */
+export const PASSWORD_PATH = "/account/password";
 
 /** Request header `proxy.ts` sets to the page's path and query for server layouts. */
 export const PATH_HEADER = "x-flatline-path";

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronsUpDown, LogOut } from "lucide-react";
+import { ChevronsUpDown, KeyRound, LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -8,6 +8,8 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -23,13 +25,15 @@ import {
     SidebarRail,
 } from "@/components/ui/sidebar";
 import { api } from "@/lib/api";
+import { type Me, displayName, initials } from "@/lib/me";
 import { NAV_SECTIONS, activeSection } from "@/lib/nav";
-import { SIGN_IN_PATH } from "@/lib/session";
+import { PASSWORD_PATH, SIGN_IN_PATH } from "@/lib/session";
 
-export function AppSidebar() {
+export function AppSidebar({ me }: { me: Me }) {
     const pathname = usePathname();
     const router = useRouter();
     const active = activeSection(pathname);
+    const name = displayName(me);
 
     async function signOut() {
         try {
@@ -88,15 +92,30 @@ export function AppSidebar() {
                     <SidebarMenuItem>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                                <SidebarMenuButton tooltip="Operator">
-                                    <span className="bg-raised flex size-5 shrink-0 items-center justify-center rounded text-xs font-medium">
-                                        O
+                                <SidebarMenuButton tooltip={name}>
+                                    <span className="bg-raised flex size-5 shrink-0 items-center justify-center rounded text-[10px] font-medium">
+                                        {initials(name)}
                                     </span>
-                                    <span>Operator</span>
+                                    <span className="truncate">{name}</span>
                                     <ChevronsUpDown className="ml-auto" />
                                 </SidebarMenuButton>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent side="top" align="start" className="min-w-48">
+                            <DropdownMenuContent side="top" align="start" className="min-w-56">
+                                <DropdownMenuLabel className="flex flex-col gap-0.5 font-normal">
+                                    <span className="truncate font-medium">{name}</span>
+                                    <span className="text-muted-foreground truncate text-xs">
+                                        {me.principal === "account" ? me.account.email : "Signed in with a token"}
+                                    </span>
+                                </DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                {me.principal === "account" && (
+                                    <DropdownMenuItem asChild>
+                                        <Link href={PASSWORD_PATH}>
+                                            <KeyRound />
+                                            Change password
+                                        </Link>
+                                    </DropdownMenuItem>
+                                )}
                                 <DropdownMenuItem onSelect={() => void signOut()}>
                                     <LogOut />
                                     Sign out
