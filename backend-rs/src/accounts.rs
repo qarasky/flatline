@@ -366,6 +366,21 @@ pub async fn verify_password(
     }
 }
 
+/// The account a credential acts for, as a token maker: `(id, name)` for an
+/// account session, `None` for a bearer token or token session.
+pub async fn maker(
+    pool: &SqlitePool,
+    principal: &crate::auth::Principal,
+) -> Result<Option<(i64, String)>, AccountError> {
+    match principal {
+        crate::auth::Principal::Account { user_id, .. } => {
+            let account = get(pool, *user_id).await?;
+            Ok(Some((account.id, account.name)))
+        }
+        crate::auth::Principal::Token { .. } => Ok(None),
+    }
+}
+
 /// Whether `password` is this account's current password.
 pub async fn password_matches(
     pool: &SqlitePool,

@@ -294,7 +294,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/users", get(users::list).post(users::create))
         .route(
             "/api/v1/users/{id}",
-            get(users::get_one).patch(users::patch),
+            get(users::get_one)
+                .patch(users::patch)
+                .delete(users::delete),
         )
         .route(
             "/api/v1/users/{id}/reset-password",

@@ -2,7 +2,8 @@
 //!
 //! The monitor surface is deliberately small — push, http(s), ping and group
 //! containers — plus the telemetry pipeline, the Superboard read APIs, badges
-//! and single-token auth. The Go agent and the SPA are reused unchanged.
+//! and full-permission operator auth (tokens and member accounts). The Go
+//! agent and the SPA are reused unchanged.
 
 // monitor_json builds one large json! literal; the default macro recursion
 // limit is too small once it carries the token-family fields.

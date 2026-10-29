@@ -7,14 +7,14 @@
 //! response that never arrives cannot leave an unclaimed token that never
 //! expires behind.
 
-use axum::Json;
 use axum::extract::State;
+use axum::{Extension, Json};
 use axum::http::{HeaderMap, StatusCode, header};
 use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::api::ApiError;
-use crate::auth::{hash_token, mint_op_token};
+use crate::auth::{Authed, hash_token, mint_op_token};
 use crate::device::{DeviceError, PollOutcome};
 
 /// Serialises first deliveries, so two simultaneous polls of one approved
@@ -130,6 +130,7 @@ pub async fn poll(
         PollOutcome::Approved {
             delivered: None,
             name,
+            maker,
         } => {
             let _delivering = DELIVERY.lock().await;
             // Another poll may have delivered while this one waited.
@@ -144,12 +145,15 @@ pub async fn poll(
             }
 
             let token = mint_op_token();
+            let (maker_id, maker_name) = maker.unzip();
             sqlx::query(
-                "INSERT INTO tokens (name, hash, scheme, active, expires)
-                 VALUES (?, ?, 'sha256', 1, NULL)",
+                "INSERT INTO tokens (name, hash, scheme, active, expires, maker_user_id, maker_name)
+                 VALUES (?, ?, 'sha256', 1, NULL, ?, ?)",
             )
             .bind(&name)
             .bind(hash_token(&token))
+            .bind(maker_id)
+            .bind(maker_name)
             .execute(&state.pool)
             .await
             .map_err(internal)?;
@@ -185,14 +189,17 @@ pub async fn lookup(
     })))
 }
 
-/// POST /api/v1/auth/device/approve — signed-in phone.
+/// POST /api/v1/auth/device/approve — signed-in phone. The screen's token
+/// belongs to the approving account, when an account approves.
 pub async fn approve(
     State(state): State<AppState>,
+    Extension(authed): Extension<Authed>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
+    let maker = crate::accounts::maker(&state.pool, &authed.principal).await?;
     state
         .devices
-        .approve(field(&body, "code"), field(&body, "name"))
+        .approve(field(&body, "code"), field(&body, "name"), maker)
         .map_err(device_error)?;
     Ok(Json(json!({ "ok": true })))
 }

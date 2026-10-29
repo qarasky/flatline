@@ -81,11 +81,19 @@ agent endpoints are rejected symmetrically with
 
 **There is exactly one scope: full.** Every token is a full-permission operator
 credential — the admin token and keys minted from the Agents panel or
-`POST /api/v1/api-keys` are identical in authority. There is no read-only key
+`POST /api/v1/api-keys` are identical in authority, and so is a member account. There is no read-only key
 and no way to restrict a token. `GET /api/v1/api-keys` reports
 `availableScopes: ["full"]` and each key reports `scopes: ["full"]`. Tokens are
 stored as SHA-256 hashes and plaintext is shown once at mint time; keys imported
 from the previous deployment's bcrypt hashes keep verifying.
+
+**Tokens remember their maker.** A key minted by a member's session, or the
+token a screen gets when a member approves its QR sign-in, records that member;
+`GET /api/v1/api-keys` reports it as `maker: {id, name, removed}`. Keys minted
+with a bearer token or a token session, and every key from before accounts,
+report `maker: null`. Removing a member can disable the keys they made in the
+same step (`DELETE /api/v1/users/{id}` with `revokeTokenIds`); a kept key keeps
+working and reports `removed: true` with the member's last name.
 
 Imported (bcrypt) keys are the slow path, so it is fenced: a `flatline_`,
 `flatline_op_` or `flatline_agent_` token is only ever checked by SHA-256, a verified imported key is cached for 10 minutes
@@ -186,13 +194,14 @@ has full permission, the same as an operator token: accounts give each person
 their own credentials, not different rights. Anyone signed in, and any operator
 bearer token, may manage them.
 
-| Method | Path                                | Purpose                                                                         |
-| ------ | ----------------------------------- | ------------------------------------------------------------------------------- |
-| GET    | `/api/v1/users`                     | List members by name, each with `tokenCount`                                    |
-| POST   | `/api/v1/users`                     | Body `{email, name, password}`; adds a member with a starting password          |
-| GET    | `/api/v1/users/{id}`                | One member and the operator tokens they minted (`tokens: [{id, name, active}]`) |
-| PATCH  | `/api/v1/users/{id}`                | Body `{name?, email?}`                                                          |
-| POST   | `/api/v1/users/{id}/reset-password` | Body `{password}`; a new starting password                                      |
+| Method | Path                                | Purpose                                                                             |
+| ------ | ----------------------------------- | ----------------------------------------------------------------------------------- |
+| GET    | `/api/v1/users`                     | List members by name, each with `tokenCount`                                        |
+| POST   | `/api/v1/users`                     | Body `{email, name, password}`; adds a member with a starting password              |
+| GET    | `/api/v1/users/{id}`                | One member and the operator tokens they minted (`tokens: [{id, name, active}]`)     |
+| PATCH  | `/api/v1/users/{id}`                | Body `{name?, email?}`                                                              |
+| POST   | `/api/v1/users/{id}/reset-password` | Body `{password}`; a new starting password                                          |
+| DELETE | `/api/v1/users/{id}`                | Body `{revokeTokenIds?}`; removes a member and disables the listed tokens they made |
 
 A member is `{id, email, name, mustChangePassword, startingPasswordExpired,
 createdAt}`; no response carries a password or its hash. Emails are stored as
@@ -214,6 +223,10 @@ password."), and only after the password matched.
   change (`400 not_an_account`).
 - **Resetting** a member's password gives them a new starting password and signs
   them out everywhere at once.
+- **Removing** a member signs them out everywhere at once and, for each token
+  they made, either disables it (listed in `revokeTokenIds`) or keeps it. Nobody
+  removes their own account (`409 cannot_remove_self`); removing the last
+  account is allowed, since token sign-in always remains.
 - **Sign-in limits.** Failed email/password sign-ins are limited to 5 per email
   and 20 per client address in 15 minutes; past that, even the right password
   answers `429 rate_limited` with `retryAfterSeconds` and a `Retry-After`
@@ -301,7 +314,7 @@ The last entry is the bucket containing the server's "now", and `start` is the U
 | GET            | `/api/v1/notifications`      | List; credential fields are never echoed                 |
 | POST           | `/api/v1/notifications`      | Create (`name`, `type`, `active`, `isDefault`, `config`) |
 | PATCH / DELETE | `/api/v1/notifications/{id}` | Update or delete                                         |
-| GET            | `/api/v1/api-keys`           | List keys (metadata only)                                |
+| GET            | `/api/v1/api-keys`           | List keys (metadata only, with each key's `maker`)       |
 | POST           | `/api/v1/api-keys`           | Mint a full-permission key; `token` returned once        |
 | PATCH          | `/api/v1/api-keys/{id}`      | Enable/disable (`{"active":false}`)                      |
 | DELETE         | `/api/v1/api-keys/{id}`      | Revoke                                                   |

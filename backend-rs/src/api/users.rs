@@ -4,14 +4,16 @@
 //! edit, reset and remove accounts: every account has full permission.
 //! Passwords never appear in a response.
 
-use axum::Json;
+use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::{Extension, Json};
 use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::accounts::{self, Account};
 use crate::api::ApiError;
+use crate::auth::{Authed, Principal};
 
 fn field<'a>(body: &'a Value, name: &str) -> Option<&'a str> {
     body.get(name).and_then(Value::as_str)
@@ -131,4 +133,94 @@ pub async fn reset_password(
         .map_err(internal)?;
     tracing::info!("users: reset the password of account {id}");
     Ok(Json(json!({ "ok": true, "user": account.to_json() })))
+}
+
+/// DELETE /api/v1/users/{id} — optional body `{revokeTokenIds: [id, ...]}`.
+///
+/// Removes the account (its sessions go with it) and disables the tokens
+/// listed, each of which must be one this account made; tokens not listed
+/// keep working and keep the maker's name. Nobody removes their own account
+/// (409 `cannot_remove_self`). Removing the last account is allowed: token
+/// sign-in always remains.
+pub async fn delete(
+    State(state): State<AppState>,
+    Extension(authed): Extension<Authed>,
+    Path(id): Path<i64>,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let body: Value = if body.is_empty() {
+        json!({})
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|_| ApiError::bad("The body must be JSON: `{\"revokeTokenIds\": [...]}`."))?
+    };
+    let mut revoke: Vec<i64> = match body.get("revokeTokenIds") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(ids)) => ids
+            .iter()
+            .map(|id| id.as_i64())
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| ApiError::bad("`revokeTokenIds` must be an array of token ids."))?,
+        Some(_) => return Err(ApiError::bad("`revokeTokenIds` must be an array of token ids.")),
+    };
+    revoke.sort_unstable();
+    revoke.dedup();
+
+    if let Principal::Account { user_id, .. } = authed.principal
+        && user_id == id
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "cannot_remove_self",
+            "You cannot remove your own account.",
+        )
+        .with_hint("Ask someone else who is signed in to remove it."));
+    }
+    let account = accounts::get(&state.pool, id).await?;
+
+    let mut tx = state.pool.begin().await.map_err(internal)?;
+    for token_id in &revoke {
+        let maker: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT maker_user_id FROM tokens WHERE id = ?")
+                .bind(token_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(internal)?;
+        if maker != Some(Some(id)) {
+            return Err(ApiError::bad(format!(
+                "Token {token_id} was not made by this member; only their own tokens can be revoked with them."
+            ))
+            .with_hint("Read `GET /api/v1/users/{id}` for the tokens this member made. Revoke other tokens from `/api/v1/api-keys`."));
+        }
+        sqlx::query("UPDATE tokens SET active = 0 WHERE id = ?")
+            .bind(token_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(internal)?;
+        sqlx::query("DELETE FROM sessions WHERE token_id = ?")
+            .bind(token_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(internal)?;
+    }
+    // Kept tokens keep the maker's latest name once the account is gone.
+    sqlx::query("UPDATE tokens SET maker_name = ? WHERE maker_user_id = ?")
+        .bind(&account.name)
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(internal)?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+
+    state.events.invalidate();
+    tracing::info!(
+        "users: removed account {id}, revoked {} of its tokens",
+        revoke.len()
+    );
+    Ok(Json(json!({ "ok": true, "deleted": id, "revokedTokens": revoke.len() })))
 }

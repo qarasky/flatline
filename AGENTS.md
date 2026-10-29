@@ -55,9 +55,10 @@ Do not run `cargo fmt` across the tree: it is not uniformly `rustfmt`-formatted.
   in `docs/agent.md`.
 - **API routes** are registered in `backend-rs/src/api/mod.rs` and documented
   in `backend-rs/src/api/openapi.json`, the served contract.
-- **One credential type.** `flatline_` tokens are full-permission; push tokens
-  only affect their own monitor; backup-agent tokens are separate again. Never
-  describe scoped or read-only tokens.
+- **One level of operator access.** Member accounts (email and password) and
+  `flatline_op_` tokens are both full-permission operator credentials; push
+  tokens only affect their own monitor; backup-agent tokens are separate again.
+  Never describe roles, scoped or read-only tokens or accounts.
 - **The agents are push-only.** Neither agent listens on a port and the backend
   never connects to a client host.
 - Commit subjects follow `type(scope): summary` (`feat(agent): ...`,

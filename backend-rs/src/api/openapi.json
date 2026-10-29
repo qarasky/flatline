@@ -87,6 +87,7 @@
                             "push_agent_token_on_backup_agent_api",
                             "not_found",
                             "conflict",
+                            "cannot_remove_self",
                             "weak_password",
                             "email_taken",
                             "rate_limited",
@@ -1943,7 +1944,7 @@
         },
         "/api/v1/api-keys": {
             "get": {
-                "summary": "List API keys (secrets never returned).",
+                "summary": "List operator tokens (metadata only). Each key reports `maker`: `{id, name, removed}` for a key minted by a member (on the Tokens page or by approving a QR sign-in), or `null` for one minted with a bearer token or token session, and every key from before accounts. `removed: true` (and `id: null`) once that member's account is gone.",
                 "responses": {
                     "200": {
                         "description": "Success.",
@@ -1965,7 +1966,7 @@
                 }
             },
             "post": {
-                "summary": "Mint an API key. The plaintext token is returned exactly once.",
+                "summary": "Mint an API key. The plaintext token is returned exactly once. A member's session records them as the key's `maker`.",
                 "responses": {
                     "201": {
                         "description": "Success.",
@@ -4115,6 +4116,79 @@
                     },
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Remove a member",
+                "description": "Optional body `{revokeTokenIds: [id, ...]}`: operator tokens this member made (from `GET /api/v1/users/{id}`) to disable in the same step; any other id answers 400 and nothing changes. Tokens not listed keep working and keep the maker's name (`maker.removed: true`). The member's sessions end at once. Removing your own account answers 409 `cannot_remove_self`. Removing the last account is allowed: token sign-in always remains.",
+                "requestBody": {
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "revokeTokenIds": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "integer"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Removed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok", "deleted", "revokedTokens"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        },
+                                        "deleted": {
+                                            "type": "integer"
+                                        },
+                                        "revokedTokens": {
+                                            "type": "integer"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "404": {
+                        "description": "No such account.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "`cannot_remove_self`.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
                     }
                 }
             }

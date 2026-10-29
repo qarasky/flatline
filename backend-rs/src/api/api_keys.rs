@@ -1,75 +1,98 @@
-//! API keys for the Agents panel.
+//! API keys for the Tokens page.
 //!
-//! One token table, no users and no scopes (locked scope): every key is a
+//! One token table and no scopes (locked scope): every key is a
 //! full-permission bearer credential. Plaintext is shown exactly once at
-//! mint time; only the SHA-256 hash is stored.
+//! mint time; only the SHA-256 hash is stored. A key minted by a signed-in
+//! account records that account as its maker; the maker's name outlives the
+//! account.
 
-use axum::Json;
 use axum::extract::{Path, State};
+use axum::{Extension, Json};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::api::ApiError;
-use crate::auth::{OP_TOKEN_PREFIX, hash_token, mint_op_token};
+use crate::auth::{Authed, OP_TOKEN_PREFIX, hash_token, mint_op_token};
 use crate::metrics::metric_time;
 
-type TokenRow = (i64, String, String, Option<String>, i64, Option<String>);
+#[derive(sqlx::FromRow)]
+struct TokenRow {
+    id: i64,
+    name: String,
+    created_at: String,
+    expires: Option<String>,
+    active: i64,
+    last_used_at: Option<String>,
+    maker_user_id: Option<i64>,
+    /// The maker's current name, or the name kept after their removal.
+    maker_name: Option<String>,
+}
+
+/// Every key column plus the maker, current name first.
+const SELECT_KEYS: &str = "SELECT t.id, t.name, t.created_at, t.expires, t.active, t.last_used_at,
+        t.maker_user_id, COALESCE(u.name, t.maker_name) AS maker_name
+ FROM tokens t LEFT JOIN users u ON u.id = t.maker_user_id";
 
 /// Scopes the panel may show. The Rust backend has one scope: full.
 const SCOPES: [&str; 1] = ["full"];
 
-fn api_key_json(
-    id: i64,
-    name: &str,
-    created: &str,
-    expires: &Option<String>,
-    active: i64,
-    last_used: &Option<String>,
-) -> Value {
-    let expired = expires
+fn api_key_json(row: &TokenRow) -> Value {
+    let expired = row
+        .expires
         .as_deref()
         .and_then(metric_time)
         .is_some_and(|at| at < chrono::Utc::now().timestamp_millis());
     let status = if expired {
         "expired"
-    } else if active == 0 {
+    } else if row.active == 0 {
         "inactive"
     } else {
         "active"
     };
+    // `removed`: the account that made it is gone; its name is kept.
+    let maker = row.maker_name.as_ref().map(|name| {
+        json!({
+            "id": row.maker_user_id,
+            "name": name,
+            "removed": row.maker_user_id.is_none(),
+        })
+    });
 
     json!({
-        "id": id,
-        "name": name,
+        "id": row.id,
+        "name": row.name,
         "userID": "",
-        "createdDate": created,
-        "active": active != 0,
-        "expires": expires,
-        "lastUsedAt": last_used,
+        "createdDate": row.created_at,
+        "active": row.active != 0,
+        "expires": row.expires,
+        "lastUsedAt": row.last_used_at,
         "status": status,
         "scopes": SCOPES,
+        "maker": maker,
     })
+}
+
+async fn fetch_key(pool: &sqlx::SqlitePool, id: i64) -> Result<TokenRow, ApiError> {
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT_KEYS} WHERE t.id = ?")))
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(internal)
 }
 
 /// GET /api/v1/api-keys
 pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    let rows: Vec<TokenRow> = sqlx::query_as(
-        "SELECT id, name, created_at, expires, active, last_used_at FROM tokens ORDER BY id",
-    )
-    .fetch_all(&state.pool)
-    .await
-    .map_err(internal)?;
+    let rows: Vec<TokenRow> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT_KEYS} ORDER BY t.id")))
+            .fetch_all(&state.pool)
+            .await
+            .map_err(internal)?;
 
     Ok(Json(json!({
         "ok": true,
         "count": rows.len(),
-        "apiKeys": rows
-            .iter()
-            .map(|(id, name, created, expires, active, last_used)| {
-                api_key_json(*id, name, created, expires, *active, last_used)
-            })
-            .collect::<Vec<_>>(),
+        "apiKeys": rows.iter().map(api_key_json).collect::<Vec<_>>(),
         "availableScopes": SCOPES,
         "tokenKind": "operator",
         "tokenPrefix": OP_TOKEN_PREFIX,
@@ -80,6 +103,7 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, ApiError
 /// POST /api/v1/api-keys
 pub async fn create(
     State(state): State<AppState>,
+    Extension(authed): Extension<Authed>,
     Json(body): Json<Value>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let payload = body
@@ -105,28 +129,34 @@ pub async fn create(
         .filter(|expires| !expires.is_empty())
         .map(str::to_string);
 
+    let (maker_id, maker_name) = crate::accounts::maker(&state.pool, &authed.principal)
+        .await?
+        .unzip();
     let token = mint_op_token();
-    let row: TokenRow = sqlx::query_as(
-        "INSERT INTO tokens (name, hash, scheme, active, expires)
-         VALUES (?, ?, 'sha256', ?, ?)
-         RETURNING id, name, created_at, expires, active, last_used_at",
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO tokens (name, hash, scheme, active, expires, maker_user_id, maker_name)
+         VALUES (?, ?, 'sha256', ?, ?, ?, ?)
+         RETURNING id",
     )
     .bind(&name)
     .bind(hash_token(&token))
     .bind(if active { 1 } else { 0 })
     .bind(&expires)
+    .bind(maker_id)
+    .bind(&maker_name)
     .fetch_one(&state.pool)
     .await
     .map_err(internal)?;
+    let row = fetch_key(&state.pool, id).await?;
 
     state.events.invalidate();
-    tracing::info!("api-keys: minted key {} ({name})", row.0);
+    tracing::info!("api-keys: minted key {} ({name})", row.id);
 
     Ok((
         StatusCode::CREATED,
         Json(json!({
             "ok": true,
-            "apiKey": api_key_json(row.0, &row.1, &row.2, &row.3, row.4, &row.5),
+            "apiKey": api_key_json(&row),
             // Shown once. There is no endpoint that returns this again.
             "token": token,
             "tokenKind": "operator",
@@ -161,19 +191,13 @@ pub async fn patch(
         return Err(ApiError::not_found(format!("No API key with id {id}.")));
     }
 
-    let row: TokenRow = sqlx::query_as(
-        "SELECT id, name, created_at, expires, active, last_used_at FROM tokens WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(internal)?;
+    let row = fetch_key(&state.pool, id).await?;
 
     state.events.invalidate();
 
     Ok(Json(json!({
         "ok": true,
-        "apiKey": api_key_json(row.0, &row.1, &row.2, &row.3, row.4, &row.5),
+        "apiKey": api_key_json(&row),
     })))
 }
 

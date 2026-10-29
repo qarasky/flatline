@@ -41,6 +41,8 @@ agent ──POST /api/push──┘   (outbound only, per-monitor push token)
 | `links.rs`        | Server → hosted-website links, including group expansion.                                                                         |
 | `status_pages.rs` | Public status page data, host resolution, password gates.                                                                         |
 | `auth.rs`         | Bearer tokens, the session cookie and its CSRF rule, push tokens, scope checks.                                                   |
+| `accounts.rs`     | Member accounts: bcrypt passwords, starting-password expiry, sign-in limits.                                                      |
+| `sessions.rs`     | Server-side sessions behind the `fl_session` cookie, for an account or a token.                                                   |
 | `provisioning.rs` | The runbook, installer, checksums and agent downloads.                                                                            |
 
 ## Data
@@ -204,8 +206,12 @@ worst (the compose file grants 30 s before `SIGKILL`):
 
 ## Authentication model
 
-Two credentials, deliberately:
+Operator access has one level, and agents have their own credentials:
 
+- **Member accounts** (email and password) for people. Every account has full
+  permission, the same as a token: accounts give each person their own
+  credentials and let one be removed without touching the others. A token
+  minted by a member records them as its maker, so removing them can revoke it.
 - **Bearer tokens** for every operator-facing call. One token type with full
   permission; extra tokens exist to be individually revocable, not to be
   restricted. The first token is written to `initial-token.txt` on first start.

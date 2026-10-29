@@ -56,17 +56,23 @@ pub enum PollOutcome {
     Denied,
     /// Expired, unknown, or the poll secret did not match: indistinguishable.
     Expired,
-    /// Approved. `delivered` holds the token once it has been minted.
+    /// Approved. `delivered` holds the token once it has been minted;
+    /// `maker` is the approving account, if an account approved.
     Approved {
         name: String,
+        maker: Option<Maker>,
         delivered: Option<String>,
     },
 }
+
+/// The account that approved a screen: the token it gets belongs to them.
+pub type Maker = (i64, String);
 
 enum State {
     Pending,
     Approved {
         name: String,
+        maker: Option<Maker>,
         delivered: Option<(String, Instant)>,
     },
     Denied,
@@ -167,7 +173,12 @@ impl DeviceRequests {
         })
     }
 
-    pub fn approve(&self, code: &str, name: &str) -> Result<(), DeviceError> {
+    pub fn approve(
+        &self,
+        code: &str,
+        name: &str,
+        maker: Option<Maker>,
+    ) -> Result<(), DeviceError> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
             return Err(DeviceError::BadName);
@@ -179,6 +190,7 @@ impl DeviceRequests {
         }
         entry.state = State::Approved {
             name: name.to_string(),
+            maker,
             delivered: None,
         };
         Ok(())
@@ -205,8 +217,13 @@ impl DeviceRequests {
         match &entry.state {
             State::Pending => PollOutcome::Pending,
             State::Denied => PollOutcome::Denied,
-            State::Approved { name, delivered } => PollOutcome::Approved {
+            State::Approved {
+                name,
+                maker,
+                delivered,
+            } => PollOutcome::Approved {
                 name: name.clone(),
+                maker: maker.clone(),
                 delivered: delivered.as_ref().map(|(token, _)| token.clone()),
             },
         }
@@ -269,9 +286,9 @@ mod tests {
     fn approve_then_second_approve_is_not_pending() {
         let (requests, _) = store();
         let started = requests.start("ua").unwrap();
-        assert_eq!(requests.approve(&started.code, "TV"), Ok(()));
+        assert_eq!(requests.approve(&started.code, "TV", None), Ok(()));
         assert_eq!(
-            requests.approve(&started.code, "TV"),
+            requests.approve(&started.code, "TV", None),
             Err(DeviceError::NotPending)
         );
     }
@@ -282,7 +299,7 @@ mod tests {
         let started = requests.start("ua").unwrap();
         requests.deny(&started.code).unwrap();
         assert_eq!(
-            requests.approve(&started.code, "TV"),
+            requests.approve(&started.code, "TV", None),
             Err(DeviceError::NotPending)
         );
         assert_eq!(
@@ -297,7 +314,7 @@ mod tests {
         let started = requests.start("ua").unwrap();
         advance(&offset, REQUEST_TTL);
         assert_eq!(
-            requests.approve(&started.code, "TV"),
+            requests.approve(&started.code, "TV", None),
             Err(DeviceError::NotPending)
         );
     }
@@ -306,7 +323,7 @@ mod tests {
     fn wrong_poll_secret_looks_expired() {
         let (requests, _) = store();
         let started = requests.start("ua").unwrap();
-        requests.approve(&started.code, "TV").unwrap();
+        requests.approve(&started.code, "TV", None).unwrap();
         assert_eq!(requests.poll(&started.code, "wrong"), PollOutcome::Expired);
         assert_eq!(
             requests.poll(&started.code, &started.code),
@@ -329,12 +346,13 @@ mod tests {
             PollOutcome::Pending
         );
         requests
-            .approve(&started.code, "  Living room TV ")
+            .approve(&started.code, "  Living room TV ", None)
             .unwrap();
         assert_eq!(
             requests.poll(&started.code, &started.poll_secret),
             PollOutcome::Approved {
                 name: "Living room TV".to_string(),
+                maker: None,
                 delivered: None
             }
         );
@@ -344,13 +362,14 @@ mod tests {
     fn recorded_delivery_is_returned_again_within_60s() {
         let (requests, offset) = store();
         let started = requests.start("ua").unwrap();
-        requests.approve(&started.code, "TV").unwrap();
+        requests.approve(&started.code, "TV", None).unwrap();
         requests.record_delivery(&started.code, "tok");
         advance(&offset, Duration::from_secs(59));
         assert_eq!(
             requests.poll(&started.code, &started.poll_secret),
             PollOutcome::Approved {
                 name: "TV".to_string(),
+                maker: None,
                 delivered: Some("tok".to_string())
             }
         );
@@ -360,7 +379,7 @@ mod tests {
     fn recorded_delivery_is_gone_after_60s() {
         let (requests, offset) = store();
         let started = requests.start("ua").unwrap();
-        requests.approve(&started.code, "TV").unwrap();
+        requests.approve(&started.code, "TV", None).unwrap();
         requests.record_delivery(&started.code, "tok");
         advance(&offset, DELIVERY_RETRY);
         assert_eq!(
@@ -385,13 +404,16 @@ mod tests {
         let (requests, _) = store();
         let started = requests.start("ua").unwrap();
         assert_eq!(
-            requests.approve(&started.code, "   "),
+            requests.approve(&started.code, "   ", None),
             Err(DeviceError::BadName)
         );
         assert_eq!(
-            requests.approve(&started.code, &"x".repeat(61)),
+            requests.approve(&started.code, &"x".repeat(61), None),
             Err(DeviceError::BadName)
         );
-        assert_eq!(requests.approve(&started.code, &"x".repeat(60)), Ok(()));
+        assert_eq!(
+            requests.approve(&started.code, &"x".repeat(60), None),
+            Ok(())
+        );
     }
 }
