@@ -39,8 +39,7 @@ token, backup-agent hash). New tokens are always minted with a family prefix.
 `Authorization: Bearer flatline_op_<hex>`. Tokens come from the dashboard's
 **Agents** panel, backed by `POST /api/v1/api-keys`, or from the bootstrapped
 admin token printed on first boot and written to `data/initial-token.txt`
-(`0600`). `GET /api/v1/auth/setup` always answers `{ok:true,setupNeeded:false}`;
-`POST /api/v1/auth/login` accepts the token in the `password` field and echoes
+(`0600`). `POST /api/v1/auth/login` accepts the token in the `password` field and echoes
 it back together with `tokenKind:"operator"`, `GET /api/v1/auth/me` reports the
 credential kind and capabilities, and `GET /api/v1/api-keys` lists operator
 tokens only. The `username` field is ignored — these routes exist so the
@@ -160,18 +159,20 @@ The SSE stream and agent binary downloads have no timeout.
 
 ### Auth
 
-| Method | Path                          | Purpose                                                                                                                     |
-| ------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/auth/setup`          | Public; always `setupNeeded:false`                                                                                          |
-| POST   | `/api/v1/auth/login`          | Public; token in `password`, echoed back                                                                                    |
-| POST   | `/api/v1/auth/session`        | Public; body `{email, password}` or `{token}`; sets the session cookie                                                      |
-| DELETE | `/api/v1/auth/session`        | Public; ends the session and clears the cookie                                                                              |
-| GET    | `/api/v1/auth/me`             | Who is signed in: `principal` `account` or `token`                                                                          |
-| POST   | `/api/v1/auth/device/start`   | Public; a screen asks to sign in with a QR code. Returns `code`, `pollSecret`, `expiresIn`, `publicUrl`                     |
-| POST   | `/api/v1/auth/device/poll`    | Public; body `{code, pollSecret}`. `pending`, `denied`, `expired`, or `approved` with a new never-expiring operator `token` |
-| POST   | `/api/v1/auth/device/lookup`  | Describe a waiting screen (user agent, age, suggested name)                                                                 |
-| POST   | `/api/v1/auth/device/approve` | Body `{code, name}`; the screen gets its own operator token                                                                 |
-| POST   | `/api/v1/auth/device/deny`    | Body `{code}`                                                                                                               |
+| Method | Path                          | Purpose                                                                                                                              |
+| ------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/api/v1/auth/setup`          | Public; `setupNeeded` is true while no account exists                                                                                |
+| POST   | `/api/v1/auth/setup`          | Public; body `{token, email, name, password}`; creates the first account (needs an operator token; `409 setup_done` once any exists) |
+| POST   | `/api/v1/auth/password`       | Body `{currentPassword, newPassword}`; a member changes their own password                                                           |
+| POST   | `/api/v1/auth/login`          | Public; token in `password`, echoed back                                                                                             |
+| POST   | `/api/v1/auth/session`        | Public; body `{email, password}` or `{token}`; sets the session cookie                                                               |
+| DELETE | `/api/v1/auth/session`        | Public; ends the session and clears the cookie                                                                                       |
+| GET    | `/api/v1/auth/me`             | Who is signed in: `principal` `account` or `token`                                                                                   |
+| POST   | `/api/v1/auth/device/start`   | Public; a screen asks to sign in with a QR code. Returns `code`, `pollSecret`, `expiresIn`, `publicUrl`                              |
+| POST   | `/api/v1/auth/device/poll`    | Public; body `{code, pollSecret}`. `pending`, `denied`, `expired`, or `approved` with a new never-expiring operator `token`          |
+| POST   | `/api/v1/auth/device/lookup`  | Describe a waiting screen (user agent, age, suggested name)                                                                          |
+| POST   | `/api/v1/auth/device/approve` | Body `{code, name}`; the screen gets its own operator token                                                                          |
+| POST   | `/api/v1/auth/device/deny`    | Body `{code}`                                                                                                                        |
 
 Device codes travel in JSON bodies, never in paths. The QR code encodes
 `<base>/device#<code>` only; the poll secret never leaves the waiting screen.
@@ -200,7 +201,31 @@ characters. Passwords need at least 10 characters and nothing else
 (`400 weak_password`), and are stored as bcrypt hashes (cost 12, or
 `FLATLINE_PASSWORD_COST`). A password set by someone else, on add or reset, is a
 starting password: `mustChangePassword` is true until its owner chooses their
-own, and one left unchanged for 7 days expires (`startingPasswordExpired`).
+own, and one left unchanged for 7 days expires (`startingPasswordExpired`):
+sign-in then answers `401 starting_password_expired` ("Ask someone to reset your
+password."), and only after the password matched.
+
+- **Must change.** A member signed in with a starting password can reach only
+  `GET /api/v1/auth/me`, `POST /api/v1/auth/password` and sign-out; everything
+  else, the live stream included, answers `403 password_change_required`.
+- **Changing your password** (`POST /api/v1/auth/password`) needs the current
+  one (`400 wrong_password` otherwise), clears "must change" and signs out the
+  member's other browsers. A bearer token or token session has no password to
+  change (`400 not_an_account`).
+- **Resetting** a member's password gives them a new starting password and signs
+  them out everywhere at once.
+- **Sign-in limits.** Failed email/password sign-ins are limited to 5 per email
+  and 20 per client address in 15 minutes; past that, even the right password
+  answers `429 rate_limited` with `retryAfterSeconds` and a `Retry-After`
+  header. A successful sign-in clears the email's count. The client address is
+  Cloudflare's `CF-Connecting-IP`, else the first `X-Forwarded-For` hop; the
+  proxy in front must strip both from anyone but Cloudflare.
+- **The first account.** While no account exists, `GET /api/v1/auth/setup`
+  answers `setupNeeded: true` and `POST /api/v1/auth/setup` with any valid
+  operator token (for example the first-boot one in `data/initial-token.txt`)
+  creates an account and signs it in. Once one exists it answers
+  `409 setup_done`; add people from Members instead. An existing install gets no
+  accounts on upgrade: sign in with a token once and add yourself.
 
 ### Monitors, heartbeats and links
 

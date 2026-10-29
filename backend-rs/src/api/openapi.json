@@ -76,6 +76,11 @@
                             "unauthorized",
                             "agent_token_on_operator_api",
                             "csrf_required",
+                            "setup_done",
+                            "starting_password_expired",
+                            "not_an_account",
+                            "wrong_password",
+                            "password_change_required",
                             "operator_token_on_agent_api",
                             "agent_monitor_inactive",
                             "backup_agent_token_on_metric_agent_api",
@@ -812,7 +817,7 @@
                 }
             },
             "Forbidden": {
-                "description": "Token lacks the required scope.",
+                "description": "`csrf_required` (a cookie write without `X-Flatline-CSRF: 1`) or `password_change_required` (an account still on its starting password).",
                 "content": {
                     "application/json": {
                         "schema": {
@@ -1636,11 +1641,82 @@
         },
         "/api/v1/auth/setup": {
             "get": {
-                "summary": "First-run setup status",
-                "description": "Unauthenticated. True when no account exists yet.",
+                "summary": "First-account status",
+                "description": "Public. `setupNeeded` is true while no member account exists; the sign-in page then offers \"Create the first account\".",
+                "security": [],
                 "responses": {
                     "200": {
-                        "description": "Setup state"
+                        "description": "Setup state",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok", "setupNeeded"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        },
+                                        "setupNeeded": {
+                                            "type": "boolean"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Create the first account",
+                "description": "Public. Body `{token, email, name, password}`: any valid operator token (for example the first-boot token in `data/initial-token.txt`) creates the first member account, with the password as typed (no change required), and signs it in (sets the `fl_session` cookie). Without a valid operator token: 401 `unauthorized`, or 401 `agent_token_on_operator_api` for an agent token. Once any account exists: 409 `setup_done`; add further members with `POST /api/v1/users`.",
+                "security": [],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["token", "email", "name", "password"],
+                                "properties": {
+                                    "token": {
+                                        "type": "string"
+                                    },
+                                    "email": {
+                                        "type": "string"
+                                    },
+                                    "name": {
+                                        "type": "string",
+                                        "maxLength": 100
+                                    },
+                                    "password": {
+                                        "type": "string",
+                                        "minLength": 10
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Created and signed in; Set-Cookie carries the session. Body `{ok, principal:\"account\", user}`."
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "409": {
+                        "description": "`setup_done`: an account already exists.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1662,7 +1738,7 @@
         "/api/v1/auth/session": {
             "post": {
                 "summary": "Sign a browser in",
-                "description": "Public. Body `{email, password}` signs a member in and answers `{ok:true, principal:\"account\", mustChangePassword}`; body `{token}` signs in with an operator token and answers `{ok:true, principal:\"token\", tokenKind:\"operator\"}`. On success sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/; Max-Age=34560000`, plus `Secure` behind HTTPS) holding a new session id. A wrong email and a wrong password answer the same 401 `unauthorized`; a bad token answers 401 `unauthorized`, an agent token 401 `agent_token_on_operator_api`, a busy token store 503; none of them set a cookie.",
+                "description": "Public. Body `{email, password}` signs a member in and answers `{ok:true, principal:\"account\", mustChangePassword}`; body `{token}` signs in with an operator token and answers `{ok:true, principal:\"token\", tokenKind:\"operator\"}`. On success sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/; Max-Age=34560000`, plus `Secure` behind HTTPS) holding a new session id. A wrong email and a wrong password answer the same 401 `unauthorized`; a right password whose starting password expired (unchanged for 7 days) answers 401 `starting_password_expired`. Failed email/password attempts are limited to 5 per email and 20 per client address in 15 minutes; past that, even the right password answers 429 `rate_limited` with `retryAfterSeconds`. a bad token answers 401 `unauthorized`, an agent token 401 `agent_token_on_operator_api`, a busy token store 503; none of them set a cookie.",
                 "security": [],
                 "requestBody": {
                     "required": true,
@@ -1702,6 +1778,16 @@
                     },
                     "401": {
                         "description": "Wrong email or password, or not an operator token"
+                    },
+                    "429": {
+                        "description": "`rate_limited`: too many failed sign-ins for this email or address.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -4045,7 +4131,7 @@
                 }
             ],
             "post": {
-                "summary": "Give a member a new starting password (at least 10 characters). They must change it at their next sign-in.",
+                "summary": "Give a member a new starting password (at least 10 characters). They must change it at their next sign-in; every session they have ends now.",
                 "requestBody": {
                     "required": true,
                     "content": {
@@ -4078,6 +4164,57 @@
                                         },
                                         "user": {
                                             "$ref": "#/components/schemas/User"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/password": {
+            "post": {
+                "summary": "Change your own password",
+                "description": "For a member's session only (a bearer token or token session answers 400 `not_an_account`). Body `{currentPassword, newPassword}`; a wrong current password answers 400 `wrong_password`, a new one under 10 characters 400 `weak_password`. Success clears `mustChangePassword` and ends the account's other sessions; this one stays signed in. An account with a starting password can reach only this route, `GET /api/v1/auth/me` and sign-out; everything else answers 403 `password_change_required`.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["currentPassword", "newPassword"],
+                                "properties": {
+                                    "currentPassword": {
+                                        "type": "string"
+                                    },
+                                    "newPassword": {
+                                        "type": "string",
+                                        "minLength": 10
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Changed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
                                         }
                                     }
                                 }

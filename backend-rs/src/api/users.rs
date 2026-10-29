@@ -116,7 +116,8 @@ pub async fn patch(
 }
 
 /// POST /api/v1/users/{id}/reset-password — `{password}`: a new starting
-/// password the member must change at their next sign-in.
+/// password the member must change at their next sign-in. Ends every
+/// session the account has.
 pub async fn reset_password(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -124,6 +125,10 @@ pub async fn reset_password(
 ) -> Result<Json<Value>, ApiError> {
     let password = required(&body, "password")?;
     let account = accounts::set_password(&state.pool, id, password, true).await?;
+    // Whoever was signed in as them signs in again, with the new password.
+    crate::sessions::end_for_account(&state.pool, id, None)
+        .await
+        .map_err(internal)?;
     tracing::info!("users: reset the password of account {id}");
     Ok(Json(json!({ "ok": true, "user": account.to_json() })))
 }

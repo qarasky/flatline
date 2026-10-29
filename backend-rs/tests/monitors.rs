@@ -290,9 +290,10 @@ async fn monitor_types_lists_the_supported_surface() {
 async fn auth_compat_accepts_the_token_as_password() {
     let h = harness().await;
 
+    // No account exists yet: the web app offers "Create the first account".
     let (status, body) = send(&h.app, request("GET", "/api/v1/auth/setup", None, None)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["setupNeeded"], false);
+    assert_eq!(body["setupNeeded"], true);
 
     let (status, body) = send(
         &h.app,

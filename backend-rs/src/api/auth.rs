@@ -18,9 +18,114 @@ use crate::auth::{self, Authed, Principal};
 use crate::sessions::{self, SessionOwner};
 use crate::{accounts, api};
 
-/// GET /api/v1/auth/setup — public.
-pub async fn setup_status() -> Json<Value> {
-    Json(json!({ "ok": true, "setupNeeded": false }))
+/// GET /api/v1/auth/setup — public. `setupNeeded` is true while no account
+/// exists: the sign-in page then offers "Create the first account".
+pub async fn setup_status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let accounts = accounts::count(&state.pool).await?;
+    Ok(Json(json!({ "ok": true, "setupNeeded": accounts == 0 })))
+}
+
+/// POST /api/v1/auth/setup — public. Body `{token, email, name, password}`.
+///
+/// Creates the first account and signs it in. Needs a valid operator token
+/// (any: every operator token has the same authority), so a stranger who
+/// reaches a fresh install cannot claim it. Once any account exists this
+/// answers 409 `setup_done`; further accounts are added from Members.
+pub async fn setup(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    if accounts::count(&state.pool).await? > 0 {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "setup_done",
+            "An account already exists.",
+        )
+        .with_hint("Sign in, then add people from Members (`POST /api/v1/users`)."));
+    }
+    let text = |name: &str| body.get(name).and_then(Value::as_str).unwrap_or_default();
+    match auth::verify_token(&state.pool, text("token").trim()).await {
+        Ok(auth::TokenVerdict::Operator(_)) => {}
+        Ok(auth::TokenVerdict::Agent(kind)) => return Ok(auth::agent_token_on_operator_api(kind)),
+        Ok(auth::TokenVerdict::Invalid) => return Ok(auth::unauthorized()),
+        Err(error) => return Ok(auth::verify_error_response(&error)),
+    }
+    let account = accounts::create(
+        &state.pool,
+        text("email"),
+        text("name"),
+        text("password"),
+        false,
+    )
+    .await?;
+    tracing::info!("auth: created the first account {}", account.id);
+    signed_in(
+        &state,
+        &headers,
+        SessionOwner::Account(account.id),
+        json!({ "ok": true, "principal": "account", "user": account.to_json() }),
+    )
+    .await
+}
+
+/// POST /api/v1/auth/password — the signed-in account chooses a new password.
+///
+/// Body `{currentPassword, newPassword}`. Only an account session has a
+/// password (a bearer token or token session answers 400 `not_an_account`).
+/// Success clears "must change password" and ends the account's other
+/// sessions; this one stays signed in.
+pub async fn change_password(
+    State(state): State<AppState>,
+    Extension(authed): Extension<Authed>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let Principal::Account { user_id, .. } = authed.principal else {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "not_an_account",
+            "Only an account has a password to change.",
+        )
+        .with_hint("This request was signed in with an operator token. Sign in with an email and password, or reset a member's password with `POST /api/v1/users/{id}/reset-password`."));
+    };
+    let text = |name: &str| body.get(name).and_then(Value::as_str).unwrap_or_default();
+    if !accounts::password_matches(&state.pool, user_id, text("currentPassword")).await? {
+        // Not 401: the session is fine, only the typed password is wrong.
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "wrong_password",
+            "The current password is wrong.",
+        )
+        .with_hint("Type the password you signed in with."));
+    }
+    accounts::set_password(&state.pool, user_id, text("newPassword"), false).await?;
+    let keep = match &authed.credential {
+        auth::Credential::Session(session) => Some(session.as_str()),
+        auth::Credential::Bearer(_) => None,
+    };
+    sessions::end_for_account(&state.pool, user_id, keep)
+        .await
+        .map_err(internal)?;
+    tracing::info!("auth: account {user_id} changed its password");
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// The 429 for a limited sign-in, with how long to wait (the same shape as
+/// the token store's 429).
+fn rate_limited(wait: u64) -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(header::RETRY_AFTER, wait.to_string())],
+        Json(json!({
+            "ok": false,
+            "error": "rate_limited",
+            "code": "rate_limited",
+            "message": format!("Too many failed sign-ins. Try again in {} minutes.", wait.div_ceil(60)),
+            "retryAfterSeconds": wait,
+            "hint": "Wait `retryAfterSeconds`, then try again. A forgotten password can be reset by anyone signed in, from Members.",
+        })),
+    )
+        .into_response()
 }
 
 /// POST /api/v1/auth/login — public.
@@ -122,10 +227,27 @@ pub async fn create_session(
     if body.get("email").is_some() {
         let email = text("email");
         let password = text("password");
+        let email_key = accounts::email_key(&email);
+        let address = auth::client_address(&headers);
+        if let Err(wait) = state.sign_ins.check(&email_key, &address) {
+            return Ok(rate_limited(wait));
+        }
         let Some(account) = accounts::verify_password(&state.pool, &email, &password).await?
         else {
+            state.sign_ins.record_failure(&email_key, &address);
             return Err(wrong_email_or_password());
         };
+        state.sign_ins.clear(&email_key);
+        // Checked only once the password matched, so the reason reveals
+        // nothing to someone guessing.
+        if account.starting_password_expired() {
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "starting_password_expired",
+                "Ask someone to reset your password.",
+            )
+            .with_hint(format!("A starting password expires {} days after it was set. Anyone signed in can set a new one from Members.", accounts::STARTING_PASSWORD_DAYS)));
+        }
         return signed_in(
             &state,
             &headers,

@@ -662,6 +662,34 @@ pub async fn still_valid(pool: &SqlitePool, credential: &Credential) -> Result<b
     }
 }
 
+/// The paths an account with a starting password may still reach: who am I,
+/// and choosing a password. Signing out is public.
+const PASSWORD_CHANGE_PATHS: [(&str, &str); 2] = [
+    ("GET", "/api/v1/auth/me"),
+    ("POST", "/api/v1/auth/password"),
+];
+
+/// The client's address for sign-in limits: Cloudflare's `CF-Connecting-IP`,
+/// else the first `X-Forwarded-For` hop, else `"unknown"`. The proxy in front
+/// must strip these headers from anyone but Cloudflare.
+pub fn client_address(headers: &axum::http::HeaderMap) -> String {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    header("cf-connecting-ip")
+        .or_else(|| {
+            header("x-forwarded-for")
+                .and_then(|value| value.split(',').next().map(|hop| hop.trim().to_string()))
+                .filter(|hop| !hop.is_empty())
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 /// The session cookie's value, if the request carries one.
 pub fn session_id(headers: &axum::http::HeaderMap) -> Option<String> {
     crate::status_pages::parse_cookies(headers)
@@ -702,7 +730,9 @@ pub fn clear_session_cookie(secure: bool) -> String {
 /// 401 only for a credential that is missing or invalid; a store failure
 /// answers 503 and the failed-check limiter 429, so a busy database never
 /// signs a client out. A cookie-authenticated write without the CSRF header
-/// answers 403. The caller is passed on as an [`Authed`] extension.
+/// answers 403, and so does anything but [`PASSWORD_CHANGE_PATHS`] from an
+/// account that must change its password. The caller is passed on as an
+/// [`Authed`] extension.
 pub async fn require_token(
     State(state): State<AppState>,
     mut request: Request<Body>,
@@ -750,6 +780,26 @@ pub async fn require_token(
             "Send the header `X-Flatline-CSRF: 1` with the request, or authenticate with `Authorization: Bearer <token>` instead of the cookie.",
         )
         .into_response();
+    }
+    if let Principal::Account {
+        must_change_password: true,
+        ..
+    } = authed.principal
+    {
+        let allowed = PASSWORD_CHANGE_PATHS.iter().any(|(method, path)| {
+            request.method().as_str() == *method && request.uri().path() == *path
+        });
+        if !allowed {
+            return crate::api::ApiError::new(
+                StatusCode::FORBIDDEN,
+                "password_change_required",
+                "Choose your own password before doing anything else.",
+            )
+            .with_hint(
+                "This account still has the starting password someone else set. Send `POST /api/v1/auth/password` with `{currentPassword, newPassword}` (at least 10 characters); `GET /api/v1/auth/me` and signing out keep working.",
+            )
+            .into_response();
+        }
     }
     request.extensions_mut().insert(authed);
     next.run(request).await

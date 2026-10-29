@@ -143,7 +143,10 @@ impl IntoResponse for ApiError {
 pub fn router(state: AppState) -> Router {
     let public = Router::new()
         .route("/healthz", get(healthz))
-        .route("/api/v1/auth/setup", get(auth::setup_status))
+        .route(
+            "/api/v1/auth/setup",
+            get(auth::setup_status).post(auth::setup),
+        )
         .route("/api/v1/auth/login", post(auth::login))
         .route(
             "/api/v1/auth/session",
@@ -226,6 +229,7 @@ pub fn router(state: AppState) -> Router {
     let authed = Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/auth/me", get(auth::me))
+        .route("/api/v1/auth/password", post(auth::change_password))
         .route("/api/v1/auth/device/lookup", post(device::lookup))
         .route("/api/v1/auth/device/approve", post(device::approve))
         .route("/api/v1/auth/device/deny", post(device::deny))

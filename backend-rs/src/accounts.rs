@@ -365,3 +365,98 @@ pub async fn verify_password(
         _ => Ok(None),
     }
 }
+
+/// Whether `password` is this account's current password.
+pub async fn password_matches(
+    pool: &SqlitePool,
+    id: i64,
+    password: &str,
+) -> Result<bool, AccountError> {
+    let hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AccountError::NotFound)?;
+    Ok(check_password(password.to_string(), hash).await)
+}
+
+/// Failed password sign-ins allowed per email in one window.
+pub const SIGN_IN_FAILURES_PER_EMAIL: u32 = 5;
+/// Failed password sign-ins allowed per client address in one window.
+pub const SIGN_IN_FAILURES_PER_ADDRESS: u32 = 20;
+/// The window both limits count over.
+pub const SIGN_IN_WINDOW: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// Keys kept before expired windows are swept, so junk input cannot grow
+/// the maps without bound.
+const SIGN_IN_SWEEP_AT: usize = 10_000;
+
+/// Fixed-window counters of failed email/password sign-ins, per email and
+/// per client address. A limited attempt is refused before the password is
+/// checked, so even the right password waits.
+#[derive(Default)]
+pub struct SignInLimiter {
+    by_email: std::sync::Mutex<Windows>,
+    by_address: std::sync::Mutex<Windows>,
+}
+
+/// Key -> (window start, failures in it).
+type Windows = std::collections::HashMap<String, (std::time::Instant, u32)>;
+
+/// Seconds until `key`'s window reopens, when it has used its budget.
+fn wait_for(windows: &Windows, key: &str, limit: u32, now: std::time::Instant) -> Option<u64> {
+    let (started, count) = windows.get(key)?;
+    let elapsed = now.duration_since(*started);
+    if elapsed >= SIGN_IN_WINDOW || *count < limit {
+        return None;
+    }
+    Some((SIGN_IN_WINDOW - elapsed).as_secs().max(1))
+}
+
+fn bump(windows: &mut Windows, key: &str, now: std::time::Instant) {
+    if windows.len() >= SIGN_IN_SWEEP_AT {
+        windows.retain(|_, (started, _)| now.duration_since(*started) < SIGN_IN_WINDOW);
+    }
+    let entry = windows.entry(key.to_string()).or_insert((now, 0));
+    if now.duration_since(entry.0) >= SIGN_IN_WINDOW {
+        *entry = (now, 0);
+    }
+    entry.1 += 1;
+}
+
+impl SignInLimiter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `Err(seconds to wait)` when the email or the address is limited.
+    pub fn check(&self, email_key: &str, address: &str) -> Result<(), u64> {
+        let now = std::time::Instant::now();
+        let email = wait_for(
+            &self.by_email.lock().unwrap(),
+            email_key,
+            SIGN_IN_FAILURES_PER_EMAIL,
+            now,
+        );
+        let address = wait_for(
+            &self.by_address.lock().unwrap(),
+            address,
+            SIGN_IN_FAILURES_PER_ADDRESS,
+            now,
+        );
+        match email.max(address) {
+            Some(wait) => Err(wait),
+            None => Ok(()),
+        }
+    }
+
+    pub fn record_failure(&self, email_key: &str, address: &str) {
+        let now = std::time::Instant::now();
+        bump(&mut self.by_email.lock().unwrap(), email_key, now);
+        bump(&mut self.by_address.lock().unwrap(), address, now);
+    }
+
+    /// A successful sign-in forgets the email's failures (not the address's).
+    pub fn clear(&self, email_key: &str) {
+        self.by_email.lock().unwrap().remove(email_key);
+    }
+}

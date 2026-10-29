@@ -52,6 +52,8 @@ pub struct AppState {
     pub strips: Arc<api::strips::StripCache>,
     /// Pending QR sign-in requests (in memory; see `device`).
     pub devices: Arc<device::DeviceRequests>,
+    /// Failed email/password sign-ins (in memory; see `accounts`).
+    pub sign_ins: Arc<accounts::SignInLimiter>,
 }
 
 /// Open the database, run migrations, and make sure an admin token exists.
@@ -83,6 +85,7 @@ pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
         status_page_secret: Arc::new(status_page_secret),
         strips: Arc::new(api::strips::StripCache::new()),
         devices: Arc::new(device::DeviceRequests::new()),
+        sign_ins: Arc::new(accounts::SignInLimiter::new()),
     })
 }
 

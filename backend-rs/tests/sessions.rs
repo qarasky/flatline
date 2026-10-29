@@ -10,9 +10,21 @@ use flatline_backend::auth::{self, Credential};
 
 const PASSWORD: &str = "correct horse";
 
+/// A member who has chosen their own password, signed in.
 async fn member_session(h: &common::Harness) -> (i64, String) {
     let id = add_member(h, "Ana@Office.kz", "Ana", PASSWORD).await;
     let session = sign_in(&h.app, json!({ "email": "ana@office.kz", "password": PASSWORD })).await;
+    let (status, body) = send(
+        &h.app,
+        with_cookie(
+            "POST",
+            "/api/v1/auth/password",
+            &session,
+            Some(json!({ "currentPassword": PASSWORD, "newPassword": "my own password" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     (id, session)
 }
 
