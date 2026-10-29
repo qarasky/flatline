@@ -43,6 +43,8 @@ pub async fn harness_with_backups(
 }
 
 async fn harness_inner(storage: Option<(Arc<dyn FreeSpace>, Arc<dyn FaultInjector>)>) -> Harness {
+    // The cheapest bcrypt cost: tests hash many passwords.
+    flatline_backend::accounts::set_password_cost(4);
     let dir = tempfile::tempdir().unwrap();
     let (backup_dir, backup_root, free, faults) = match storage {
         Some((free, faults)) => {

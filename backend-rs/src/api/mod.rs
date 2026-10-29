@@ -17,6 +17,7 @@ pub mod push;
 pub mod status_pages;
 pub mod stream;
 pub mod strips;
+pub mod users;
 pub mod web;
 
 use axum::extract::DefaultBodyLimit;
@@ -285,6 +286,15 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/api-keys/{id}",
             patch(api_keys::patch).delete(api_keys::delete),
+        )
+        .route("/api/v1/users", get(users::list).post(users::create))
+        .route(
+            "/api/v1/users/{id}",
+            get(users::get_one).patch(users::patch),
+        )
+        .route(
+            "/api/v1/users/{id}/reset-password",
+            post(users::reset_password),
         )
         .route("/api/v1/monitor-types", get(monitor_types))
         .route(

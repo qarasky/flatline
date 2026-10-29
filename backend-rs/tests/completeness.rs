@@ -690,9 +690,6 @@ async fn openapi_document_describes_the_rust_surface() {
     assert!(paths.contains_key("/api/v1/monitors"));
     assert!(paths.contains_key("/api/push/{pushToken}"));
     assert!(paths.contains_key("/api/v1/api-keys"));
-    assert!(
-        !paths.contains_key("/api/v1/users"),
-        "dropped endpoints stay dropped"
-    );
+    assert!(paths.contains_key("/api/v1/users"));
     assert!(!paths.contains_key("/api/v1/maintenance"));
 }

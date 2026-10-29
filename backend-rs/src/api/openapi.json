@@ -82,6 +82,8 @@
                             "push_agent_token_on_backup_agent_api",
                             "not_found",
                             "conflict",
+                            "weak_password",
+                            "email_taken",
                             "rate_limited",
                             "unavailable",
                             "stream_limit",
@@ -762,6 +764,38 @@
                                 }
                             }
                         }
+                    }
+                }
+            },
+            "User": {
+                "type": "object",
+                "description": "A member account. Every account has full permission, the same as an operator token. Passwords never appear in a response.",
+                "required": ["id", "email", "name", "mustChangePassword", "startingPasswordExpired", "createdAt"],
+                "properties": {
+                    "id": {
+                        "type": "integer"
+                    },
+                    "email": {
+                        "type": "string",
+                        "description": "As entered; unique ignoring case."
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "mustChangePassword": {
+                        "type": "boolean",
+                        "description": "The password was set by someone else (add or reset); the member must choose their own at sign-in before anything else works."
+                    },
+                    "startingPasswordExpired": {
+                        "type": "boolean",
+                        "description": "A starting password unchanged for more than 7 days. Sign-in refuses it; someone must reset it."
+                    },
+                    "createdAt": {
+                        "type": "string"
+                    },
+                    "tokenCount": {
+                        "type": "integer",
+                        "description": "Operator tokens this account minted (list and detail only)."
                     }
                 }
             }
@@ -3715,6 +3749,282 @@
                     },
                     "404": {
                         "description": "No backup-agent build by that name."
+                    }
+                }
+            }
+        },
+        "/api/v1/users": {
+            "get": {
+                "summary": "List member accounts, by name.",
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok", "users"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        },
+                                        "count": {
+                                            "type": "integer"
+                                        },
+                                        "users": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/components/schemas/User"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    }
+                }
+            },
+            "post": {
+                "summary": "Add a member with a starting password (at least 10 characters). They must choose their own password at first sign-in; the starting password expires after 7 days. 409 `email_taken`, 400 `weak_password`.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["email", "name", "password"],
+                                "properties": {
+                                    "email": {
+                                        "type": "string"
+                                    },
+                                    "name": {
+                                        "type": "string",
+                                        "maxLength": 100
+                                    },
+                                    "password": {
+                                        "type": "string",
+                                        "minLength": 10
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok", "user"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        },
+                                        "user": {
+                                            "$ref": "#/components/schemas/User"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    }
+                }
+            }
+        },
+        "/api/v1/users/{id}": {
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "integer"
+                    }
+                }
+            ],
+            "get": {
+                "summary": "One member and the operator tokens they minted.",
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok", "user", "tokens"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        },
+                                        "user": {
+                                            "$ref": "#/components/schemas/User"
+                                        },
+                                        "tokens": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "required": ["id", "name", "active"],
+                                                "properties": {
+                                                    "id": {
+                                                        "type": "integer"
+                                                    },
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "active": {
+                                                        "type": "boolean"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "404": {
+                        "description": "No such account.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "summary": "Change a member's name and/or email. 409 `email_taken`.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": [],
+                                "properties": {
+                                    "name": {
+                                        "type": "string",
+                                        "maxLength": 100
+                                    },
+                                    "email": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok", "user"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        },
+                                        "user": {
+                                            "$ref": "#/components/schemas/User"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    }
+                }
+            }
+        },
+        "/api/v1/users/{id}/reset-password": {
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "integer"
+                    }
+                }
+            ],
+            "post": {
+                "summary": "Give a member a new starting password (at least 10 characters). They must change it at their next sign-in.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["password"],
+                                "properties": {
+                                    "password": {
+                                        "type": "string",
+                                        "minLength": 10
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Success.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok", "user"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        },
+                                        "user": {
+                                            "$ref": "#/components/schemas/User"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
                     }
                 }
             }

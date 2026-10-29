@@ -9,6 +9,7 @@
 #![recursion_limit = "256"]
 //! Architecture: docs/architecture.md.
 
+pub mod accounts;
 pub mod api;
 pub mod auth;
 pub mod backups;

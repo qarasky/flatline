@@ -160,6 +160,30 @@ Device codes travel in JSON bodies, never in paths. The QR code encodes
 At most 64 requests wait at once per instance (429 `busy` beyond that), each
 for 5 minutes.
 
+### Accounts
+
+People sign in to the web app with their own email and password. Every account
+has full permission, the same as an operator token: accounts give each person
+their own credentials, not different rights. Anyone signed in, and any operator
+bearer token, may manage them.
+
+| Method | Path                                | Purpose                                                                         |
+| ------ | ----------------------------------- | ------------------------------------------------------------------------------- |
+| GET    | `/api/v1/users`                     | List members by name, each with `tokenCount`                                    |
+| POST   | `/api/v1/users`                     | Body `{email, name, password}`; adds a member with a starting password          |
+| GET    | `/api/v1/users/{id}`                | One member and the operator tokens they minted (`tokens: [{id, name, active}]`) |
+| PATCH  | `/api/v1/users/{id}`                | Body `{name?, email?}`                                                          |
+| POST   | `/api/v1/users/{id}/reset-password` | Body `{password}`; a new starting password                                      |
+
+A member is `{id, email, name, mustChangePassword, startingPasswordExpired,
+createdAt}`; no response carries a password or its hash. Emails are stored as
+entered and unique ignoring case (`409 email_taken`); names are 1 to 100
+characters. Passwords need at least 10 characters and nothing else
+(`400 weak_password`), and are stored as bcrypt hashes (cost 12, or
+`FLATLINE_PASSWORD_COST`). A password set by someone else, on add or reset, is a
+starting password: `mustChangePassword` is true until its owner chooses their
+own, and one left unchanged for 7 days expires (`startingPasswordExpired`).
+
 ### Monitors, heartbeats and links
 
 | Method | Path                                                     | Purpose                                          |
