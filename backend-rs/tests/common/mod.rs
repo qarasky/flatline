@@ -182,3 +182,68 @@ pub async fn next_sse_data(body: &mut axum::body::Body) -> Value {
         }
     }
 }
+
+/// Send a request and return status, Set-Cookie (if any) and the JSON body.
+pub async fn send_full(app: &Router, request: Request<Body>) -> (StatusCode, Option<String>, Value) {
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    let cookie = response
+        .headers()
+        .get("set-cookie")
+        .map(|v| v.to_str().unwrap().to_string());
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, cookie, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+/// The `fl_session` value from a Set-Cookie header.
+pub fn cookie_value(set_cookie: &str) -> String {
+    set_cookie
+        .strip_prefix("fl_session=")
+        .and_then(|rest| rest.split(';').next())
+        .expect("an fl_session cookie")
+        .to_string()
+}
+
+/// A request authenticated only by the session cookie. Writes carry the
+/// CSRF header; use [`with_bare_cookie`] to leave it off.
+pub fn with_cookie(method: &str, uri: &str, session: &str, body: Option<Value>) -> Request<Body> {
+    let mut req = with_bare_cookie(method, uri, session, body);
+    if method != "GET" {
+        req.headers_mut()
+            .insert("x-flatline-csrf", "1".parse().unwrap());
+    }
+    req
+}
+
+/// A cookie-authenticated request without the CSRF header.
+pub fn with_bare_cookie(method: &str, uri: &str, session: &str, body: Option<Value>) -> Request<Body> {
+    let mut req = request(method, uri, None, body);
+    req.headers_mut()
+        .insert("cookie", format!("fl_session={session}").parse().unwrap());
+    req
+}
+
+/// Sign in with a body (`{token}` or `{email, password}`) and return the
+/// session id the cookie carries.
+pub async fn sign_in(app: &Router, body: Value) -> String {
+    let (status, cookie, body) =
+        send_full(app, request("POST", "/api/v1/auth/session", None, Some(body))).await;
+    assert_eq!(status, StatusCode::OK, "sign-in failed: {body}");
+    cookie_value(&cookie.expect("a session cookie"))
+}
+
+/// Add a member with the bearer token; returns their id.
+pub async fn add_member(h: &Harness, email: &str, name: &str, password: &str) -> i64 {
+    let (status, body) = send(
+        &h.app,
+        request(
+            "POST",
+            "/api/v1/users",
+            Some(&h.token),
+            Some(serde_json::json!({ "email": email, "name": name, "password": password })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    body["user"]["id"].as_i64().unwrap()
+}

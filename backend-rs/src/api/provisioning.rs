@@ -297,7 +297,7 @@ async fn authorize(
     }
 
     match crate::auth::verify_token(&state.pool, &token).await {
-        Ok(crate::auth::TokenVerdict::Operator) => {
+        Ok(crate::auth::TokenVerdict::Operator(_)) => {
             let prefix_kind = crate::auth::token_kind(&token);
             Ok(Caller {
                 token,

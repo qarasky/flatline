@@ -101,8 +101,8 @@ pub fn token_kind(token: &str) -> TokenKind {
 /// The verdict of verifying a bearer token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenVerdict {
-    /// A valid operator token: GUI sign-in and the operator API.
-    Operator,
+    /// A valid operator token (its row id): GUI sign-in and the operator API.
+    Operator(i64),
     /// A credential belonging to an agent store. It is not valid for the
     /// operator API or GUI sign-in; handlers answer with an explicit
     /// "agent token" error instead of a bare 401.
@@ -289,10 +289,16 @@ struct TokenRow {
 /// A token is usable while it is active and not expired. An unparseable
 /// expiry is ignored, like the Node `dayjs` check.
 fn token_valid(row: &TokenRow) -> bool {
-    if row.active == 0 {
+    token_usable(row.active, row.expires.as_deref())
+}
+
+/// The token rule on its columns: active and not past `expires`. Shared with
+/// token sessions, which stop when their token does.
+pub(crate) fn token_usable(active: i64, expires: Option<&str>) -> bool {
+    if active == 0 {
         return false;
     }
-    if let Some(expires) = &row.expires
+    if let Some(expires) = expires
         && let Some(at) = crate::metrics::metric_time(expires)
         && at < chrono::Utc::now().timestamp_millis()
     {
@@ -362,7 +368,7 @@ pub async fn verify_token(pool: &SqlitePool, token: &str) -> Result<TokenVerdict
             return Ok(TokenVerdict::Invalid);
         }
         touch(pool, &digest, row.id);
-        return Ok(TokenVerdict::Operator);
+        return Ok(TokenVerdict::Operator(row.id));
     }
 
     // Minted tokens are sha256-only; a miss on a post-split operator token is
@@ -399,7 +405,7 @@ pub async fn verify_token(pool: &SqlitePool, token: &str) -> Result<TokenVerdict
                     return Ok(TokenVerdict::Invalid);
                 }
                 touch(pool, &digest, row.id);
-                return Ok(TokenVerdict::Operator);
+                return Ok(TokenVerdict::Operator(row.id));
             }
             None => VERIFIED.lock().unwrap().remove(&digest),
         }
@@ -445,7 +451,7 @@ pub async fn verify_token(pool: &SqlitePool, token: &str) -> Result<TokenVerdict
         Some((id, hash)) => {
             VERIFIED.lock().unwrap().insert(digest.clone(), hash);
             touch(pool, &digest, id);
-            Ok(TokenVerdict::Operator)
+            Ok(TokenVerdict::Operator(id))
         }
         None => {
             FAILURES.lock().unwrap().record_failure(Instant::now());
@@ -593,8 +599,8 @@ pub fn bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
         .filter(|token| !token.is_empty())
 }
 
-/// The web app's session cookie. It carries the operator token itself, so
-/// revoking the token ends the session with no session store.
+/// The web app's session cookie. It carries a session id (see
+/// [`crate::sessions`]), never a token.
 pub const SESSION_COOKIE: &str = "fl_session";
 
 /// Header a cookie-authenticated write must carry (value `1`). A page on
@@ -602,31 +608,65 @@ pub const SESSION_COOKIE: &str = "fl_session";
 /// a CORS preflight, which this API never grants.
 pub const CSRF_HEADER: &str = "x-flatline-csrf";
 
-/// Session cookie lifetime: 400 days, the most browsers allow. A kiosk
-/// stays signed in until its token is revoked.
+/// Session cookie lifetime: 400 days, the most browsers allow. The server
+/// ends an idle session sooner (30 days for an account).
 pub const SESSION_MAX_AGE: i64 = 34_560_000;
 
-/// Where a request's operator token came from.
+/// Who a request acts as. Every principal has full permission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TokenSource {
-    Bearer,
-    Cookie,
+pub enum Principal {
+    /// A member signed in with email and password.
+    Account {
+        user_id: i64,
+        must_change_password: bool,
+    },
+    /// An operator token, as a bearer header or through a token session.
+    Token { token_id: i64 },
 }
 
-/// The verified operator token, for handlers that need it again (the SSE
-/// stream keys and revalidates by it).
-#[derive(Debug, Clone)]
-pub struct OperatorToken(pub String);
+/// The credential a request presented.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Credential {
+    /// `Authorization: Bearer <token>`.
+    Bearer(String),
+    /// The `fl_session` cookie's session id.
+    Session(String),
+}
 
-/// The request's token: the bearer header first, else the session cookie.
-pub fn request_token(headers: &axum::http::HeaderMap) -> Option<(String, TokenSource)> {
-    if let Some(token) = bearer(headers) {
-        return Some((token.to_string(), TokenSource::Bearer));
+impl Credential {
+    /// A stable, non-secret key for per-credential limits (the SSE stream cap).
+    pub fn stream_key(&self) -> String {
+        match self {
+            Credential::Bearer(raw) | Credential::Session(raw) => hash_token(raw),
+        }
     }
+}
+
+/// The authenticated caller, inserted by [`require_token`] for handlers that
+/// need to know who it is.
+#[derive(Debug, Clone)]
+pub struct Authed {
+    pub principal: Principal,
+    pub credential: Credential,
+}
+
+/// Whether a credential still authenticates: the SSE stream's periodic
+/// revalidation. A store error is `Err`, not a revocation.
+pub async fn still_valid(pool: &SqlitePool, credential: &Credential) -> Result<bool, VerifyError> {
+    match credential {
+        Credential::Bearer(token) => Ok(matches!(
+            verify_token(pool, token).await?,
+            TokenVerdict::Operator(_)
+        )),
+        Credential::Session(raw) => Ok(crate::sessions::resolve(pool, raw).await?.is_some()),
+    }
+}
+
+/// The session cookie's value, if the request carries one.
+pub fn session_id(headers: &axum::http::HeaderMap) -> Option<String> {
     crate::status_pages::parse_cookies(headers)
         .remove(SESSION_COOKIE)
-        .filter(|token| !token.is_empty())
-        .map(|token| (token, TokenSource::Cookie))
+        .filter(|value| !value.is_empty())
 }
 
 /// Whether the request reached the proxy in front over HTTPS.
@@ -638,10 +678,10 @@ pub fn request_is_https(headers: &axum::http::HeaderMap) -> bool {
         .is_some_and(|proto| proto.trim().eq_ignore_ascii_case("https"))
 }
 
-/// The `Set-Cookie` value that signs a browser in.
-pub fn session_cookie(token: &str, secure: bool) -> String {
+/// The `Set-Cookie` value that signs a browser in with a session id.
+pub fn session_cookie(session: &str, secure: bool) -> String {
     format!(
-        "{SESSION_COOKIE}={token}; Max-Age={SESSION_MAX_AGE}; Path=/; HttpOnly; SameSite=Lax{}",
+        "{SESSION_COOKIE}={session}; Max-Age={SESSION_MAX_AGE}; Path=/; HttpOnly; SameSite=Lax{}",
         if secure { "; Secure" } else { "" }
     )
 }
@@ -654,51 +694,65 @@ pub fn clear_session_cookie(secure: bool) -> String {
     )
 }
 
-/// Middleware: every `/api/v1` route requires a valid operator token, as a
-/// bearer header or the web app's session cookie. The push endpoint
-/// authenticates by monitor token in the path instead and is mounted
-/// separately.
+/// Middleware: every `/api/v1` route requires an operator credential: a
+/// bearer token, or the web app's session cookie (an account or token
+/// session). The push endpoint authenticates by monitor token in the path
+/// instead and is mounted separately.
 ///
-/// 401 only for a token that is missing or invalid; a token store failure
+/// 401 only for a credential that is missing or invalid; a store failure
 /// answers 503 and the failed-check limiter 429, so a busy database never
 /// signs a client out. A cookie-authenticated write without the CSRF header
-/// answers 403.
+/// answers 403. The caller is passed on as an [`Authed`] extension.
 pub async fn require_token(
     State(state): State<AppState>,
     mut request: Request<Body>,
     next: Next,
 ) -> Response {
-    let Some((token, source)) = request_token(request.headers()) else {
+    let authed = if let Some(token) = bearer(request.headers()) {
+        let token = token.to_string();
+        match verify_token(&state.pool, &token).await {
+            Ok(TokenVerdict::Operator(token_id)) => Authed {
+                principal: Principal::Token { token_id },
+                credential: Credential::Bearer(token),
+            },
+            Ok(TokenVerdict::Agent(kind)) => return agent_token_on_operator_api(kind),
+            Ok(TokenVerdict::Invalid) => return unauthorized(),
+            Err(error) => return verify_error_response(&error),
+        }
+    } else if let Some(session) = session_id(request.headers()) {
+        match crate::sessions::resolve(&state.pool, &session).await {
+            Ok(Some(principal)) => Authed {
+                principal,
+                credential: Credential::Session(session),
+            },
+            Ok(None) => return unauthorized(),
+            Err(error) => return verify_error_response(&VerifyError::from(error)),
+        }
+    } else {
         return unauthorized();
     };
-    match verify_token(&state.pool, &token).await {
-        Ok(TokenVerdict::Operator) => {
-            let safe = matches!(
-                *request.method(),
-                axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
-            );
-            let csrf_ok = request
-                .headers()
-                .get(CSRF_HEADER)
-                .is_some_and(|value| value.as_bytes() == b"1");
-            if source == TokenSource::Cookie && !safe && !csrf_ok {
-                return crate::api::ApiError::new(
-                    StatusCode::FORBIDDEN,
-                    "csrf_required",
-                    "Cookie-authenticated writes must send X-Flatline-CSRF: 1.",
-                )
-                .with_hint(
-                    "Send the header `X-Flatline-CSRF: 1` with the request, or authenticate with `Authorization: Bearer <token>` instead of the cookie.",
-                )
-                .into_response();
-            }
-            request.extensions_mut().insert(OperatorToken(token));
-            next.run(request).await
-        }
-        Ok(TokenVerdict::Agent(kind)) => agent_token_on_operator_api(kind),
-        Ok(TokenVerdict::Invalid) => unauthorized(),
-        Err(error) => verify_error_response(&error),
+
+    let safe = matches!(
+        *request.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+    );
+    let csrf_ok = request
+        .headers()
+        .get(CSRF_HEADER)
+        .is_some_and(|value| value.as_bytes() == b"1");
+    if matches!(authed.credential, Credential::Session(_)) && !safe && !csrf_ok {
+        return crate::api::ApiError::new(
+            StatusCode::FORBIDDEN,
+            "csrf_required",
+            "Cookie-authenticated writes must send X-Flatline-CSRF: 1.",
+        )
+        .with_hint(
+            "Send the header `X-Flatline-CSRF: 1` with the request, or authenticate with `Authorization: Bearer <token>` instead of the cookie.",
+        )
+        .into_response();
     }
+    request.extensions_mut().insert(authed);
+    next.run(request).await
 }
 
 /// The response for an agent credential used on the operator API or GUI
@@ -892,9 +946,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            verify_token(&pool, &token).await,
-            Ok(TokenVerdict::Operator)
+        assert!(
+            matches!(
+                verify_token(&pool, &token).await,
+                Ok(TokenVerdict::Operator(_))
+            )
         );
         assert_eq!(
             verify_token(&pool, "flatline_wrong").await,
@@ -916,9 +972,11 @@ mod tests {
         let pool = test_pool().await;
         insert_bcrypt(&pool, "uk7_supersecret").await;
 
-        assert_eq!(
-            verify_token(&pool, "uk7_supersecret").await,
-            Ok(TokenVerdict::Operator),
+        assert!(
+            matches!(
+                verify_token(&pool, "uk7_supersecret").await,
+                Ok(TokenVerdict::Operator(_))
+            ),
             "imported keys must keep working"
         );
         assert_eq!(
@@ -939,7 +997,7 @@ mod tests {
         // The SSE revalidation keeps the stream open on such a round.
         assert!(!is_revoked(&result));
         assert!(is_revoked(&Ok(TokenVerdict::Invalid)));
-        assert!(!is_revoked(&Ok(TokenVerdict::Operator)));
+        assert!(!is_revoked(&Ok(TokenVerdict::Operator(1))));
         assert!(matches!(
             verify_push_token(&pool, "anything").await,
             Err(VerifyError::Unavailable(_))
@@ -966,9 +1024,11 @@ mod tests {
         let id = insert_bcrypt(&pool, plaintext).await;
         let digest = hash_token(plaintext);
 
-        assert_eq!(
-            verify_token(&pool, plaintext).await,
-            Ok(TokenVerdict::Operator)
+        assert!(
+            matches!(
+                verify_token(&pool, plaintext).await,
+                Ok(TokenVerdict::Operator(_))
+            )
         );
         assert!(
             VERIFIED.lock().unwrap().get(&digest).is_some(),
@@ -988,9 +1048,11 @@ mod tests {
             .lock()
             .unwrap()
             .insert(hash_token(seeded_plain), decoy);
-        assert_eq!(
-            verify_token(&pool, seeded_plain).await,
-            Ok(TokenVerdict::Operator),
+        assert!(
+            matches!(
+                verify_token(&pool, seeded_plain).await,
+                Ok(TokenVerdict::Operator(_))
+            ),
             "a cached key is accepted without bcrypt"
         );
 
@@ -1080,9 +1142,11 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(
-            verify_token(&pool, &token).await,
-            Ok(TokenVerdict::Operator)
+        assert!(
+            matches!(
+                verify_token(&pool, &token).await,
+                Ok(TokenVerdict::Operator(_))
+            )
         );
         assert!(TOUCHED.lock().unwrap().get(&hash_token(&token)).is_some());
 
@@ -1093,9 +1157,11 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(
-            verify_token(&pool, &token).await,
-            Ok(TokenVerdict::Operator)
+        assert!(
+            matches!(
+                verify_token(&pool, &token).await,
+                Ok(TokenVerdict::Operator(_))
+            )
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
         let last: Option<String> = sqlx::query_scalar("SELECT last_used_at FROM tokens")
@@ -1118,9 +1184,11 @@ mod tests {
         let second = ensure_initial_token(&pool, dir.path()).await.unwrap();
         assert!(second.is_none());
 
-        assert_eq!(
-            verify_token(&pool, &first.unwrap()).await,
-            Ok(TokenVerdict::Operator)
+        assert!(
+            matches!(
+                verify_token(&pool, &first.unwrap()).await,
+                Ok(TokenVerdict::Operator(_))
+            )
         );
     }
 

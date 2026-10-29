@@ -25,6 +25,7 @@ pub mod metrics;
 pub mod monitors;
 pub mod mutes;
 pub mod notify;
+pub mod sessions;
 pub mod shutdown;
 pub mod status_pages;
 

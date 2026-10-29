@@ -107,7 +107,7 @@ async fn require_unlocked(
         match crate::auth::bearer(headers) {
             None => return Err(not_found()),
             Some(token) => match crate::auth::verify_token(&state.pool, token).await {
-                Ok(crate::auth::TokenVerdict::Operator) => {}
+                Ok(crate::auth::TokenVerdict::Operator(_)) => {}
                 Ok(_) => return Err(not_found()),
                 Err(error) => return Err(crate::auth::verify_error_response(&error)),
             },

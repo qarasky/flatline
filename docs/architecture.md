@@ -209,9 +209,10 @@ Two credentials, deliberately:
 - **Bearer tokens** for every operator-facing call. One token type with full
   permission; extra tokens exist to be individually revocable, not to be
   restricted. The first token is written to `initial-token.txt` on first start.
-  A browser carries the same token in the `fl_session` session cookie instead
-  of a header (`POST /api/v1/auth/session`); cookie writes need
-  `X-Flatline-CSRF: 1`. See [api](api.md).
+  A browser signs in with an email and password or a token
+  (`POST /api/v1/auth/session`) and then carries a server-side session id in
+  the `fl_session` cookie (`sessions.rs`); the session ends with its account
+  or token. Cookie writes need `X-Flatline-CSRF: 1`. See [api](api.md).
 - **Push tokens** (`flatline_agent_push_...`) on individual monitors, used by
   the agent for `POST /api/push/{token}` and for the `/agent/*` downloads. A
   push token can only affect its own monitor's data and can only fetch releases,

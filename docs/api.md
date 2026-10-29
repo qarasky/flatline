@@ -47,16 +47,32 @@ tokens only. The `username` field is ignored — these routes exist so the
 dashboard's sign-in flow works unchanged.
 
 **Browser session cookie.** The web app signs a browser in with
-`POST /api/v1/auth/session` and body `{"token": "flatline_op_..."}`. On success
-the answer sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/;
-Max-Age=34560000`, plus `Secure` when the request arrived over HTTPS) holding
-the token itself, so revoking the token ends the session; a failure answers as
-`auth/login` does and sets nothing. `DELETE /api/v1/auth/session` clears the
-cookie and works with a missing or revoked one. Every `/api/v1` route (the SSE
-stream included) accepts the cookie when no `Authorization` header is sent. A
-cookie-authenticated request other than GET, HEAD or OPTIONS must also send
-`X-Flatline-CSRF: 1`, or it is refused with `403 csrf_required`; bearer requests
-need no such header.
+`POST /api/v1/auth/session`: body `{"email": ..., "password": ...}` signs a
+member in (see [Accounts](#accounts)) and answers
+`{ok:true, principal:"account", mustChangePassword}`; body
+`{"token": "flatline_op_..."}` signs in with an operator token (the wall TV,
+recovery) and answers `{ok:true, principal:"token"}`. A wrong email and a wrong
+password answer the same `401 unauthorized`, so the form does not reveal which
+emails exist; a token failure answers as `auth/login` does. On success the
+answer sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/;
+Max-Age=34560000`, plus `Secure` when the request arrived over HTTPS) holding a
+random session id (`fls_...`), never the token or password; the server stores
+only its SHA-256. A session ends when:
+
+- it is signed out (`DELETE /api/v1/auth/session`, which works with a missing
+  or already-ended session too);
+- it goes unused for 30 days (an account) or 400 days (a token);
+- its account is removed;
+- its token is disabled, expires or is deleted.
+
+Every `/api/v1` route (the SSE stream included) accepts the cookie when no
+`Authorization` header is sent, and `GET /api/v1/auth/me` reports the
+`principal`: `account: {id, email, name, mustChangePassword}` or
+`token: {id, name}` (a bearer token reports its token too). The live stream
+rechecks its credential every 15 seconds and sends `{"type":"unauthorized"}`
+once the session has ended. A cookie-authenticated request other than GET, HEAD
+or OPTIONS must also send `X-Flatline-CSRF: 1`, or it is refused with
+`403 csrf_required`; bearer requests need no such header.
 
 An agent token used for sign-in or on `/api/v1` is not a generic 401: the API
 answers `401` with `error:"agent_token_on_operator_api"`, the presented
@@ -148,7 +164,9 @@ The SSE stream and agent binary downloads have no timeout.
 | ------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/auth/setup`          | Public; always `setupNeeded:false`                                                                                          |
 | POST   | `/api/v1/auth/login`          | Public; token in `password`, echoed back                                                                                    |
-| GET    | `/api/v1/auth/me`             | Validate and describe the bearer token                                                                                      |
+| POST   | `/api/v1/auth/session`        | Public; body `{email, password}` or `{token}`; sets the session cookie                                                      |
+| DELETE | `/api/v1/auth/session`        | Public; ends the session and clears the cookie                                                                              |
+| GET    | `/api/v1/auth/me`             | Who is signed in: `principal` `account` or `token`                                                                          |
 | POST   | `/api/v1/auth/device/start`   | Public; a screen asks to sign in with a QR code. Returns `code`, `pollSecret`, `expiresIn`, `publicUrl`                     |
 | POST   | `/api/v1/auth/device/poll`    | Public; body `{code, pollSecret}`. `pending`, `denied`, `expired`, or `approved` with a new never-expiring operator `token` |
 | POST   | `/api/v1/auth/device/lookup`  | Describe a waiting screen (user agent, age, suggested name)                                                                 |

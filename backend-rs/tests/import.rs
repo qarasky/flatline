@@ -250,10 +250,10 @@ async fn imports_the_production_shape() {
     assert_eq!(legacy_timeout, 48);
 
     // Imported API keys still verify through the real auth path.
-    assert_eq!(
+    assert!(matches!(
         auth::verify_token(&new, "uk7_secret").await,
-        Ok(auth::TokenVerdict::Operator)
-    );
+        Ok(auth::TokenVerdict::Operator(_))
+    ));
     assert_eq!(
         auth::verify_token(&new, "wrong").await,
         Ok(auth::TokenVerdict::Invalid)

@@ -22,7 +22,7 @@
                 "type": "apiKey",
                 "in": "cookie",
                 "name": "fl_session",
-                "description": "The web app's session cookie, set by POST /api/v1/auth/session. It holds the operator token, so revoking the token ends the session. A cookie-authenticated request other than GET/HEAD/OPTIONS must send `X-Flatline-CSRF: 1`, or it is refused with 403 `csrf_required`."
+                "description": "The web app's session cookie, set by POST /api/v1/auth/session. It holds a random session id (`fls_...`), never a token; the server stores only its hash. A session belongs to a member account or an operator token and ends when it is signed out, after 30 idle days (account) or 400 (token), when the account is removed or its password reset or changed, or when the token is disabled, expires or is deleted. A cookie-authenticated request other than GET/HEAD/OPTIONS must send `X-Flatline-CSRF: 1`, or it is refused with 403 `csrf_required`."
             }
         },
         "parameters": {
@@ -1662,20 +1662,36 @@
         "/api/v1/auth/session": {
             "post": {
                 "summary": "Sign a browser in",
-                "description": "Public, rate limited like login. Body `{token}` with an operator token. On success sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/; Max-Age=34560000`, plus `Secure` behind HTTPS) holding the token, and answers `{ok:true, tokenKind:\"operator\"}`. A bad token answers 401 `unauthorized`, an agent token 401 `agent_token_on_operator_api`, a busy token store 503; none of them set a cookie.",
+                "description": "Public. Body `{email, password}` signs a member in and answers `{ok:true, principal:\"account\", mustChangePassword}`; body `{token}` signs in with an operator token and answers `{ok:true, principal:\"token\", tokenKind:\"operator\"}`. On success sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/; Max-Age=34560000`, plus `Secure` behind HTTPS) holding a new session id. A wrong email and a wrong password answer the same 401 `unauthorized`; a bad token answers 401 `unauthorized`, an agent token 401 `agent_token_on_operator_api`, a busy token store 503; none of them set a cookie.",
                 "security": [],
                 "requestBody": {
                     "required": true,
                     "content": {
                         "application/json": {
                             "schema": {
-                                "type": "object",
-                                "required": ["token"],
-                                "properties": {
-                                    "token": {
-                                        "type": "string"
+                                "oneOf": [
+                                    {
+                                        "type": "object",
+                                        "required": ["email", "password"],
+                                        "properties": {
+                                            "email": {
+                                                "type": "string"
+                                            },
+                                            "password": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "type": "object",
+                                        "required": ["token"],
+                                        "properties": {
+                                            "token": {
+                                                "type": "string"
+                                            }
+                                        }
                                     }
-                                }
+                                ]
                             }
                         }
                     }
@@ -1685,13 +1701,13 @@
                         "description": "Signed in; Set-Cookie carries the session"
                     },
                     "401": {
-                        "description": "Not an operator token"
+                        "description": "Wrong email or password, or not an operator token"
                     }
                 }
             },
             "delete": {
                 "summary": "Sign a browser out",
-                "description": "Public. Clears the `fl_session` cookie, whether or not it still holds a valid token.",
+                "description": "Public. Ends the session server-side and clears the `fl_session` cookie; works with a missing or already-ended session.",
                 "security": [],
                 "responses": {
                     "200": {
@@ -1757,11 +1773,59 @@
         },
         "/api/v1/auth/me": {
             "get": {
-                "summary": "Own account",
-                "description": "Verifies the bearer token and states its family and capabilities. An agent token answers 401 `agent_token_on_operator_api` with the expected prefix.",
+                "summary": "Who is signed in",
+                "description": "Says who the credential acts as: `principal:\"account\"` with `account:{id, email, name, mustChangePassword}` for a member's session, or `principal:\"token\"` with `token:{id, name}` for a bearer token or token session. Also states the credential family and capabilities. An agent token answers 401 `agent_token_on_operator_api` with the expected prefix.",
                 "responses": {
                     "200": {
-                        "description": "Token kind (`operator`), capabilities, agent-endpoint map, and the operator account."
+                        "description": "The principal, credential kind (`operator`), capabilities and agent-endpoint map.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["ok", "principal"],
+                                    "properties": {
+                                        "ok": {
+                                            "type": "boolean",
+                                            "const": true
+                                        },
+                                        "principal": {
+                                            "type": "string",
+                                            "enum": ["account", "token"]
+                                        },
+                                        "account": {
+                                            "type": "object",
+                                            "required": ["id", "email", "name", "mustChangePassword"],
+                                            "properties": {
+                                                "id": {
+                                                    "type": "integer"
+                                                },
+                                                "email": {
+                                                    "type": "string"
+                                                },
+                                                "name": {
+                                                    "type": "string"
+                                                },
+                                                "mustChangePassword": {
+                                                    "type": "boolean"
+                                                }
+                                            }
+                                        },
+                                        "token": {
+                                            "type": "object",
+                                            "required": ["id", "name"],
+                                            "properties": {
+                                                "id": {
+                                                    "type": "integer"
+                                                },
+                                                "name": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

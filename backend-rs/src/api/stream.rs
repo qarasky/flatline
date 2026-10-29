@@ -1,7 +1,7 @@
 //! SSE live stream: `GET /api/v1/events`.
 //!
 //! Parity with the Node backend: `ready` on connect, keepalive every 15s,
-//! token revalidation every 15s (`unauthorized` + close when revoked),
+//! credential revalidation every 15s (`unauthorized` + close when revoked),
 //! 15-minute lifetime (clients reconnect), per-token and instance-wide
 //! stream caps, and a slow client is closed rather than queued.
 
@@ -27,13 +27,14 @@ const LIFETIME_SECS: u64 = 15 * 60;
 /// GET /api/v1/events
 pub async fn events(
     State(state): State<AppState>,
-    Extension(auth::OperatorToken(token)): Extension<auth::OperatorToken>,
+    Extension(authed): Extension<auth::Authed>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
-    // The middleware verified the token (bearer or session cookie) and
+    // The middleware verified the credential (bearer or session cookie) and
     // passed it on, for the stream key and periodic revalidation.
 
-    let key = auth::hash_token(&token);
+    let credential = authed.credential;
+    let key = credential.stream_key();
     let guard = state
         .events
         .try_open(&key)
@@ -66,7 +67,7 @@ pub async fn events(
                 _ = keepalive.tick() => {
                     // A store error skips this round; only a definite
                     // "invalid" signs the client out.
-                    if auth::is_revoked(&auth::verify_token(&pool, &token).await) {
+                    if auth::still_valid(&pool, &credential).await == Ok(false) {
                         yield Ok(Event::default().data(json!({"type": "unauthorized"}).to_string()));
                         break;
                     }

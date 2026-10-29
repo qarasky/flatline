@@ -3,32 +3,11 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use http_body_util::BodyExt;
-use serde_json::{Value, json};
+use serde_json::json;
 use tower::ServiceExt;
 
 mod common;
-use common::{harness, next_sse_data, request, send};
-
-/// Send a request and return status, Set-Cookie (if any) and the JSON body.
-async fn send_full(app: &axum::Router, req: Request<Body>) -> (StatusCode, Option<String>, Value) {
-    let response = app.clone().oneshot(req).await.unwrap();
-    let status = response.status();
-    let cookie = response
-        .headers()
-        .get("set-cookie")
-        .map(|v| v.to_str().unwrap().to_string());
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    (status, cookie, serde_json::from_slice(&body).unwrap_or(Value::Null))
-}
-
-/// A request authenticated only by the session cookie.
-fn with_cookie(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
-    let mut req = request(method, uri, None, body);
-    req.headers_mut()
-        .insert("cookie", format!("fl_session={token}").parse().unwrap());
-    req
-}
+use common::{harness, next_sse_data, request, send, send_full, sign_in, with_bare_cookie, with_cookie};
 
 fn session_request(token: &str) -> Request<Body> {
     request(
@@ -46,7 +25,8 @@ async fn session_sets_an_httponly_lax_cookie() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["ok"], true);
     let cookie = cookie.expect("a session cookie");
-    assert!(cookie.starts_with(&format!("fl_session={};", h.token)), "{cookie}");
+    assert!(cookie.starts_with("fl_session=fls_"), "{cookie}");
+    assert!(!cookie.contains(&h.token), "the cookie never carries the token: {cookie}");
     for part in ["HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=34560000"] {
         assert!(cookie.contains(part), "missing {part}: {cookie}");
     }
@@ -98,8 +78,16 @@ async fn session_refuses_an_agent_token_explicitly() {
 #[tokio::test]
 async fn the_cookie_authenticates_reads() {
     let h = harness().await;
-    let (status, _) = send(&h.app, with_cookie("GET", "/api/v1/monitors", &h.token, None)).await;
+    let session = sign_in(&h.app, json!({ "token": h.token })).await;
+    let (status, _) = send(&h.app, with_cookie("GET", "/api/v1/monitors", &session, None)).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_token_in_the_cookie_is_not_a_session() {
+    let h = harness().await;
+    let (status, _) = send(&h.app, with_cookie("GET", "/api/v1/monitors", &h.token, None)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -118,8 +106,9 @@ async fn a_revoked_token_in_the_cookie_is_refused() {
     assert_eq!(status, StatusCode::CREATED);
     let id = body["apiKey"]["id"].as_i64().unwrap();
     let minted = body["token"].as_str().unwrap().to_string();
+    let session = sign_in(&h.app, json!({ "token": minted })).await;
 
-    let (status, _) = send(&h.app, with_cookie("GET", "/api/v1/monitors", &minted, None)).await;
+    let (status, _) = send(&h.app, with_cookie("GET", "/api/v1/monitors", &session, None)).await;
     assert_eq!(status, StatusCode::OK);
 
     let (status, _) = send(
@@ -134,23 +123,21 @@ async fn a_revoked_token_in_the_cookie_is_refused() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (status, _) = send(&h.app, with_cookie("GET", "/api/v1/monitors", &minted, None)).await;
+    let (status, _) = send(&h.app, with_cookie("GET", "/api/v1/monitors", &session, None)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
 async fn cookie_writes_need_the_csrf_header() {
     let h = harness().await;
+    let session = sign_in(&h.app, json!({ "token": h.token })).await;
     let group = || Some(json!({ "name": "g", "type": "group" }));
 
-    let (status, body) = send(&h.app, with_cookie("POST", "/api/v1/monitors", &h.token, group())).await;
+    let (status, body) = send(&h.app, with_bare_cookie("POST", "/api/v1/monitors", &session, group())).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"], "csrf_required");
 
-    let mut req = with_cookie("POST", "/api/v1/monitors", &h.token, group());
-    req.headers_mut()
-        .insert("x-flatline-csrf", "1".parse().unwrap());
-    let (status, _) = send(&h.app, req).await;
+    let (status, _) = send(&h.app, with_cookie("POST", "/api/v1/monitors", &session, group())).await;
     assert_eq!(status, StatusCode::CREATED);
 
     let (status, _) = send(
@@ -164,10 +151,11 @@ async fn cookie_writes_need_the_csrf_header() {
 #[tokio::test]
 async fn the_event_stream_accepts_the_cookie() {
     let h = harness().await;
+    let session = sign_in(&h.app, json!({ "token": h.token })).await;
     let response = h
         .app
         .clone()
-        .oneshot(with_cookie("GET", "/api/v1/events", &h.token, None))
+        .oneshot(with_cookie("GET", "/api/v1/events", &session, None))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
