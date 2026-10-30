@@ -178,7 +178,15 @@ pub async fn delete(
     }
     let account = accounts::get(&state.pool, id).await?;
 
-    let mut tx = state.pool.begin().await.map_err(internal)?;
+    // IMMEDIATE takes the write lock up front: a deferred transaction that
+    // reads first fails at once (SQLITE_BUSY_SNAPSHOT, not a busy wait) when
+    // another writer commits before its first write, and the check engine
+    // writes all the time.
+    let mut tx = state
+        .pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(internal)?;
     for token_id in &revoke {
         let maker: Option<Option<i64>> =
             sqlx::query_scalar("SELECT maker_user_id FROM tokens WHERE id = ?")

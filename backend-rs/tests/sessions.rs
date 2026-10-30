@@ -10,6 +10,24 @@ use flatline_backend::auth::{self, Credential};
 
 const PASSWORD: &str = "correct horse";
 
+/// Whether the session's last use was recorded within the last minute,
+/// waiting up to a second: the touch runs off the request path.
+async fn touched(pool: &sqlx::SqlitePool) -> bool {
+    for _ in 0..50 {
+        let fresh: i64 = sqlx::query_scalar(
+            "SELECT last_used_at > datetime('now', '-1 minute') FROM sessions",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if fresh == 1 {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    false
+}
+
 /// A member who has chosen their own password, signed in.
 async fn member_session(h: &common::Harness) -> (i64, String) {
     let id = add_member(h, "Ana@Office.kz", "Ana", PASSWORD).await;
@@ -225,21 +243,7 @@ async fn an_account_session_lapses_after_thirty_idle_days() {
         .unwrap();
     let (status, _) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
     assert_eq!(status, StatusCode::OK);
-    // The touch runs off the request path; give it a moment.
-    let mut fresh = 0;
-    for _ in 0..50 {
-        fresh = sqlx::query_scalar(
-            "SELECT last_used_at > datetime('now', '-1 minute') FROM sessions",
-        )
-        .fetch_one(&h.pool)
-        .await
-        .unwrap();
-        if fresh == 1 {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    assert_eq!(fresh, 1, "a used session slides forward");
+    assert!(touched(&h.pool).await, "a used session slides forward");
 
     sqlx::query("UPDATE sessions SET last_used_at = datetime('now', '-31 days')")
         .execute(&h.pool)
@@ -259,6 +263,9 @@ async fn a_token_session_lasts_four_hundred_idle_days() {
         .unwrap();
     let (status, _) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
     assert_eq!(status, StatusCode::OK);
+    // Let that use land first, or it could slide the session after the
+    // update below.
+    assert!(touched(&h.pool).await);
     sqlx::query("UPDATE sessions SET last_used_at = datetime('now', '-401 days')")
         .execute(&h.pool)
         .await
