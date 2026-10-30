@@ -127,6 +127,7 @@ Sidebar sections, in order:
 | **Backups**       | `/backups`, `/backups/[id]`   | Backup agents and their runs, downloads, verification, token rotate/revoke.                                                                                                                            |
 | **Notifications** | `/notifications`              | The Telegram notification configs (`/api/v1/notifications`): list, create, edit, delete, and which monitors use each (read-only here).                                                                 |
 | **Tokens**        | `/tokens`                     | Today's Agents panel: list, mint (shown once), disable, enable, delete; device tokens from QR sign-in appear here.                                                                                     |
+| **Members**       | `/members`                    | The accounts people sign in with (email and password, all with full access): add with a starting password, reset a password, remove (optionally revoking the tokens they made).                        |
 | **Superboard**    | `/superboard`                 | Opens the wall board full-screen (no sidebar).                                                                                                                                                         |
 
 - `/` goes to **Monitors** for a signed-in operator. On a client's status

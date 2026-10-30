@@ -111,7 +111,8 @@ an operator token. On a fresh database no account exists yet, so the sign-in
 page offers "Create the first account", which asks for an operator token (the
 dev stack prints where its token is) besides the new account's details. An
 account with a starting password is held on `/account/password` until it
-chooses its own.
+chooses its own. Accounts are added, reset and removed on **Members**
+(`/members`); removing someone can also revoke the tokens they made.
 
 ## Conventions
 

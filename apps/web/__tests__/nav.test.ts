@@ -11,6 +11,7 @@ describe("navigation", () => {
             ["backups", "Backups", "/backups"],
             ["notifications", "Notifications", "/notifications"],
             ["tokens", "Tokens", "/tokens"],
+            ["members", "Members", "/members"],
             ["superboard", "Superboard", "/superboard"],
         ]);
     });

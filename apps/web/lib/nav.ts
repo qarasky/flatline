@@ -1,6 +1,17 @@
-import { Activity, Bell, DatabaseBackup, Inbox, KeyRound, MonitorPlay, Server, type LucideIcon } from "lucide-react";
+import {
+    Activity,
+    Bell,
+    DatabaseBackup,
+    Inbox,
+    KeyRound,
+    MonitorPlay,
+    Server,
+    Users,
+    type LucideIcon,
+} from "lucide-react";
 
-export type NavId = "attention" | "monitors" | "servers" | "backups" | "notifications" | "tokens" | "superboard";
+export type NavId =
+    "attention" | "monitors" | "servers" | "backups" | "notifications" | "tokens" | "members" | "superboard";
 
 export interface NavSection {
     id: NavId;
@@ -19,6 +30,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     { id: "backups", label: "Backups", href: "/backups", icon: DatabaseBackup },
     { id: "notifications", label: "Notifications", href: "/notifications", icon: Bell },
     { id: "tokens", label: "Tokens", href: "/tokens", icon: KeyRound },
+    { id: "members", label: "Members", href: "/members", icon: Users },
     { id: "superboard", label: "Superboard", href: "/superboard", icon: MonitorPlay, external: true },
 ];
 
