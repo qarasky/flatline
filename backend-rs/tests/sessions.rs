@@ -225,12 +225,20 @@ async fn an_account_session_lapses_after_thirty_idle_days() {
         .unwrap();
     let (status, _) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
     assert_eq!(status, StatusCode::OK);
-    let fresh: i64 = sqlx::query_scalar(
-        "SELECT last_used_at > datetime('now', '-1 minute') FROM sessions",
-    )
-    .fetch_one(&h.pool)
-    .await
-    .unwrap();
+    // The touch runs off the request path; give it a moment.
+    let mut fresh = 0;
+    for _ in 0..50 {
+        fresh = sqlx::query_scalar(
+            "SELECT last_used_at > datetime('now', '-1 minute') FROM sessions",
+        )
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
+        if fresh == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     assert_eq!(fresh, 1, "a used session slides forward");
 
     sqlx::query("UPDATE sessions SET last_used_at = datetime('now', '-31 days')")
@@ -286,4 +294,26 @@ async fn the_stream_drops_a_removed_account() {
         auth::still_valid(&h.pool, &Credential::Bearer(h.token.clone())).await,
         Ok(true)
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_database_does_not_fail_a_valid_session() {
+    let h = harness().await;
+    let (_, session) = member_session(&h).await;
+    sqlx::query("UPDATE sessions SET last_used_at = datetime('now', '-2 minutes')")
+        .execute(&h.pool)
+        .await
+        .unwrap();
+
+    // Another writer holds the lock (the check engine, a big import).
+    let mut writer = h.pool.acquire().await.unwrap();
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut *writer).await.unwrap();
+    let answer = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)),
+    )
+    .await;
+    sqlx::query("ROLLBACK").execute(&mut *writer).await.unwrap();
+    let (status, _) = answer.expect("the request does not wait for the write lock");
+    assert_eq!(status, StatusCode::OK);
 }

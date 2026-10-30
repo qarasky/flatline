@@ -11,7 +11,7 @@ their offline restore procedure live in [backup-agent](backup-agent.md).
 | ------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | Container     | `sudo docker compose -f /home/office/flatline/compose.rust.yaml ps` | `healthy`, low restart count.                                                                                                         |
 | Backend alive | `GET /healthz` (no token)                                           | 200 `{"status":"ok"}`: database answers within 2 s and the check engine's watchdog ticked within 30 s. 503 with a `reason` otherwise. |
-| Backend up    | `GET /api/v1/auth/setup` (no token)                                 | 200 (static: proves the process answers, nothing more).                                                                               |
+| Backend up    | `GET /api/v1/auth/setup` (no token)                                 | 200 with `setupNeeded` (proves the process and the database answer, nothing more).                                                    |
 | Fleet summary | `GET /api/v1/health` (token)                                        | `total` matches the expected count, `down` matches reality; 503 when the database fails.                                              |
 | Public origin | `curl -o /dev/null -w '%{http_code}' https://<origin>/`             | 200 through the tunnel.                                                                                                               |
 | Agents        | newest telemetry per push monitor                                   | seconds old, not minutes.                                                                                                             |
@@ -149,6 +149,24 @@ Restoring: stop the stack, replace `data-rust/flatline.db` (and delete its
 container's entrypoint hands anything in the data directory back to its
 `flatline` user (uid 10001) on start. See
 [deployment](deployment.md#rolling-back) for the paired image step.
+
+## Accounts
+
+People sign in to the web app with an email and password on **Members**
+(`/members`); every account has full operator access. Anyone signed in adds a
+person with a starting password, which they must change at first sign-in and
+which expires after 7 days unchanged.
+
+- **Forgotten password:** anyone signed in resets it from Members (the person
+  is signed out everywhere and gets a new starting password).
+- **Someone leaves:** remove them on Members and keep their tokens ticked, so
+  the tokens they made are disabled with them.
+- **No account left, or everyone locked out:** sign in with an operator token
+  ("Use a token instead", for example the one in `data-rust/initial-token.txt`)
+  and add or reset accounts from there. With no account at all the sign-in page
+  also offers "Create the first account".
+- Five failed sign-ins for one email (twenty per address) lock it for 15
+  minutes; a token sign-in is not affected.
 
 ## Tokens
 

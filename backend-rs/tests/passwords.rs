@@ -331,3 +331,101 @@ async fn the_first_account_refuses_an_agent_token() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body["error"], "agent_token_on_operator_api");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_wrong_guesses_cannot_outrun_the_limit() {
+    let h = harness().await;
+    add_member(&h, "ana@office.kz", "Ana", START).await;
+    let guesses: Vec<_> = (0..20)
+        .map(|_| {
+            let app = h.app.clone();
+            tokio::spawn(async move {
+                send_full(&app, sign_in_request("ana@office.kz", "wrong guess")).await.0
+            })
+        })
+        .collect();
+    let mut checked = 0;
+    for guess in guesses {
+        let status = guess.await.unwrap();
+        if status == StatusCode::UNAUTHORIZED {
+            checked += 1;
+        } else {
+            assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        }
+    }
+    assert_eq!(checked, 5, "only five guesses are checked, however they arrive");
+}
+
+#[tokio::test]
+async fn a_successful_sign_in_does_not_use_the_address_budget() {
+    let h = harness().await;
+    add_member(&h, "ana@office.kz", "Ana", START).await;
+    for n in 0..19 {
+        let req = from_address(
+            sign_in_request(&format!("nobody{n}@office.kz"), "wrong guess"),
+            "203.0.113.9",
+        );
+        send_full(&h.app, req).await;
+    }
+    let req = from_address(sign_in_request("ana@office.kz", START), "203.0.113.9");
+    let (status, _, _) = send_full(&h.app, req).await;
+    assert_eq!(status, StatusCode::OK);
+    // The twentieth failure is still checked.
+    let req = from_address(sign_in_request("nobody99@office.kz", "wrong guess"), "203.0.113.9");
+    let (status, _, _) = send_full(&h.app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn the_new_password_must_differ_from_the_current_one() {
+    let h = harness().await;
+    add_member(&h, "ana@office.kz", "Ana", START).await;
+    let session = sign_in(&h.app, credentials("ana@office.kz", START)).await;
+    let (status, body) = send(&h.app, change(&session, START, START)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "same_password");
+    let (_, body) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
+    assert_eq!(body["account"]["mustChangePassword"], true);
+}
+
+#[tokio::test]
+async fn an_expired_starting_password_cannot_be_changed_from_an_open_session() {
+    let h = harness().await;
+    add_member(&h, "ana@office.kz", "Ana", START).await;
+    let session = sign_in(&h.app, credentials("ana@office.kz", START)).await;
+    sqlx::query("UPDATE users SET password_set_at = datetime('now', '-8 days')")
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    let (status, body) = send(&h.app, change(&session, START, OWN)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["error"], "starting_password_expired");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn only_one_first_account_is_created() {
+    let h = harness().await;
+    let attempts: Vec<_> = (0..8)
+        .map(|n| {
+            let app = h.app.clone();
+            let token = h.token.clone();
+            tokio::spawn(async move {
+                let body = json!({ "token": token, "email": format!("me{n}@office.kz"), "name": "Me", "password": OWN });
+                send_full(&app, request("POST", "/api/v1/auth/setup", None, Some(body))).await.0
+            })
+        })
+        .collect();
+    let mut created = 0;
+    for attempt in attempts {
+        match attempt.await.unwrap() {
+            StatusCode::OK => created += 1,
+            status => assert_eq!(status, StatusCode::CONFLICT),
+        }
+    }
+    assert_eq!(created, 1);
+    let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
+    assert_eq!(accounts, 1);
+}

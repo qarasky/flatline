@@ -246,6 +246,7 @@ The backend reads its configuration from the environment:
 | `FLATLINE_AGENT_DIR`                | —            | Directory of agent binaries served under `/agent/*`. |
 | `FLATLINE_PUBLIC_URL`               | request host | Absolute origin used in the provisioning documents.  |
 | `FLATLINE_HEARTBEAT_RETENTION_DAYS` | `90`         | Heartbeat retention; `0` keeps forever.              |
+| `FLATLINE_PASSWORD_COST`            | `12`         | bcrypt cost for account passwords.                   |
 
 ## Deliberate limits
 

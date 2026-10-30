@@ -146,9 +146,12 @@ pub async fn poll(
 
             let token = mint_op_token();
             let (maker_id, maker_name) = maker.unzip();
-            sqlx::query(
+            // A member removed between approving and this poll no longer
+            // vouches for the screen: no token, the screen sees "denied".
+            let minted = sqlx::query(
                 "INSERT INTO tokens (name, hash, scheme, active, expires, maker_user_id, maker_name)
-                 VALUES (?, ?, 'sha256', 1, NULL, ?, ?)",
+                 SELECT ?1, ?2, 'sha256', 1, NULL, ?3, ?4
+                 WHERE ?3 IS NULL OR EXISTS (SELECT 1 FROM users WHERE id = ?3)",
             )
             .bind(&name)
             .bind(hash_token(&token))
@@ -157,6 +160,10 @@ pub async fn poll(
             .execute(&state.pool)
             .await
             .map_err(internal)?;
+            if minted.rows_affected() == 0 {
+                tracing::info!("device sign-in: \"{name}\" was approved by a removed member; denied");
+                return Ok(Json(json!({ "ok": true, "status": "denied" })));
+            }
             state.devices.record_delivery(code, &token);
             state.events.invalidate();
             tracing::info!("device sign-in: minted a token for screen \"{name}\"");

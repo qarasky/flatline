@@ -36,13 +36,16 @@ pub async fn setup(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
-    if accounts::count(&state.pool).await? > 0 {
-        return Err(ApiError::new(
+    let setup_done = || {
+        ApiError::new(
             StatusCode::CONFLICT,
             "setup_done",
             "An account already exists.",
         )
-        .with_hint("Sign in, then add people from Members (`POST /api/v1/users`)."));
+        .with_hint("Sign in, then add people from Members (`POST /api/v1/users`).")
+    };
+    if accounts::count(&state.pool).await? > 0 {
+        return Err(setup_done());
     }
     let text = |name: &str| body.get(name).and_then(Value::as_str).unwrap_or_default();
     match auth::verify_token(&state.pool, text("token").trim()).await {
@@ -51,14 +54,11 @@ pub async fn setup(
         Ok(auth::TokenVerdict::Invalid) => return Ok(auth::unauthorized()),
         Err(error) => return Ok(auth::verify_error_response(&error)),
     }
-    let account = accounts::create(
-        &state.pool,
-        text("email"),
-        text("name"),
-        text("password"),
-        false,
-    )
-    .await?;
+    let Some(account) =
+        accounts::create_first(&state.pool, text("email"), text("name"), text("password")).await?
+    else {
+        return Err(setup_done());
+    };
     tracing::info!("auth: created the first account {}", account.id);
     signed_in(
         &state,
@@ -89,6 +89,11 @@ pub async fn change_password(
         .with_hint("This request was signed in with an operator token. Sign in with an email and password, or reset a member's password with `POST /api/v1/users/{id}/reset-password`."));
     };
     let text = |name: &str| body.get(name).and_then(Value::as_str).unwrap_or_default();
+    // A session opened before the starting password expired does not
+    // outlive it: the same rule as at sign-in.
+    if accounts::get(&state.pool, user_id).await?.starting_password_expired() {
+        return Err(starting_password_expired());
+    }
     if !accounts::password_matches(&state.pool, user_id, text("currentPassword")).await? {
         // Not 401: the session is fine, only the typed password is wrong.
         return Err(ApiError::new(
@@ -97,6 +102,14 @@ pub async fn change_password(
             "The current password is wrong.",
         )
         .with_hint("Type the password you signed in with."));
+    }
+    if text("newPassword") == text("currentPassword") {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "same_password",
+            "Choose a password different from the current one.",
+        )
+        .with_hint("A starting password was chosen by someone else; pick one only you know."));
     }
     accounts::set_password(&state.pool, user_id, text("newPassword"), false).await?;
     let keep = match &authed.credential {
@@ -180,6 +193,16 @@ pub async fn login(
     }
 }
 
+/// The answer when a starting password is past its expiry.
+fn starting_password_expired() -> ApiError {
+    ApiError::new(
+        StatusCode::UNAUTHORIZED,
+        "starting_password_expired",
+        "Ask someone to reset your password.",
+    )
+    .with_hint(format!("A starting password expires {} days after it was set. Anyone signed in can set a new one from Members.", accounts::STARTING_PASSWORD_DAYS))
+}
+
 /// The answer to a failed email/password sign-in. Identical for an unknown
 /// email and a wrong password, so the form does not reveal which emails
 /// exist.
@@ -229,24 +252,19 @@ pub async fn create_session(
         let password = text("password");
         let email_key = accounts::email_key(&email);
         let address = auth::client_address(&headers);
-        if let Err(wait) = state.sign_ins.check(&email_key, &address) {
+        if let Err(wait) = state.sign_ins.reserve(&email_key, &address) {
             return Ok(rate_limited(wait));
         }
+        // An error leaves the attempt counted, as a wrong password does.
         let Some(account) = accounts::verify_password(&state.pool, &email, &password).await?
         else {
-            state.sign_ins.record_failure(&email_key, &address);
             return Err(wrong_email_or_password());
         };
-        state.sign_ins.clear(&email_key);
+        state.sign_ins.succeeded(&email_key, &address);
         // Checked only once the password matched, so the reason reveals
         // nothing to someone guessing.
         if account.starting_password_expired() {
-            return Err(ApiError::new(
-                StatusCode::UNAUTHORIZED,
-                "starting_password_expired",
-                "Ask someone to reset your password.",
-            )
-            .with_hint(format!("A starting password expires {} days after it was set. Anyone signed in can set a new one from Members.", accounts::STARTING_PASSWORD_DAYS)));
+            return Err(starting_password_expired());
         }
         return signed_in(
             &state,

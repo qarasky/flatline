@@ -80,6 +80,7 @@
                             "starting_password_expired",
                             "not_an_account",
                             "wrong_password",
+                            "same_password",
                             "password_change_required",
                             "operator_token_on_agent_api",
                             "agent_monitor_inactive",
@@ -1739,7 +1740,7 @@
         "/api/v1/auth/session": {
             "post": {
                 "summary": "Sign a browser in",
-                "description": "Public. Body `{email, password}` signs a member in and answers `{ok:true, principal:\"account\", mustChangePassword}`; body `{token}` signs in with an operator token and answers `{ok:true, principal:\"token\", tokenKind:\"operator\"}`. On success sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/; Max-Age=34560000`, plus `Secure` behind HTTPS) holding a new session id. A wrong email and a wrong password answer the same 401 `unauthorized`; a right password whose starting password expired (unchanged for 7 days) answers 401 `starting_password_expired`. Failed email/password attempts are limited to 5 per email and 20 per client address in 15 minutes; past that, even the right password answers 429 `rate_limited` with `retryAfterSeconds`. a bad token answers 401 `unauthorized`, an agent token 401 `agent_token_on_operator_api`, a busy token store 503; none of them set a cookie.",
+                "description": "Public. Body `{email, password}` signs a member in and answers `{ok:true, principal:\"account\", mustChangePassword}`; body `{token}` signs in with an operator token and answers `{ok:true, principal:\"token\", tokenKind:\"operator\"}`. On success sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/; Max-Age=34560000`, plus `Secure` behind HTTPS) holding a new session id. A wrong email and a wrong password answer the same 401 `unauthorized`; a right password whose starting password expired (unchanged for 7 days) answers 401 `starting_password_expired`. Failed email/password attempts are limited to 5 per email and 20 per client address in 15 minutes, each counted before its password is checked; past that, even the right password answers 429 `rate_limited` with `retryAfterSeconds`. A bad token answers 401 `unauthorized`, an agent token 401 `agent_token_on_operator_api`, a busy token store 503; none of them set a cookie.",
                 "security": [],
                 "requestBody": {
                     "required": true,
@@ -1817,7 +1818,7 @@
         "/api/v1/auth/device/poll": {
             "post": {
                 "summary": "Collect a QR sign-in",
-                "description": "Public. Body `{code, pollSecret}`. Returns status `pending`, `denied`, `expired` or `approved`; an approved response carries a new operator `token` that never expires. A wrong secret or unknown code reads as `expired`. The token is minted on the first poll after approval and can be fetched again for 60 seconds.",
+                "description": "Public. Body `{code, pollSecret}`. Returns status `pending`, `denied`, `expired` or `approved`; an approved response carries a new operator `token` that never expires. A wrong secret or unknown code reads as `expired`. The token is minted on the first poll after approval and can be fetched again for 60 seconds. A screen approved by a member who was removed before that first poll reads as `denied`.",
                 "responses": {
                     "200": {
                         "description": "OK"
@@ -4256,7 +4257,7 @@
         "/api/v1/auth/password": {
             "post": {
                 "summary": "Change your own password",
-                "description": "For a member's session only (a bearer token or token session answers 400 `not_an_account`). Body `{currentPassword, newPassword}`; a wrong current password answers 400 `wrong_password`, a new one under 10 characters 400 `weak_password`. Success clears `mustChangePassword` and ends the account's other sessions; this one stays signed in. An account with a starting password can reach only this route, `GET /api/v1/auth/me` and sign-out; everything else answers 403 `password_change_required`.",
+                "description": "For a member's session only (a bearer token or token session answers 400 `not_an_account`). Body `{currentPassword, newPassword}`; a wrong current password answers 400 `wrong_password`, a new one under 10 characters 400 `weak_password`, a new one equal to the current one 400 `same_password`, and an expired starting password 401 `starting_password_expired`. Success clears `mustChangePassword` and ends the account's other sessions; this one stays signed in. An account with a starting password can reach only this route, `GET /api/v1/auth/me` and sign-out; everything else answers 403 `password_change_required`.",
                 "requestBody": {
                     "required": true,
                     "content": {

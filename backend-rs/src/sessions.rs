@@ -111,7 +111,14 @@ pub async fn resolve(pool: &SqlitePool, raw: &str) -> Result<Option<Principal>, 
         return Ok(None);
     }
     if row.idle_seconds >= 60.0 {
-        touch(pool, row.id, row.token_id).await?;
+        // Off the request path: a busy writer must not fail or stall a valid
+        // session, and a missed touch is retried by the next request.
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            if let Err(error) = touch(&pool, row.id, row.token_id).await {
+                tracing::warn!("sessions: could not record use: {error}");
+            }
+        });
     }
     Ok(Some(principal))
 }

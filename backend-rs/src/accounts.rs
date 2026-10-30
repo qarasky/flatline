@@ -245,6 +245,35 @@ pub async fn create(
     Ok(account)
 }
 
+/// Create the first account (no starting password), or `None` when an
+/// account already exists. The check and the insert are one statement, so
+/// two setups racing on a fresh install cannot both succeed.
+pub async fn create_first(
+    pool: &SqlitePool,
+    email: &str,
+    name: &str,
+    password: &str,
+) -> Result<Option<Account>, AccountError> {
+    let email = clean_email(email)?;
+    let name = clean_name(name)?;
+    check_strength(password)?;
+    let hash = hash_password(password.to_string()).await;
+    let account = sqlx::query_as(concat!(
+        "INSERT INTO users (email, email_key, name, password_hash, must_change_password, password_set_at)
+         SELECT ?, ?, ?, ?, 0, strftime('%Y-%m-%d %H:%M:%S', 'now')
+         WHERE NOT EXISTS (SELECT 1 FROM users)
+         RETURNING ",
+        columns!()
+    ))
+    .bind(&email)
+    .bind(email_key(&email))
+    .bind(&name)
+    .bind(&hash)
+    .fetch_optional(pool)
+    .await?;
+    Ok(account)
+}
+
 /// Every account, by name.
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Account>, AccountError> {
     Ok(sqlx::query_as(concat!(
@@ -405,9 +434,12 @@ pub const SIGN_IN_WINDOW: std::time::Duration = std::time::Duration::from_secs(1
 /// the maps without bound.
 const SIGN_IN_SWEEP_AT: usize = 10_000;
 
-/// Fixed-window counters of failed email/password sign-ins, per email and
-/// per client address. A limited attempt is refused before the password is
-/// checked, so even the right password waits.
+/// Fixed-window counters of email/password sign-ins, per email and per
+/// client address. Every attempt is counted before its password is checked
+/// ([`SignInLimiter::reserve`]), so parallel guesses cannot all slip in
+/// before the first failure lands; a success then gives its count back
+/// ([`SignInLimiter::succeeded`]). A limited attempt is refused before the
+/// password is checked, so even the right password waits.
 #[derive(Default)]
 pub struct SignInLimiter {
     by_email: std::sync::Mutex<Windows>,
@@ -443,35 +475,29 @@ impl SignInLimiter {
         Self::default()
     }
 
-    /// `Err(seconds to wait)` when the email or the address is limited.
-    pub fn check(&self, email_key: &str, address: &str) -> Result<(), u64> {
+    /// Count an attempt for the email and the address, or `Err(seconds to
+    /// wait)` without counting when either has used its budget. Both maps
+    /// are held together, so the check and the count are one step.
+    pub fn reserve(&self, email_key: &str, address: &str) -> Result<(), u64> {
         let now = std::time::Instant::now();
-        let email = wait_for(
-            &self.by_email.lock().unwrap(),
-            email_key,
-            SIGN_IN_FAILURES_PER_EMAIL,
-            now,
-        );
-        let address = wait_for(
-            &self.by_address.lock().unwrap(),
-            address,
-            SIGN_IN_FAILURES_PER_ADDRESS,
-            now,
-        );
-        match email.max(address) {
-            Some(wait) => Err(wait),
-            None => Ok(()),
+        let mut by_email = self.by_email.lock().unwrap();
+        let mut by_address = self.by_address.lock().unwrap();
+        let email = wait_for(&by_email, email_key, SIGN_IN_FAILURES_PER_EMAIL, now);
+        let address_wait = wait_for(&by_address, address, SIGN_IN_FAILURES_PER_ADDRESS, now);
+        if let Some(wait) = email.max(address_wait) {
+            return Err(wait);
         }
+        bump(&mut by_email, email_key, now);
+        bump(&mut by_address, address, now);
+        Ok(())
     }
 
-    pub fn record_failure(&self, email_key: &str, address: &str) {
-        let now = std::time::Instant::now();
-        bump(&mut self.by_email.lock().unwrap(), email_key, now);
-        bump(&mut self.by_address.lock().unwrap(), address, now);
-    }
-
-    /// A successful sign-in forgets the email's failures (not the address's).
-    pub fn clear(&self, email_key: &str) {
+    /// The attempt signed in: the email starts afresh and the address gets
+    /// its count back. A failed attempt keeps what `reserve` counted.
+    pub fn succeeded(&self, email_key: &str, address: &str) {
         self.by_email.lock().unwrap().remove(email_key);
+        if let Some((_, count)) = self.by_address.lock().unwrap().get_mut(address) {
+            *count = count.saturating_sub(1);
+        }
     }
 }

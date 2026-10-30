@@ -283,3 +283,54 @@ async fn removing_an_unknown_member_is_not_found() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn a_screen_approved_by_a_removed_member_is_denied() {
+    let h = harness().await;
+    let (id, session) = settled_member(&h, "ana@office.kz", "Ana").await;
+    let (_, started) = send(
+        &h.app,
+        request("POST", "/api/v1/auth/device/start", None, Some(json!({}))),
+    )
+    .await;
+    let code = started["code"].as_str().unwrap();
+    let secret = started["pollSecret"].as_str().unwrap();
+    let (status, _) = send(
+        &h.app,
+        with_cookie(
+            "POST",
+            "/api/v1/auth/device/approve",
+            &session,
+            Some(json!({ "code": code, "name": "Wall TV" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Ana is removed before the screen picks up its token.
+    let (status, _) = send(
+        &h.app,
+        request("DELETE", &format!("/api/v1/users/{id}"), Some(&h.token), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, polled) = send(
+        &h.app,
+        request(
+            "POST",
+            "/api/v1/auth/device/poll",
+            None,
+            Some(json!({ "code": code, "pollSecret": secret })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{polled}");
+    assert_eq!(polled["status"], "denied");
+    assert!(polled.get("token").is_none());
+    let minted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tokens WHERE name = 'Wall TV'")
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
+    assert_eq!(minted, 0);
+}

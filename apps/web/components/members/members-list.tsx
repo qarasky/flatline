@@ -1,6 +1,7 @@
 "use client";
 
 import { Ellipsis, KeyRound, UserMinus } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { RemoveMemberDialog } from "@/components/members/remove-member-dialog";
@@ -15,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { initials } from "@/lib/me";
 import { type Member, type MemberStatus, memberStatus } from "@/lib/members";
+import { PASSWORD_PATH } from "@/lib/session";
 
 const STATUS: Record<MemberStatus, { label: string; className: string } | null> = {
     active: null,
@@ -24,7 +26,7 @@ const STATUS: Record<MemberStatus, { label: string; className: string } | null> 
 
 type Action = { kind: "reset" | "remove"; member: Member } | null;
 
-/** One dense row per member, with reset and remove behind the row's menu. */
+/** One dense row per member, with reset and remove behind the row's menu (change password on your own). */
 export function MembersList({ members, meId }: { members: Member[]; meId: number | null }) {
     const [action, setAction] = useState<Action>(null);
 
@@ -71,10 +73,21 @@ export function MembersList({ members, meId }: { members: Member[]; meId: number
                                     </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end" className="min-w-44">
-                                    <DropdownMenuItem onSelect={() => setAction({ kind: "reset", member })}>
-                                        <KeyRound />
-                                        Reset password
-                                    </DropdownMenuItem>
+                                    {/* A reset would sign you out and hand you a starting password:
+                                        your own row changes it instead. */}
+                                    {own ? (
+                                        <DropdownMenuItem asChild>
+                                            <Link href={PASSWORD_PATH}>
+                                                <KeyRound />
+                                                Change password
+                                            </Link>
+                                        </DropdownMenuItem>
+                                    ) : (
+                                        <DropdownMenuItem onSelect={() => setAction({ kind: "reset", member })}>
+                                            <KeyRound />
+                                            Reset password
+                                        </DropdownMenuItem>
+                                    )}
                                     {/* Nobody removes their own account: someone else does it. */}
                                     {!own && (
                                         <DropdownMenuItem

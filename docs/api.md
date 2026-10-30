@@ -182,7 +182,7 @@ The SSE stream and agent binary downloads have no timeout.
 | POST   | `/api/v1/auth/device/approve` | Body `{code, name}`; the screen gets its own operator token                                                                          |
 | POST   | `/api/v1/auth/device/deny`    | Body `{code}`                                                                                                                        |
 
-Device codes travel in JSON bodies, never in paths. The QR code encodes
+A screen approved by a member who is removed before the screen's next poll gets `denied`, not a token. Device codes travel in JSON bodies, never in paths. The QR code encodes
 `<base>/device#<code>` only; the poll secret never leaves the waiting screen.
 At most 64 requests wait at once per instance (429 `busy` beyond that), each
 for 5 minutes.
@@ -218,8 +218,10 @@ password."), and only after the password matched.
   `GET /api/v1/auth/me`, `POST /api/v1/auth/password` and sign-out; everything
   else, the live stream included, answers `403 password_change_required`.
 - **Changing your password** (`POST /api/v1/auth/password`) needs the current
-  one (`400 wrong_password` otherwise), clears "must change" and signs out the
-  member's other browsers. A bearer token or token session has no password to
+  one (`400 wrong_password` otherwise) and a different new one
+  (`400 same_password`), clears "must change" and signs out the member's other
+  browsers. An expired starting password cannot be changed even from a browser
+  still signed in with it (`401 starting_password_expired`). A bearer token or token session has no password to
   change (`400 not_an_account`).
 - **Resetting** a member's password gives them a new starting password and signs
   them out everywhere at once.
@@ -230,14 +232,16 @@ password."), and only after the password matched.
 - **Sign-in limits.** Failed email/password sign-ins are limited to 5 per email
   and 20 per client address in 15 minutes; past that, even the right password
   answers `429 rate_limited` with `retryAfterSeconds` and a `Retry-After`
-  header. A successful sign-in clears the email's count. The client address is
+  header. Each attempt is counted before its password is checked, so parallel
+  guesses get no more than sequential ones; a successful sign-in clears the
+  email's count and gives the address its attempt back. The client address is
   Cloudflare's `CF-Connecting-IP`, else the first `X-Forwarded-For` hop; the
   proxy in front must strip both from anyone but Cloudflare.
 - **The first account.** While no account exists, `GET /api/v1/auth/setup`
   answers `setupNeeded: true` and `POST /api/v1/auth/setup` with any valid
   operator token (for example the first-boot one in `data/initial-token.txt`)
   creates an account and signs it in. Once one exists it answers
-  `409 setup_done`; add people from Members instead. An existing install gets no
+  `409 setup_done` (also to the loser of two setups racing); add people from Members instead. An existing install gets no
   accounts on upgrade: sign in with a token once and add yourself.
 
 ### Monitors, heartbeats and links
