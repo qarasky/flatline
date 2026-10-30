@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import { approveUrl, codeFromHash, hostMismatch, qrSvg } from "../src/lib/device-auth.ts";
 
 test("approveUrl prefers the configured public URL", () => {
-    assert.equal(approveUrl("https://kuma.example", "http://192.168.1.5:3001", "abc"), "https://kuma.example/device#abc");
+    assert.equal(
+        approveUrl("https://kuma.example", "http://192.168.1.5:3001", "abc"),
+        "https://kuma.example/device#abc"
+    );
 });
 
 test("approveUrl falls back to the origin the screen was opened on", () => {

@@ -12,9 +12,7 @@ import { boardRouteFrom, isDeviceApprovePath, statusSlugFromPath } from "@/lib/r
  */
 const Dashboard = lazy(() => import("@/components/Dashboard").then((m) => ({ default: m.Dashboard })));
 const SuperboardApp = lazy(() => import("@/components/Superboard").then((m) => ({ default: m.SuperboardApp })));
-const DeviceApprove = lazy(() =>
-    import("@/components/DeviceApprove").then((m) => ({ default: m.DeviceApprove }))
-);
+const DeviceApprove = lazy(() => import("@/components/DeviceApprove").then((m) => ({ default: m.DeviceApprove })));
 const StatusPageApp = lazy(() =>
     import("@/components/status/StatusPageApp").then((m) => ({ default: m.StatusPageApp }))
 );

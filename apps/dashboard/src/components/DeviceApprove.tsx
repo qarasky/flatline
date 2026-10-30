@@ -48,7 +48,10 @@ export function DeviceApprove() {
             return;
         }
         if (!code) {
-            setView({ kind: "failed", message: "This link has no request code. Scan the QR code on the screen again." });
+            setView({
+                kind: "failed",
+                message: "This link has no request code. Scan the QR code on the screen again.",
+            });
             return;
         }
         let cancelled = false;
