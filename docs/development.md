@@ -126,7 +126,8 @@ in place. The form sets which notifications a monitor alerts through. Rows have 
 right-click menu, a checkbox for bulk Pause, Resume and Delete, and the old
 board's keys (`/`, `j`/`k`, `Enter`, `x`, `Esc`; `apps/web/lib/board-keys.ts`). **Attention**
 (`/attention`) lists what needs a look, muted items last; its count sits on
-the sidebar.
+the sidebar. `⌘K` / `Ctrl+K` (or Search in the sidebar) jumps to any section,
+monitor or server, or runs New monitor, Superboard, Change password or Sign out.
 
 ## Conventions
 

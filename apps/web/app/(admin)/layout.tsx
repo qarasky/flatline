@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { unstable_rethrow } from "next/navigation";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { CommandPalette } from "@/components/command-palette";
 import { BoardDataProvider } from "@/components/board/board-data";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { requireOperator } from "@/lib/auth-server";
@@ -34,6 +35,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
                 <AppSidebar me={me} />
                 <SidebarInset>{children}</SidebarInset>
             </SidebarProvider>
+            <CommandPalette me={me} />
         </BoardDataProvider>
     );
 }

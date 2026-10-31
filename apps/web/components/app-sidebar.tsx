@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronsUpDown, KeyRound, LogOut } from "lucide-react";
+import { ChevronsUpDown, KeyRound, LogOut, Search } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -25,6 +25,7 @@ import {
     SidebarRail,
 } from "@/components/ui/sidebar";
 import { AttentionCount } from "@/components/attention/attention-list";
+import { openCommandPalette } from "@/components/command-palette";
 import { api } from "@/lib/api";
 import { type Me, displayName, initials } from "@/lib/me";
 import { NAV_SECTIONS, activeSection } from "@/lib/nav";
@@ -56,6 +57,19 @@ export function AppSidebar({ me }: { me: Me }) {
                                 <img src="/icon.svg" alt="" width={24} height={24} className="size-6 shrink-0" />
                                 <span className="font-semibold tracking-tight">Flatline</span>
                             </Link>
+                        </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    <SidebarMenuItem>
+                        <SidebarMenuButton
+                            tooltip="Search (⌘K)"
+                            onClick={openCommandPalette}
+                            className="text-muted-foreground"
+                        >
+                            <Search />
+                            <span>Search</span>
+                            <kbd className="ml-auto text-[11px] tracking-wide group-data-[collapsible=icon]:hidden">
+                                ⌘K
+                            </kbd>
                         </SidebarMenuButton>
                     </SidebarMenuItem>
                 </SidebarMenu>
