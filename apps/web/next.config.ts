@@ -18,7 +18,15 @@ const devOrigins = ["127.0.0.1", ...(process.env.FLATLINE_DEV_ORIGINS ?? "").spl
 // output traces from the same root (so its server is at apps/web/server.js).
 const repoRoot = path.resolve(__dirname, "../..");
 
+// The build's id, baked into the client bundle; `/build` answers the running
+// server's, so an open tab notices a deploy (lib/build-id.ts). The image sets
+// FLATLINE_BUILD_ID (the commit); a local build uses its build time. The dev
+// server has none: nothing to compare.
+const buildId =
+    process.env.FLATLINE_BUILD_ID || (process.env.NODE_ENV === "production" ? new Date().toISOString() : "");
+
 const nextConfig: NextConfig = {
+    env: { NEXT_PUBLIC_FLATLINE_BUILD: buildId },
     output: "standalone",
     outputFileTracingRoot: repoRoot,
     turbopack: { root: repoRoot },

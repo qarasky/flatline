@@ -136,6 +136,16 @@ runs with downloads and recorded checks, and rotates or revokes its token
 (shown once). Servers open from ⌘K and from Attention's silence and agent-warning
 rows; backup problems open their agent.
 
+The **Superboard** (`/superboard`, `/superboard/<scope>`, `/superboard/kiosk…`),
+the phone's approve page (`/device`) and public **status pages**
+(`/status/<slug>`, and `/` on a mapped client domain) are ported as they were,
+in the old look (`app/legacy.css`, scoped to `.legacy-theme`) with the new
+accent. Status pages render on the server and load no admin code; a signed-out
+kiosk shows its QR sign-in. Open tabs notice a deploy through `GET /build`
+(the build id): the kiosk and status pages reload, admin pages offer Reload.
+For local status pages, add rows to `status_pages` (there is no API to create
+one).
+
 ## Conventions
 
 - **TypeScript/React**: formatted by Prettier (4-space indent, double quotes,

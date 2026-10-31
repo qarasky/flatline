@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
 import { SuperboardClient } from "@/components/superboard/superboard-client";
+import { LiveUpdateWatcher } from "@/components/live-update-watcher";
 import { boardRouteFrom } from "@/lib/routes";
 import { SESSION_COOKIE } from "@/lib/session";
 
@@ -20,5 +21,11 @@ export default async function SuperboardPage({ params }: { params: Promise<{ pat
         notFound();
     }
     const signedIn = Boolean((await cookies()).get(SESSION_COOKIE)?.value);
-    return <SuperboardClient kiosk={route.kiosk} filter={route.filter} signedOut={!signedIn} />;
+    return (
+        <>
+            <SuperboardClient kiosk={route.kiosk} filter={route.filter} signedOut={!signedIn} />
+            {/* The wall reloads itself after a deploy; the desk board asks. */}
+            <LiveUpdateWatcher mode={route.kiosk ? "reload" : "prompt"} />
+        </>
+    );
 }

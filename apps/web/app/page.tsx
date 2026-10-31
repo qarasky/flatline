@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { StatusNotice, StatusPageApp } from "@/components/status/status-page-app";
+import { UpdateWatcher } from "@/components/update-watcher";
 import { HOME_PATH, SESSION_COOKIE, SIGN_IN_PATH } from "@/lib/session";
 import { readStatusPage, resolveRequestHost } from "@/lib/status-server";
 
@@ -36,6 +37,7 @@ export default async function Root() {
                 ) : (
                     <StatusPageApp slug={host.slug} initial={initial} renderedAt={Date.now()} />
                 )}
+                <UpdateWatcher mode="reload" />
             </div>
         );
     }

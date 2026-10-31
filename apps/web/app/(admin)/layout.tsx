@@ -5,6 +5,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { CommandPalette } from "@/components/command-palette";
 import { BoardDataProvider } from "@/components/board/board-data";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { LiveUpdateWatcher } from "@/components/live-update-watcher";
 import { requireOperator } from "@/lib/auth-server";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { fetchAllMonitors } from "@/lib/monitors-api";
@@ -36,6 +37,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
                 <SidebarInset>{children}</SidebarInset>
             </SidebarProvider>
             <CommandPalette me={me} />
+            <LiveUpdateWatcher mode="prompt" />
         </BoardDataProvider>
     );
 }
