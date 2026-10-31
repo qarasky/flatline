@@ -3,20 +3,34 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { Search } from "lucide-react";
+
 import { useBoardData } from "@/components/board/board-data";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useIdleCalm } from "@/hooks/use-idle-calm";
 import { attentionMonitorIds, deriveAttention } from "@/lib/attention";
 import {
     EMPTY_FILTER,
     boardTotals,
     buildBoard,
+    filterFacets,
     isFilterActive,
     type FilterState,
     type SortKey,
     type StatusKey,
 } from "@/lib/board-model";
-import type { BoardQuery, Density } from "@/lib/board-url";
+import {
+    DENSITY_KEY,
+    loadDensity,
+    loadViews,
+    serializeBoardQuery,
+    storeViews,
+    type BoardQuery,
+    type Density,
+    type SavedView,
+    type SavedViews,
+} from "@/lib/board-url";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { shouldHoldReorder } from "@/lib/motion";
 import { orderBasis } from "@/lib/order-basis";
@@ -24,7 +38,10 @@ import { orderBasis } from "@/lib/order-basis";
 import { BoardActionsContext, BoardViewContext, type BoardActions, type BoardView } from "./board-context";
 import { BoardSkeleton, EmptyBoard, LoadFailed, NoMatches } from "./board-states";
 import { BoardTree } from "./board-tree";
+import { DisplayMenu } from "./display-menu";
+import { FilterMenu } from "./filter-menu";
 import { StatusSummary } from "./status-summary";
+import { ViewsMenu } from "./views-menu";
 
 /** Where the old board kept collapsed groups; reused so a browser keeps its choice. */
 const COLLAPSED_KEY = "flatline.collapsedGroups";
@@ -49,17 +66,60 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
     const { monitors, rosterLoaded } = data;
 
     const [filter, setFilter] = useState<FilterState>(initialQuery.filter);
-    const [sort] = useState<SortKey>(initialQuery.sort);
+    const [sort, setSort] = useState<SortKey>(initialQuery.sort);
     const [openId, setOpenId] = useState<number | null>(initialQuery.open);
-    const [density] = useState<Density>("comfortable");
+    const [density, setDensityState] = useState<Density>("comfortable");
+    const [views, setViews] = useState<SavedViews>({ views: [], defaultId: null });
     const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
     const [selected] = useState<Set<number>>(new Set());
     const [cursorId, setCursorId] = useState<number | null>(null);
     const [pointerOverList, setPointerOverList] = useState(false);
     const calm = useIdleCalm();
 
-    // localStorage is the browser's: read it after the server render.
-    useEffect(() => setCollapsed(readCollapsed()), []);
+    // localStorage is the browser's: read it after the server render. A URL
+    // without board state gets the default saved view, as before.
+    useEffect(() => {
+        setCollapsed(readCollapsed());
+        setDensityState(loadDensity(window.localStorage));
+        const saved = loadViews(window.localStorage);
+        setViews(saved);
+        const preferred = saved.views.find((v) => v.id === saved.defaultId);
+        if (!initialQuery.hasParams && preferred) {
+            setFilter(preferred.filter);
+            setSort(preferred.sort);
+        }
+        // Only on mount: later URL changes come from this board itself.
+    }, []);
+
+    const changeViews = useCallback((next: SavedViews) => {
+        setViews(next);
+        storeViews(window.localStorage, next);
+    }, []);
+    const applyView = useCallback((view: SavedView) => {
+        setFilter(view.filter);
+        setSort(view.sort);
+    }, []);
+    const setDensity = useCallback((next: Density) => {
+        setDensityState(next);
+        try {
+            window.localStorage.setItem(DENSITY_KEY, next);
+        } catch {
+            // Storage can be unavailable; the choice just will not persist.
+        }
+    }, []);
+
+    // The board lives in the URL so it can be linked. History is replaced in
+    // place (Next keeps useSearchParams in step) rather than navigated, so a
+    // keystroke in the search box never costs a server render.
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            const search = serializeBoardQuery({ filter, sort, open: openId }, window.location.search);
+            if (search !== window.location.search) {
+                window.history.replaceState(window.history.state, "", `${window.location.pathname}${search}`);
+            }
+        }, 250);
+        return () => window.clearTimeout(timer);
+    }, [filter, sort, openId]);
 
     const attention = useMemo(
         () =>
@@ -87,6 +147,7 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
         [monitors, sort, filter, attentionIds, basis, data.strips]
     );
     const totals = useMemo(() => boardTotals(monitors), [monitors]);
+    const facets = useMemo(() => filterFacets(monitors), [monitors]);
     const forceOpen = isFilterActive(filter);
 
     const openMonitor = useCallback((id: number) => {
@@ -148,7 +209,7 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
-            <div className="flex min-h-11 flex-wrap items-center gap-3 border-b px-4 py-2">
+            <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2">
                 {rosterLoaded ? (
                     <StatusSummary
                         totals={totals}
@@ -158,6 +219,29 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
                         changed={data.cue.group && !calm ? data.cue.changed : 0}
                     />
                 ) : null}
+                <div className="ml-auto flex items-center gap-2">
+                    <div className="relative">
+                        <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+                        <Input
+                            id="board-search"
+                            type="search"
+                            value={filter.q}
+                            onChange={(event) => setFilter((prev) => ({ ...prev, q: event.target.value }))}
+                            placeholder="Search  /"
+                            aria-label="Search monitors"
+                            className="h-8 w-56 pl-8"
+                        />
+                    </div>
+                    <FilterMenu
+                        filter={filter}
+                        onChange={setFilter}
+                        types={facets.types}
+                        tags={facets.tags}
+                        attentionCount={attentionIds.size}
+                    />
+                    <DisplayMenu sort={sort} onSort={setSort} density={density} onDensity={setDensity} />
+                    <ViewsMenu state={views} onChange={changeViews} onApply={applyView} filter={filter} sort={sort} />
+                </div>
             </div>
             {data.paused ? (
                 <div

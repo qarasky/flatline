@@ -5,15 +5,23 @@ import { MonitorsBoard } from "@/components/monitors/monitors-board";
 import { PauseButton } from "@/components/monitors/pause-button";
 import { PageHeader } from "@/components/page-header";
 import { parseBoardQuery } from "@/lib/board-url";
+import { toSearchString } from "@/lib/search-string";
 
 export const metadata: Metadata = { title: "Monitors · Flatline" };
 
-export default function MonitorsPage() {
+export default async function MonitorsPage({
+    searchParams,
+}: {
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+    // Filters, sort and the open monitor come from the URL, so the server
+    // renders the board as linked.
+    const initialQuery = parseBoardQuery(toSearchString(await searchParams));
     return (
         <>
             <PageHeader crumbs={[{ label: "Monitors" }]} actions={<PauseButton />} />
             <Suspense>
-                <MonitorsBoard initialQuery={parseBoardQuery("")} />
+                <MonitorsBoard initialQuery={initialQuery} />
             </Suspense>
         </>
     );

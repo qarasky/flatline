@@ -81,7 +81,7 @@ function leave(error: ApiError): void {
  * agent and backup reads happen once per snapshot (and on `backups` events),
  * never on a timer. Pausing buffers everything until resume (WCAG 2.2.2).
  */
-function useBoardDataState(initialMonitors: MonitorSummary[] | null): BoardData {
+function useBoardDataState(initialMonitors: MonitorSummary[] | null, renderedAt: number): BoardData {
     const [monitors, setMonitors] = useState<MonitorSummary[]>(initialMonitors ?? []);
     const [rosterLoaded, setRosterLoaded] = useState(initialMonitors !== null);
     const [ready, setReady] = useState(false);
@@ -91,7 +91,10 @@ function useBoardDataState(initialMonitors: MonitorSummary[] | null): BoardData 
     const [warnings, setWarnings] = useState<Map<number, string>>(new Map());
     const [backups, setBackups] = useState<BackupAgentSummary[]>([]);
     const [cue, setCue] = useState<Cue>(NO_CUE);
-    const [now, setNow] = useState(() => Date.now());
+    // The server's render time, so "checked 12s ago" hydrates to the same
+    // text; the clock moves to the browser's own time right after.
+    const [now, setNow] = useState(renderedAt);
+    useEffect(() => setNow(Date.now()), []);
     const [paused, setPausedState] = useState(false);
     const [pending, setPending] = useState(0);
 
@@ -450,12 +453,15 @@ const BoardDataContext = createContext<BoardData | null>(null);
  */
 export function BoardDataProvider({
     initialMonitors,
+    renderedAt,
     children,
 }: {
     initialMonitors: MonitorSummary[] | null;
+    /** `Date.now()` on the server when it rendered the roster. */
+    renderedAt: number;
     children: React.ReactNode;
 }) {
-    const data = useBoardDataState(initialMonitors);
+    const data = useBoardDataState(initialMonitors, renderedAt);
     return <BoardDataContext.Provider value={data}>{children}</BoardDataContext.Provider>;
 }
 

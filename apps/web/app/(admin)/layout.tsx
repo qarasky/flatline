@@ -29,7 +29,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     const defaultOpen = (await cookies()).get("sidebar_state")?.value !== "false";
 
     return (
-        <BoardDataProvider initialMonitors={roster}>
+        <BoardDataProvider initialMonitors={roster} renderedAt={Date.now()}>
             <SidebarProvider defaultOpen={defaultOpen}>
                 <AppSidebar me={me} />
                 <SidebarInset>{children}</SidebarInset>
