@@ -48,9 +48,11 @@ report that the stack itself is down. Something outside has to watch it:
   itself, a root cron entry is enough:
 
   ```bash
-  */5 * * * * [ "$(docker inspect -f '{{.State.Health.Status}}' flatline-rust-flatline-1)" = unhealthy ] \
-      && docker restart flatline-rust-flatline-1
+  */5 * * * * for c in flatline-rust-flatline-1 flatline-rust-web-1; do [ "$(docker inspect -f '{{.State.Health.Status}}' $c)" = unhealthy ] && docker restart $c; done
   ```
+
+  The web app has its own healthcheck (`GET /build`); a hung web app leaves
+  `/healthz` green, which is why both containers are in the loop.
 
   Keep the off-host check regardless: a restart loop is still an outage.
 

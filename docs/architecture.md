@@ -37,7 +37,7 @@ agent ──POST /api/push──▶ caddy   (outbound only, per-monitor push tok
   browser it calls the same-origin `/api/...`.
 - In the compose files only Caddy is published (`FLATLINE_BIND:FLATLINE_PORT`,
   `0.0.0.0:3001` in `compose.yaml`, loopback on office). The backend and the
-  web app share an `internal` network with no way out; the backend also has an
+  web app share an `internal` network that has no way out; the backend also has an
   `egress` network for its checks and Telegram.
 - Caddy sets the browser-facing headers. Every response carries
   `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet`. The web app's pages

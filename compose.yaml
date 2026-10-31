@@ -12,7 +12,10 @@
 # seed script. FLATLINE_BIND/FLATLINE_PORT choose where Caddy listens
 # (default 0.0.0.0:3001); FLATLINE_SUBNET is the address range Caddy trusts
 # X-Forwarded-* from (the Docker host reaching it), change it if it collides
-# with a network you already use.
+# with a network you already use. That trust assumes rootful Docker keeps a
+# remote client's address (published ports are DNAT'd); under rootless
+# Docker, Docker Desktop or "iptables": false every client arrives from the
+# gateway and is trusted, so bind to loopback behind your own proxy there.
 
 x-logging: &logging
   driver: json-file
@@ -41,17 +44,22 @@ services:
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]
     networks: [edge, internal]
-    # Caddy drains for up to 30 s (grace_period in the Caddyfile).
-    stop_grace_period: 40s
+    # Caddy drains for up to 10 s (grace_period in the Caddyfile).
+    stop_grace_period: 20s
     mem_limit: 256m
     pids_limit: 256
+    # Started, not healthy: Caddy is the only way in, and it answers 502
+    # until an upstream is up. Waiting on the backend's health would keep
+    # status pages and /healthz itself unreachable while the backend is
+    # unhealthy.
     depends_on:
       flatline:
-        condition: service_healthy
+        condition: service_started
       web:
-        condition: service_healthy
+        condition: service_started
+    # Caddy and the web app behind it; the backend has its own healthcheck.
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/build"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -102,11 +110,9 @@ services:
     stop_grace_period: 20s
     mem_limit: 512m
     pids_limit: 256
-    depends_on:
-      flatline:
-        condition: service_healthy
     logging: *logging
-    # Healthcheck comes from the image: GET /build.
+    # Healthcheck comes from the image: GET /build. It does not wait for the
+    # backend: pages that need it show their own retrying error until it is up.
 
 networks:
   # Only Caddy is on a network with a published port; its fixed subnet is

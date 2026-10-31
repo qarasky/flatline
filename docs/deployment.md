@@ -98,7 +98,7 @@ execs the backend (still PID 1, still handling SIGTERM itself).
   - `mem_limit`: 1g for the backend, 512m for the web app, 256m for Caddy.
   - `pids_limit`.
   - `stop_grace_period`: 30s for the backend (its graceful shutdown takes up to
-    ~20 s), 40s for Caddy (it drains for 30 s) and 20s for the web app.
+    ~20 s), 20s for Caddy (it drains for 10 s) and 20s for the web app.
   - json-file log rotation, `10m` × 5.
 
   The web app and Caddy also run read-only with every capability dropped. The
@@ -156,7 +156,7 @@ for image in rust web caddy; do
     sudo docker tag artchsh/flatline-$image:office-new artchsh/flatline-$image:office-live
 done
 sudo docker compose -f compose.rust.yaml \
-  -f /home/office/flatline-src/docker/compose.backups.yaml up -d --remove-orphans
+  -f /home/office/flatline-src/docker/compose.backups.yaml up -d --remove-orphans --wait
 echo "rollback tags: office-prev-$REL  backup: $BM"
 ```
 
@@ -166,8 +166,9 @@ tags now and then (`sudo docker image ls 'artchsh/flatline-*'`).
 
 Migrations run at startup, so the recreate is the whole database step. Recreate
 is a few seconds of downtime on the public origin, plus up to ~20 s while the old
-backend shuts down gracefully (`stop_grace_period: 30s`). Caddy starts only
-once the backend and the web app report healthy.
+backend shuts down gracefully (`stop_grace_period: 30s`). Caddy restarts too
+(it drains open requests and streams for up to 10 s first) and answers 502 until
+the backend and the web app are up.
 
 ### Verifying a release
 

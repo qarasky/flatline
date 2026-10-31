@@ -8,9 +8,11 @@
 {
 	admin off
 	auto_https off
-	# On stop, let in-flight uploads, downloads and streams finish (the
-	# compose files allow 40 s before SIGKILL).
-	grace_period 30s
+	# On stop, give in-flight requests 10 s (the compose files allow 20 s
+	# before SIGKILL). Short on purpose: an open live stream (the wall TV)
+	# holds a graceful stop for the whole period while the port is already
+	# closed, and backup chunk uploads resume on their own.
+	grace_period 10s
 	servers {
 		# Trust X-Forwarded-* only from the Docker host itself: cloudflared
 		# on the host reaches the loopback-published port through
