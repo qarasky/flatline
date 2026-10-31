@@ -186,6 +186,14 @@ export function fetchMonitorLinks(
     return api(`/api/v1/monitors/${id}/links`, { signal });
 }
 
+/** Linked websites for many servers at once (the Superboard); servers without links are absent. */
+export function fetchBulkMonitorLinks(
+    ids: number[],
+    signal?: AbortSignal
+): Promise<{ ok: true; count: number; servers: Record<string, MonitorLinks> }> {
+    return api(`/api/v1/monitors/links?ids=${ids.join(",")}`, { signal });
+}
+
 /** Replace a server's linked websites with exactly these ids. */
 export function replaceMonitorLinks(
     id: number,
