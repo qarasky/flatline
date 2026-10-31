@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 
 import { MonitorsBoard } from "@/components/monitors/monitors-board";
+import { NewMonitorButton } from "@/components/monitors/new-monitor-dialog";
 import { PauseButton } from "@/components/monitors/pause-button";
 import { PageHeader } from "@/components/page-header";
 import { parseBoardQuery } from "@/lib/board-url";
@@ -19,7 +20,15 @@ export default async function MonitorsPage({
     const initialQuery = parseBoardQuery(toSearchString(await searchParams));
     return (
         <>
-            <PageHeader crumbs={[{ label: "Monitors" }]} actions={<PauseButton />} />
+            <PageHeader
+                crumbs={[{ label: "Monitors" }]}
+                actions={
+                    <>
+                        <PauseButton />
+                        <NewMonitorButton />
+                    </>
+                }
+            />
             <Suspense>
                 <MonitorsBoard initialQuery={initialQuery} />
             </Suspense>

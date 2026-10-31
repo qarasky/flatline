@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useMedia } from "@/hooks/use-media";
 
-import { MonitorDetail, type DetailMonitor } from "./monitor-detail";
+import { MonitorDetail } from "./monitor-detail";
 
 /** At this width the peek sits beside the list; below it, it slides over as a sheet. */
 export const WIDE_QUERY = "(min-width: 1280px)";
@@ -19,13 +19,11 @@ export function PeekPanel({
     id,
     onClose,
     onGone,
-    onEdit,
 }: {
     id: number | null;
     onClose: () => void;
     /** The monitor was deleted while open: the panel says so, the URL drops it. */
     onGone: () => void;
-    onEdit?: (monitor: DetailMonitor) => void;
 }) {
     const wide = useMedia(WIDE_QUERY);
 
@@ -49,7 +47,7 @@ export function PeekPanel({
     if (id === null) {
         return null;
     }
-    const detail = <MonitorDetail key={id} id={id} compact onClose={onClose} onEdit={onEdit} onDeleted={onGone} />;
+    const detail = <MonitorDetail key={id} id={id} compact onClose={onClose} onDeleted={onGone} />;
     if (wide) {
         return (
             <aside

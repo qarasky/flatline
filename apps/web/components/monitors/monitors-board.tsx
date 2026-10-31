@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Search } from "lucide-react";
@@ -40,6 +40,7 @@ import { BoardSkeleton, EmptyBoard, LoadFailed, NoMatches } from "./board-states
 import { BoardTree } from "./board-tree";
 import { DisplayMenu } from "./display-menu";
 import { FilterMenu } from "./filter-menu";
+import { NewMonitorDialog, newMonitorPresets, setNewMonitorParams } from "./new-monitor-dialog";
 import { PeekPanel } from "./peek-panel";
 import { StatusSummary } from "./status-summary";
 import { ViewsMenu } from "./views-menu";
@@ -62,8 +63,14 @@ function readCollapsed(): Set<number> {
  * collapsed groups). Data comes from the admin layout's BoardDataProvider.
  */
 export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { hasParams: boolean } }) {
-    const router = useRouter();
+    const searchParams = useSearchParams();
     const data = useBoardData();
+    // `?new=1` (the header button, the command palette, "New subgroup")
+    // opens the create dialog; closing it takes the keys out again.
+    const createPresets = useMemo(
+        () => newMonitorPresets(new URLSearchParams(searchParams.toString())),
+        [searchParams]
+    );
     const { monitors, rosterLoaded } = data;
 
     const [filter, setFilter] = useState<FilterState>(initialQuery.filter);
@@ -120,7 +127,7 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
         const timer = window.setTimeout(() => {
             const search = serializeBoardQuery({ filter, sort, open: openId }, window.location.search);
             if (search !== window.location.search) {
-                window.history.replaceState(window.history.state, "", `${window.location.pathname}${search}`);
+                window.history.replaceState(null, "", `${window.location.pathname}${search}`);
             }
         }, 250);
         return () => window.clearTimeout(timer);
@@ -298,7 +305,7 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
                                     <BoardSkeleton />
                                 )
                             ) : monitors.length === 0 ? (
-                                <EmptyBoard onNewMonitor={() => router.push("/monitors?new=1")} />
+                                <EmptyBoard onNewMonitor={() => setNewMonitorParams({})} />
                             ) : !hasRows ? (
                                 <NoMatches onClear={clearFilters} />
                             ) : (
@@ -309,6 +316,15 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
                 </BoardActionsContext.Provider>
             </div>
             <PeekPanel id={peekId} onClose={closePeek} onGone={peekGone} />
+            <NewMonitorDialog
+                presets={createPresets}
+                onClose={() => setNewMonitorParams(null)}
+                onSaved={(id) => {
+                    setNewMonitorParams(null);
+                    void data.reload();
+                    openMonitor(id);
+                }}
+            />
         </div>
     );
 }

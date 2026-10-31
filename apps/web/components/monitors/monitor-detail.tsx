@@ -17,6 +17,7 @@ import { BEAT_LIMIT, fetchHeartbeats, fetchMonitor, muteMonitor, unmuteMonitor }
 import { isCovered } from "@/lib/mute";
 import { cn } from "@/lib/utils";
 
+import { MonitorForm } from "./monitor-form";
 import { StatusDot, statusTone } from "./status-dot";
 
 export type DetailMonitor = MonitorSummary & Record<string, unknown>;
@@ -137,7 +138,6 @@ export function MonitorDetail({
     initial,
     compact = false,
     onClose,
-    onEdit,
     onDeleted,
 }: {
     id: number;
@@ -145,11 +145,12 @@ export function MonitorDetail({
     compact?: boolean;
     /** The peek's close button. */
     onClose?: () => void;
-    onEdit?: (monitor: DetailMonitor) => void;
     /** The monitor is gone (deleted by someone else). */
     onDeleted?: () => void;
 }) {
-    const { now } = useBoardData();
+    const { now, reload: reloadBoard } = useBoardData();
+    const [editing, setEditing] = useState(false);
+    const reloadRef = useRef<() => Promise<void>>(async () => undefined);
     const [monitor, setMonitor] = useState<DetailMonitor | null>(initial?.monitor ?? null);
     // One state so a live beat updates the list and the total together.
     const [log, setLog] = useState<{ beats: HeartbeatEntry[]; total: number }>({
@@ -212,6 +213,8 @@ export function MonitorDetail({
             }
         }
 
+        reloadRef.current = () => load();
+        setEditing(false);
         const stop = subscribeLive({
             metrics: false,
             snapshot: load,
@@ -280,10 +283,6 @@ export function MonitorDetail({
 
     const status = statusKeyOf(monitor);
     const covered = isCovered(monitor);
-    const { beats, total } = log;
-    const downs = beats.filter((b) => b.status === 0).length;
-    const certDays = monitor.certExpiryDaysRemaining;
-    const hasCertDays = certDays !== "" && certDays != null;
 
     // Mute a known outage, or clear every mute covering this monitor. The
     // live invalidate reloads the monitor with its new state.
@@ -338,11 +337,11 @@ export function MonitorDetail({
                             {covered ? "Unmute" : "Mute"}
                         </Button>
                     ) : null}
-                    {onEdit ? (
-                        <Button variant="outline" size="sm" onClick={() => onEdit(monitor)}>
+                    {editing ? null : (
+                        <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
                             Edit
                         </Button>
-                    ) : null}
+                    )}
                     {compact ? (
                         <>
                             <Button variant="ghost" size="icon-sm" asChild>
@@ -359,6 +358,52 @@ export function MonitorDetail({
                     ) : null}
                 </div>
             </div>
+            {editing ? (
+                <MonitorForm
+                    key={monitor.id}
+                    initial={monitor}
+                    onCancel={() => setEditing(false)}
+                    onSaved={() => {
+                        setEditing(false);
+                        void reloadRef.current();
+                        void reloadBoard();
+                    }}
+                />
+            ) : (
+                <MonitorBody
+                    monitor={monitor}
+                    beats={log.beats}
+                    total={log.total}
+                    compact={compact}
+                    error={error}
+                    muteError={muteError}
+                />
+            )}
+        </div>
+    );
+}
+
+/** Everything under the header: numbers, recent checks, ping, certificate, events. */
+function MonitorBody({
+    monitor,
+    beats,
+    total,
+    compact,
+    error,
+    muteError,
+}: {
+    monitor: DetailMonitor;
+    beats: HeartbeatEntry[];
+    total: number;
+    compact: boolean;
+    error: string | null;
+    muteError: string | null;
+}) {
+    const downs = beats.filter((b) => b.status === 0).length;
+    const certDays = monitor.certExpiryDaysRemaining;
+    const hasCertDays = certDays !== "" && certDays != null;
+    return (
+        <>
             {muteError ? <p className="text-status-down mb-3 text-xs">{muteError}</p> : null}
             {error ? <p className="text-status-warn mb-3 text-xs">{error}</p> : null}
             {monitor.url ? <p className="text-muted-foreground mb-4 truncate text-xs">{monitor.url}</p> : null}
@@ -443,6 +488,6 @@ export function MonitorDetail({
                     </table>
                 </div>
             )}
-        </div>
+        </>
     );
 }
