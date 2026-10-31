@@ -4,11 +4,12 @@
  * session cookie forwarded) and in the browser.
  */
 
-import { api } from "@/lib/api";
+import { api, isApiError } from "@/lib/api";
 import type { HeartbeatEntry } from "@/lib/heartbeat-log";
 import type {
     BackupAgentSummary,
     CPUPeak,
+    MetricsHistorySummary,
     MetricsPayload,
     MonitorLinks,
     MonitorMute,
@@ -197,4 +198,24 @@ export function replaceMonitorLinks(
 export async function fetchNotifications(): Promise<NotificationSummary[]> {
     const body = await api<{ notifications: NotificationSummary[] }>("/api/v1/notifications");
     return body.notifications.map(({ id, name, type, active, isDefault }) => ({ id, name, type, active, isDefault }));
+}
+
+/** A server's history charts and percentiles over the last `hours`. */
+export function fetchMetricsHistory(id: number, hours: number, signal?: AbortSignal): Promise<MetricsHistorySummary> {
+    return api(`/api/v1/monitors/${id}/metrics/summary?hours=${hours}`, { signal });
+}
+
+/** A server's latest metrics sample, or null when it has sent none yet. */
+export async function fetchLatestMetrics(
+    id: number,
+    signal?: AbortSignal
+): Promise<{ time: string; metrics: MetricsPayload; cpuPeak10m?: CPUPeak | null } | null> {
+    try {
+        return await api(`/api/v1/monitors/${id}/metrics/latest`, { signal });
+    } catch (error) {
+        if (isApiError(error, 404)) {
+            return null;
+        }
+        throw error;
+    }
 }

@@ -99,6 +99,15 @@
     --color-status-muted: var(--status-muted);
     --color-status-maint: var(--status-maint);
 
+    /* The old dashboard's colour names, so ported markup keeps its classes. */
+    --color-ok: var(--status-up);
+    --color-warn: var(--status-warn);
+    --color-bad: var(--status-down);
+    --color-bad-dim: var(--status-muted);
+    --color-maint: var(--status-maint);
+    --color-quiet: var(--muted-foreground);
+    --color-surface-2: var(--raised);
+
     --radius-sm: calc(var(--radius) - 2px);
     --radius-md: var(--radius);
     --radius-lg: calc(var(--radius) + 2px);
@@ -359,4 +368,17 @@
     padding: 0 5px;
     font-family: inherit;
     color: var(--muted-foreground);
+}
+
+@utility tnum {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Provider symbol: sized to the title's font, transparent, no badge. */
+.provider-logo {
+    height: 1.05em;
+    width: auto;
+    max-width: 1.6em;
+    object-fit: contain;
+    flex-shrink: 0;
 }
