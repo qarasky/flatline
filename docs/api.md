@@ -246,24 +246,24 @@ password."), and only after the password matched.
 
 ### Monitors, heartbeats and links
 
-| Method | Path                                                     | Purpose                                          |
-| ------ | -------------------------------------------------------- | ------------------------------------------------ |
-| GET    | `/api/v1/monitor-types`                                  | Supported types and `writableFields`             |
-| GET    | `/api/v1/monitors`                                       | List; `page`, `perPage`, `status`, `active`, `q` |
-| POST   | `/api/v1/monitors`                                       | Create a monitor                                 |
-| GET    | `/api/v1/monitors/{id}`                                  | One monitor with live status and uptime          |
-| PATCH  | `/api/v1/monitors/{id}`                                  | Partial update (type is immutable)               |
-| DELETE | `/api/v1/monitors/{id}?deleteChildren=true`              | Delete, optionally a group subtree               |
-| GET    | `/api/v1/monitors/{id}/heartbeats?limit=`                | Recent heartbeats, newest first                  |
-| POST   | `/api/v1/monitors/{id}/push-failures/clear`              | Acknowledge `failedPushes`                       |
-| POST   | `/api/v1/monitors/{id}/agent-warnings/clear`             | Acknowledge all agent warning counters           |
-| POST   | `/api/v1/monitors/{id}/mute`                             | Mute a known outage (400 when nothing is down)   |
-| DELETE | `/api/v1/monitors/{id}/mute`                             | Unmute it and every mute covering it             |
-| GET    | `/api/v1/monitors/links?ids=1,2,3`                       | Bulk links for many monitors (max 200)           |
-| GET    | `/api/v1/monitors/heartbeat-strips?ids=&hours=&buckets=` | Bucketed status strips (max 200 ids)             |
-| GET    | `/api/v1/monitors/{id}/links`                            | Raw and resolved links                           |
-| PUT    | `/api/v1/monitors/{id}/links`                            | Replace; body `{"linkedMonitorIds":[1,2]}`       |
-| DELETE | `/api/v1/monitors/{id}/links`                            | Clear all links                                  |
+| Method | Path                                                     | Purpose                                                    |
+| ------ | -------------------------------------------------------- | ---------------------------------------------------------- |
+| GET    | `/api/v1/monitor-types`                                  | Supported types and `writableFields`                       |
+| GET    | `/api/v1/monitors`                                       | List; `page`, `perPage`, `status`, `active`, `q`           |
+| POST   | `/api/v1/monitors`                                       | Create a monitor                                           |
+| GET    | `/api/v1/monitors/{id}`                                  | One monitor with live status, uptime and `notificationIds` |
+| PATCH  | `/api/v1/monitors/{id}`                                  | Partial update (type is immutable)                         |
+| DELETE | `/api/v1/monitors/{id}?deleteChildren=true`              | Delete, optionally a group subtree                         |
+| GET    | `/api/v1/monitors/{id}/heartbeats?limit=`                | Recent heartbeats, newest first                            |
+| POST   | `/api/v1/monitors/{id}/push-failures/clear`              | Acknowledge `failedPushes`                                 |
+| POST   | `/api/v1/monitors/{id}/agent-warnings/clear`             | Acknowledge all agent warning counters                     |
+| POST   | `/api/v1/monitors/{id}/mute`                             | Mute a known outage (400 when nothing is down)             |
+| DELETE | `/api/v1/monitors/{id}/mute`                             | Unmute it and every mute covering it                       |
+| GET    | `/api/v1/monitors/links?ids=1,2,3`                       | Bulk links for many monitors (max 200)                     |
+| GET    | `/api/v1/monitors/heartbeat-strips?ids=&hours=&buckets=` | Bucketed status strips (max 200 ids)                       |
+| GET    | `/api/v1/monitors/{id}/links`                            | Raw and resolved links                                     |
+| PUT    | `/api/v1/monitors/{id}/links`                            | Replace; body `{"linkedMonitorIds":[1,2]}`                 |
+| DELETE | `/api/v1/monitors/{id}/links`                            | Clear all links                                            |
 
 #### Mutes
 

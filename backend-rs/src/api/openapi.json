@@ -1184,7 +1184,7 @@
         "/api/v1/monitors/{id}": {
             "get": {
                 "summary": "Get one monitor",
-                "description": "Requires the `read` scope.",
+                "description": "Requires the `read` scope. Beside the list's fields, carries `notificationIds`: the notifications this monitor alerts through (set with `notificationIDList` on create and update), ascending.",
                 "parameters": [
                     {
                         "$ref": "#/components/parameters/monitorId"
@@ -1202,7 +1202,18 @@
                                             "type": "boolean"
                                         },
                                         "monitor": {
-                                            "$ref": "#/components/schemas/Monitor"
+                                            "allOf": [
+                                                { "$ref": "#/components/schemas/Monitor" },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "notificationIds": {
+                                                            "type": "array",
+                                                            "items": { "type": "integer" }
+                                                        }
+                                                    }
+                                                }
+                                            ]
                                         }
                                     }
                                 }

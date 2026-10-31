@@ -281,6 +281,16 @@ pub async fn get_one(
     let coverage = mutes::coverage(&state.pool).await.map_err(internal)?;
     let mut object = monitor_json(&monitor, beats.get(&id), &uptime);
     with_mute(&mut object, &coverage, id);
+    // Only the single read carries them: the form shows which
+    // notifications a monitor uses; the list does not need them.
+    let notification_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT notification_id FROM monitor_notifications WHERE monitor_id = ? ORDER BY notification_id",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(internal)?;
+    object["notificationIds"] = json!(notification_ids);
     Ok(Json(json!({
         "ok": true,
         "monitor": object,

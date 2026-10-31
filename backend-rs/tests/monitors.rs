@@ -531,3 +531,42 @@ async fn agent_warnings_clear_acknowledges_every_counter_and_resets_on_restart()
     assert_eq!(body["monitor"]["samplesDroppedAck"], 0);
     assert_eq!(body["monitor"]["collectorErrorsAck"], json!({}));
 }
+
+#[tokio::test]
+async fn a_monitor_read_lists_its_notification_ids() {
+    let h = harness().await;
+    let mut notifications = Vec::new();
+    for name in ["ops", "client"] {
+        let (status, body) = send(
+            &h.app,
+            request(
+                "POST",
+                "/api/v1/notifications",
+                Some(&h.token),
+                Some(json!({ "name": name, "type": "telegram", "config": {} })),
+            ),
+        )
+        .await;
+        assert!(status.is_success(), "{body}");
+        notifications.push(body["id"].as_i64().unwrap());
+    }
+    let (n1, n2) = (notifications[0], notifications[1]);
+
+    let (_, body) = create(
+        &h,
+        json!({ "name": "web", "type": "http", "url": "https://example.com", "notificationIDList": [n2, n1] }),
+    )
+    .await;
+    let id = body["monitor"]["id"].as_i64().unwrap();
+    let (_, body) = get_json(&h.app, &format!("/api/v1/monitors/{id}"), &h.token).await;
+    assert_eq!(body["monitor"]["notificationIds"], json!([n1, n2]));
+
+    patch(&h, id, json!({ "notificationIDList": { n1.to_string(): false } })).await;
+    let (_, body) = get_json(&h.app, &format!("/api/v1/monitors/{id}"), &h.token).await;
+    assert_eq!(body["monitor"]["notificationIds"], json!([n2]));
+
+    let (_, body) = create(&h, json!({ "name": "bare", "type": "http", "url": "https://example.org" })).await;
+    let bare = body["monitor"]["id"].as_i64().unwrap();
+    let (_, body) = get_json(&h.app, &format!("/api/v1/monitors/{bare}"), &h.token).await;
+    assert_eq!(body["monitor"]["notificationIds"], json!([]));
+}
