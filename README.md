@@ -1,5 +1,5 @@
 <div align="center" width="100%">
-    <img src="./apps/dashboard/public/favicon.svg" width="96" alt="Flatline mark" />
+    <img src="./apps/web/app/icon.svg" width="96" alt="Flatline mark" />
 </div>
 
 # Flatline
@@ -20,16 +20,17 @@ removed.
 
 Four pieces, one origin:
 
-| Piece        | Dir               | What                                                                                                         |
-| ------------ | ----------------- | ------------------------------------------------------------------------------------------------------------ |
-| Backend      | `backend-rs/`     | Rust service: the check engine, REST API, storage, alerts, and the built web app.                            |
-| Dashboard    | `apps/dashboard/` | React/Vite app: operator dashboard, Superboard, public status pages.                                         |
-| Host agent   | `superboard/`     | Single static Go binary pushed to each monitored server; sends telemetry, never accepts connections.         |
-| Backup agent | `backup-agent/`   | Separate Go binary on servers whose data you back up: exports Postgres and S3/Garage, uploads to the server. |
+| Piece        | Dir             | What                                                                                                         |
+| ------------ | --------------- | ------------------------------------------------------------------------------------------------------------ |
+| Backend      | `backend-rs/`   | Rust service: the check engine, REST API, storage, alerts and both agents' downloads.                        |
+| Web app      | `apps/web/`     | Next.js app: operator UI, Superboard, public status pages.                                                   |
+| Host agent   | `superboard/`   | Single static Go binary pushed to each monitored server; sends telemetry, never accepts connections.         |
+| Backup agent | `backup-agent/` | Separate Go binary on servers whose data you back up: exports Postgres and S3/Garage, uploads to the server. |
 
-`./dev.sh` runs all three locally, plus a mock fleet so the board has something
-to show without real machines. Production is one container: the backend serves
-the API, the dashboard, the status pages and both agents' downloads on `:3001`.
+`./dev.sh` runs the backend, the web app and the agent locally, plus a mock
+fleet so the board has something to show without real machines. Production is
+three containers behind one port: Caddy on `:3001` sends `/api/*`, `/agent/*`
+and the other backend paths to the backend and everything else to the web app.
 Both agents update themselves from the builds the server ships.
 
 ## What you can do
@@ -62,7 +63,7 @@ Both agents update themselves from the builds the server ships.
   (`/status/:slug`, plus host-routed client domains). Serving and unlocking them
   is fully API-driven; creating or editing a page is currently a database
   operation — the admin API for pages was not ported.
-- **Drive everything over HTTP**: the REST API is the same one the dashboard
+- **Drive everything over HTTP**: the REST API is the same one the web app
   uses, and `GET /api/v1/openapi.json` documents itself.
 
 ![Operator dashboard with fictional applications and infrastructure](docs/screenshots/dashboard.png)
@@ -73,7 +74,8 @@ Both agents update themselves from the builds the server ships.
 
 ### Local development
 
-Requires `cargo`, `go` and Node (Node is only the Vite dev server).
+Requires `cargo`, `go` and Node (Node runs the web app; the backend and the
+agents do not use it).
 
 ```bash
 git clone https://github.com/qarasky/flatline.git
@@ -81,8 +83,9 @@ cd flatline
 ./dev.sh
 ```
 
-`./dev.sh` builds the backend and agent, starts the web app on `:3003` and the
-old dashboard on `:3004` (backend on `:3001`, proxied), and starts the mock fleet: a Go agent that
+`./dev.sh` builds the backend and agent, starts the backend on `:3001` and the
+web app on `:3003` (which forwards `/api` and `/agent` to the backend, so the
+browser sees one origin), and starts the mock fleet: a Go agent that
 creates a demo set of hosts through the public API, pushes believable telemetry,
 creates a few demo websites and leaves agent warnings on two hosts. It prints
 the operator token — also in `./.dev-data/initial-token.txt`. `./dev.sh stop`
@@ -96,10 +99,13 @@ cd flatline
 docker compose up -d --build
 ```
 
-One service on **3001** serving the API, dashboard, status pages and agent
-downloads. Data lives in `./data`; on first run the operator token is written to
-`./data/initial-token.txt` (0600) — sign in with it. There is no account setup
-and no seed script.
+Three containers, one published port (**3001**, set with `FLATLINE_BIND` and
+`FLATLINE_PORT`): `caddy` routes the backend's paths to `flatline` (the API,
+check engine and agent downloads) and everything else to `web` (the Next.js
+app); only Caddy is published. Data lives in `./data`; on first run the
+operator token is written to `./data/initial-token.txt` (0600) — sign in with
+it ("Use a token instead") and create the first account. There is no seed
+script.
 
 Backup storage is opt-in: to accept uploads from backup agents, provision a
 storage directory and add `-f docker/compose.backups.yaml` to every
@@ -109,13 +115,19 @@ uploads answer 503 and everything else works.
 
 ### Without Docker
 
-```bash
-cargo run --release --manifest-path backend-rs/Cargo.toml
-```
+There is no one-binary mode: the backend no longer serves a web app. Run three
+things:
 
-The backend serves the built dashboard from `FLATLINE_WEB_DIST`
-(`apps/dashboard/dist`, built with `npm run build` there). Data is SQLite in
-`./data`.
+- the backend: `cargo run --release --manifest-path backend-rs/Cargo.toml`
+  (data is SQLite in `./data`);
+- the web app: `npm run build:web`, then `npx next start` in `apps/web/` (or
+  the standalone server `apps/web/server.js` from `.next/standalone/`, laid out
+  as [`docker/web.dockerfile`](docker/web.dockerfile) does), with `API_URL`
+  pointing at the backend;
+- a reverse proxy in front of both, routing as
+  [`docker/Caddyfile`](docker/Caddyfile) does: `/api/*`, `/agent/*`, `/healthz`,
+  `/add-push-server.md`, `/llms.txt` and `/robots.txt` to the backend,
+  unbuffered; everything else to the web app.
 
 ### Updating
 
@@ -131,12 +143,13 @@ documented in [docs/deployment.md](docs/deployment.md).
 
 ## Sign in and tokens
 
-Sign-in is a single token, pasted into the dashboard. There is one token type
-and it has full permission — the dashboard's **Agents** panel mints additional
+People sign in to the web app with an email and password (member accounts,
+added on **Members**), or with an operator token. There is one level of access:
+every account and every token has full permission. **Tokens** mints additional
 named tokens (shown once) so an integration can have its own revocable
 credential, not to limit what it can do.
 
-The same token authenticates the REST API and the tokenized provisioning
+An operator token authenticates the REST API and the tokenized provisioning
 documents:
 
 ```bash
@@ -161,7 +174,7 @@ Everything lives in [`docs/`](docs/README.md):
 | [API](docs/api.md)                           | You are calling Flatline from a script or an agent.        |
 | [Host agent](docs/agent.md)                  | You are installing, configuring or debugging `superboard`. |
 | [Superboard](docs/superboard.md)             | You are changing or explaining the wall board.             |
-| [Dashboard](docs/dashboard.md)               | You are working on the operator UI.                        |
+| [Web app](docs/dashboard.md)                 | You are working on the operator UI.                        |
 | [Status pages](docs/status-pages.md)         | You are publishing or theming a public page.               |
 | [Deployment](docs/deployment.md)             | You are shipping a release to a server.                    |
 | [Operations](docs/operations.md)             | You are backing up, rotating a token or rolling back.      |

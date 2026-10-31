@@ -6,8 +6,7 @@
 # The backend is the Rust service in backend-rs/. The operator UI is the
 # Next.js app in apps/web, which rewrites /api and /agent to the backend (see
 # apps/web/next.config.ts), so the app is same-origin in dev exactly as it is
-# in production. The old Vite dashboard (apps/dashboard) runs beside it until
-# the rewrite replaces it.
+# in production (where Caddy does the routing; see docker/Caddyfile).
 #
 # Mock data: the Go mock agent (superboard/mockagent) creates a demo fleet
 # through the public API and pushes telemetry for it, so the Superboard shows
@@ -35,7 +34,6 @@ AGENT_DIR="$DATA_DIR/agent"
 
 BACKEND_PORT="${FLATLINE_BACKEND_PORT:-3001}"
 WEB_PORT="${FLATLINE_WEB_PORT:-3003}"
-DASH_PORT="${FLATLINE_DASHBOARD_PORT:-3004}"
 
 mkdir -p "$LOGS" "$DATA_DIR" "$AGENT_DIR"
 
@@ -84,7 +82,6 @@ case "${1:-start}" in
     stop)
         echo "Stopping Flatline dev servers:"
         stop_one "web" "next dev.*--port $WEB_PORT"
-        stop_one "dashboard" "vite.*--port $DASH_PORT"
         stop_one "backend" "flatline-backend"
         stop_one "mock-agent" "mockagent"
         sleep 1
@@ -93,7 +90,6 @@ case "${1:-start}" in
     status)
         printf '%s: %s\n' "backend" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$BACKEND_PORT/api/v1/auth/setup" 2>/dev/null || echo down)"
         printf '%s: %s\n' "web" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$WEB_PORT/sign-in" 2>/dev/null || echo down)"
-        printf '%s: %s\n' "dashboard" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$DASH_PORT/" 2>/dev/null || echo down)"
         exit 0
         ;;
     logs)
@@ -188,17 +184,6 @@ fi
     start_one "web" npx next dev --hostname 0.0.0.0 --port "$WEB_PORT"
 )
 
-# --- dashboard (old, until the rewrite replaces it) ------------------------
-
-# Same-origin in dev: Vite proxies /api and /agent to the backend (see
-# vite.config.ts), so the app talks to its own origin exactly as it does in
-# production. No CORS, no origin baked into the bundle.
-(
-    cd "$ROOT/apps/dashboard"
-    FLATLINE_DEV_BACKEND="http://127.0.0.1:$BACKEND_PORT" \
-    start_one "dashboard" npx vite --host 0.0.0.0 --port "$DASH_PORT"
-)
-
 sleep 6
 
 LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || echo "this-host")"
@@ -206,8 +191,7 @@ LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || echo "this-host")"
 echo
 echo "  backend     http://$LAN_IP:$BACKEND_PORT"
 echo "  web         http://$LAN_IP:$WEB_PORT"
-echo "  dashboard   http://$LAN_IP:$DASH_PORT   (old)"
-echo "  superboard  http://$LAN_IP:$DASH_PORT/superboard   (kiosk: /superboard/kiosk, scope: /superboard/kiosk/work)"
+echo "  superboard  http://$LAN_IP:$WEB_PORT/superboard   (kiosk: /superboard/kiosk, scope: /superboard/kiosk/work)"
 echo
 if [ -n "$TOKEN" ]; then
     echo "  operator token: $TOKEN"

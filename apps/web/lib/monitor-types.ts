@@ -1,7 +1,7 @@
 /**
  * Shapes the Flatline API returns for monitors, metrics, links and backups.
  *
- * Copied from the old dashboard's `apps/dashboard/src/lib/api.ts` so the
+ * Copied from the old dashboard's `src/lib/api.ts` (deleted at the cutover) so the
  * ported board modules keep their types; the old copy goes with the
  * dashboard in part 7 of the rewrite.
  */

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { GET } from "@/app/index.html/route";
 
-// The old dashboard's rule (apps/dashboard/src/lib/build-version.ts), copied:
+// The old dashboard's rule (its src/lib/build-version.ts, deleted at the cutover), copied:
 // the first module script under /assets/ is the build's entry.
 function entryAssetFromHtml(html: string): string | null {
     for (const tag of html.match(/<script\b[^>]*>/gi) ?? []) {

@@ -9,20 +9,22 @@ their offline restore procedure live in [backup-agent](backup-agent.md).
 
 | Check         | Command / endpoint                                                  | Healthy means                                                                                                                         |
 | ------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Container     | `sudo docker compose -f /home/office/flatline/compose.rust.yaml ps` | `healthy`, low restart count.                                                                                                         |
-| Backend alive | `GET /healthz` (no token)                                           | 200 `{"status":"ok"}`: database answers within 2 s and the check engine's watchdog ticked within 30 s. 503 with a `reason` otherwise. |
+| Containers    | `sudo docker compose -f /home/office/flatline/compose.rust.yaml ps` | `caddy`, `flatline` and `web` all `healthy`, low restart counts.                                                                      |
+| Backend alive | `GET /healthz` (no token; Caddy routes it to the backend)           | 200 `{"status":"ok"}`: database answers within 2 s and the check engine's watchdog ticked within 30 s. 503 with a `reason` otherwise. |
+| Web app alive | `GET /build` (no token)                                             | 200 `{"build":"<id>"}`: the Next.js server answers; the id is the deployed build.                                                     |
 | Backend up    | `GET /api/v1/auth/setup` (no token)                                 | 200 with `setupNeeded` (proves the process and the database answer, nothing more).                                                    |
 | Fleet summary | `GET /api/v1/health` (token)                                        | `total` matches the expected count, `down` matches reality; 503 when the database fails.                                              |
 | Public origin | `curl -o /dev/null -w '%{http_code}' https://<origin>/`             | 200 through the tunnel.                                                                                                               |
 | Agents        | newest telemetry per push monitor                                   | seconds old, not minutes.                                                                                                             |
-| Local dev     | `./dev.sh status`                                                   | backend 200, dashboard 200.                                                                                                           |
+| Local dev     | `./dev.sh status`                                                   | backend 200, web 200.                                                                                                                 |
 
-The dashboard itself is the best health signal: a fleet-wide problem shows as a
+The board itself is the best health signal: a fleet-wide problem shows as a
 wall of stale cards, and `Agent: …` lines surface the host-side cause.
 
 ### Watching the watcher
 
-The container healthcheck probes `/healthz` every 30 s, but Docker only _marks_
+The backend's healthcheck probes `/healthz` every 30 s (the web container's
+probes `/build`), but Docker only _marks_
 an unhealthy container; it never restarts it, and nothing inside the stack can
 report that the stack itself is down. Something outside has to watch it:
 
@@ -39,6 +41,8 @@ report that the stack itself is down. Something outside has to watch it:
 
   This catches everything the instance cannot report about itself: host down,
   tunnel down, the backend wedged with a dead database or a stalled engine.
+  `/healthz` passes through Caddy but not the web app; probe
+  `https://<origin>/build` the same way to cover it.
 
 - **On-host restart (optional).** If an unhealthy container should restart
   itself, a root cron entry is enough:
@@ -179,9 +183,9 @@ holding it. Legacy `flatline_...` tokens keep working until rotated.
 
 | Credential         | Where it lives                                 | Rotating it                                                                                                                       |
 | ------------------ | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Operator token     | `data-rust/initial-token.txt` (0600, root)     | Mint a replacement in the Agents panel, save it to that file, disable the old row.                                                |
-| Integration tokens | `tokens` table, hashes only                    | Mint a named token in the Agents panel; disable or delete it to revoke. Plaintext is shown once.                                  |
-| Provisioning token | `/home/office/flatline/provisioning-token.txt` | Disable the key in the Agents panel, mint a replacement, update that file and any shared URL.                                     |
+| Operator token     | `data-rust/initial-token.txt` (0600, root)     | Mint a replacement on **Tokens**, save it to that file, disable the old row.                                                      |
+| Integration tokens | `tokens` table, hashes only                    | Mint a named token on **Tokens**; disable or delete it to revoke. Plaintext is shown once.                                        |
+| Provisioning token | `/home/office/flatline/provisioning-token.txt` | Disable the key on **Tokens**, mint a replacement, update that file and any shared URL.                                           |
 | Push tokens        | `monitors.push_token`, one per agent host      | Rotate in the monitor form (or `PATCH` the monitor), then update `/etc/superboard/config.json` on the host and restart the agent. |
 | Backup credentials | `backup_agents.token_hash`, one per agent name | Rotate through `POST /api/v1/backup-agents/{id}/rotate-token`, then update the agent's token file.                                |
 | Backup storage     | `/mnt/mirror/flatline-backups`                 | Enable only with `docker/compose.backups.yaml` after checking the mirror marker and free space.                                   |
@@ -242,31 +246,35 @@ curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- --update
 
 ## Diagnosing
 
-| Symptom                                  | Look at                                                                                                                                                                                                                   |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A monitor stays pending                  | Agent: `systemctl status superboard`, `journalctl -u superboard -n 50`, `sudo superboard check`. Server: `GET /api/v1/monitors/{id}` for `active` and `pushToken`.                                                        |
-| A monitor flips down and back            | Network path from that host to the origin, and the monitor's `maxretries`/`retryInterval`. The agent buffers on disk, so short blips arrive late rather than lost.                                                        |
-| The board is stale but checks work       | SSE: the proxy in front of the app must not buffer responses and must allow idle connections longer than the keepalive.                                                                                                   |
-| Public origin down, container up         | The tunnel, then the published port (`127.0.0.1:3001`).                                                                                                                                                                   |
-| Cards show agent warnings                | The tooltip has the per-collector detail and the last push error; right-click → Clear agent warnings once seen. A collector failing forever usually means a host-side tool (driver mismatch, missing `smartctl`).         |
-| Database growing                         | Expected: 30 days of 30-second samples plus two years of hourly rollups. Monitor `du -sh data-rust/`; a sudden jump usually means a monitor was added, not a leak. The `-wal` file is capped at ~64 MB after checkpoints. |
-| Agents log `503` from the push endpoint  | The database refused a write (lock timeout, disk full). Agents keep the samples and retry after `Retry-After`; check `df`, then the backend log for the `push:` error. Nothing is lost while the agent buffer has room.   |
-| Container `unhealthy`                    | `curl -sS localhost:3001/healthz` says which part failed (database or engine); then the backend log. Docker will not restart it on its own — see [watching the watcher](#watching-the-watcher).                           |
-| `/healthz` answers 503                   | The `reason` field: `database error` / `database probe timed out` (lock contention or a full disk), `engine watchdog stalled` (the runtime is wedged; the logs say which loop).                                           |
-| Alerts arrive as one summary             | Expected under pressure: when four or more alerts wait for one chat, they are coalesced into a single message listing each in order. `notify:` log lines show rate limiting (`429`) and drops.                            |
-| `engine: … panicked` in the logs         | A check loop crashed and was respawned with backoff; the monitor keeps being checked. Report the message — it is a bug.                                                                                                   |
-| Backend exits at boot: config error      | `PORT` or `FLATLINE_HEARTBEAT_RETENTION_DAYS` is set but not a valid number; the message names the variable and value. Fix or unset it.                                                                                   |
-| API answers `503 unavailable`            | The token store could not be read (database locked or failing); clients keep their token and retry. Check the logs for `auth: token store unavailable`.                                                                   |
-| `503 timeout` / `503 busy`               | A request exceeded its 30 s budget or 256 requests were in flight: the database is the usual bottleneck. SSE and agent downloads are not timed.                                                                           |
-| Status pages or badges answer `429`      | More than 16 public reads in flight (responses are cached 10 s, so this means a flood). Clients are told to retry after 5 s.                                                                                              |
-| Imported keys answer `429`               | Over 30 failed bcrypt key checks in a minute; wait a minute. Cached keys and `flatline_` tokens are unaffected.                                                                                                           |
-| Backend will not start after a downgrade | The database has newer migrations than the binary. Restore the matching backup.                                                                                                                                           |
+| Symptom                                  | Look at                                                                                                                                                                                                                    |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A monitor stays pending                  | Agent: `systemctl status superboard`, `journalctl -u superboard -n 50`, `sudo superboard check`. Server: `GET /api/v1/monitors/{id}` for `active` and `pushToken`.                                                         |
+| A monitor flips down and back            | Network path from that host to the origin, and the monitor's `maxretries`/`retryInterval`. The agent buffers on disk, so short blips arrive late rather than lost.                                                         |
+| The board is stale but checks work       | SSE: the proxy in front of the app must not buffer responses and must allow idle connections longer than the keepalive. Caddy flushes backend responses as written; anything in front of Caddy must not buffer either.     |
+| Public origin down, containers up        | The tunnel, then the published port (`127.0.0.1:3001`, Caddy): `curl -sS localhost:3001/healthz` reaches the backend, `curl -sS localhost:3001/build` the web app.                                                         |
+| Pages fail to load, the API answers      | The web app: `sudo docker logs flatline-rust-web-1`. It renders by calling the backend at `API_URL` (`http://flatline:3001`); an admin page that cannot reach it says "Flatline may be restarting" and retries on its own. |
+| Every path answers `502`                 | Caddy cannot reach `flatline` or `web` (down or restarting): `sudo docker logs flatline-rust-caddy-1`, then the compose `ps` above. Caddy waits for both to report healthy before it starts.                               |
+| Cards show agent warnings                | The tooltip has the per-collector detail and the last push error; right-click → Clear agent warnings once seen. A collector failing forever usually means a host-side tool (driver mismatch, missing `smartctl`).          |
+| Database growing                         | Expected: 30 days of 30-second samples plus two years of hourly rollups. Monitor `du -sh data-rust/`; a sudden jump usually means a monitor was added, not a leak. The `-wal` file is capped at ~64 MB after checkpoints.  |
+| Agents log `503` from the push endpoint  | The database refused a write (lock timeout, disk full). Agents keep the samples and retry after `Retry-After`; check `df`, then the backend log for the `push:` error. Nothing is lost while the agent buffer has room.    |
+| Container `unhealthy`                    | `curl -sS localhost:3001/healthz` says which part failed (database or engine); then the backend log. Docker will not restart it on its own — see [watching the watcher](#watching-the-watcher).                            |
+| `/healthz` answers 503                   | The `reason` field: `database error` / `database probe timed out` (lock contention or a full disk), `engine watchdog stalled` (the runtime is wedged; the logs say which loop).                                            |
+| Alerts arrive as one summary             | Expected under pressure: when four or more alerts wait for one chat, they are coalesced into a single message listing each in order. `notify:` log lines show rate limiting (`429`) and drops.                             |
+| `engine: … panicked` in the logs         | A check loop crashed and was respawned with backoff; the monitor keeps being checked. Report the message — it is a bug.                                                                                                    |
+| Backend exits at boot: config error      | `PORT` or `FLATLINE_HEARTBEAT_RETENTION_DAYS` is set but not a valid number; the message names the variable and value. Fix or unset it.                                                                                    |
+| API answers `503 unavailable`            | The token store could not be read (database locked or failing); clients keep their token and retry. Check the logs for `auth: token store unavailable`.                                                                    |
+| `503 timeout` / `503 busy`               | A request exceeded its 30 s budget or 256 requests were in flight: the database is the usual bottleneck. SSE and agent downloads are not timed.                                                                            |
+| Status pages or badges answer `429`      | More than 16 public reads in flight (responses are cached 10 s, so this means a flood). Clients are told to retry after 5 s.                                                                                               |
+| Imported keys answer `429`               | Over 30 failed bcrypt key checks in a minute; wait a minute. Cached keys and `flatline_` tokens are unaffected.                                                                                                            |
+| Backend will not start after a downgrade | The database has newer migrations than the binary. Restore the matching backup.                                                                                                                                            |
 
 ## Logs
 
 | What      | Where                                                                    |
 | --------- | ------------------------------------------------------------------------ |
 | Backend   | `sudo docker logs flatline-rust-flatline-1` (JSON lines, one per event). |
+| Web app   | `sudo docker logs flatline-rust-web-1` (the Next.js server).             |
+| Caddy     | `sudo docker logs flatline-rust-caddy-1`.                                |
 | Backups   | `journalctl -u flatline-backup` on the office host.                      |
 | Agent     | `journalctl -u superboard` on the host.                                  |
 | Local dev | `.dev-logs/` (`dev.sh logs` follows them).                               |
@@ -282,6 +290,7 @@ needed.
 ## Repository hygiene
 
 Git-ignored, and never committed: `data/`, `.dev-data/`, `.dev-logs/`, `private/`,
-`tmp/`, `backend-rs/target/`, `node_modules/` and the built dashboard. Production
+`tmp/`, `backend-rs/target/`, `node_modules/` and the web app's build output
+(`apps/web/.next/`). Production
 credentials live on the office host under `/home/office/flatline/`, not in this
 repository.

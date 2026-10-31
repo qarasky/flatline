@@ -2,26 +2,22 @@
     "name": "flatline",
     "version": "2.0.0",
     "private": true,
-    "description": "Flatline — Rust backend, Go fleet agent, React dashboard.",
+    "description": "Flatline — Rust backend, Go fleet agent and backup agent, Next.js web app.",
     "license": "MIT",
     "repository": {
         "type": "git",
         "url": "https://github.com/artchsh/flatline.git",
         "directory": "."
     },
-    "//": "Node is a build/test tool only: the backend is Rust, the agent is Go, and the dashboard is bundled by Vite. Nothing here is a runtime dependency.",
+    "//": "Node is a build/test tool here and the web app's runtime (apps/web, its own image); the backend is Rust and the agents are Go.",
     "scripts": {
         "fmt": "prettier --write .",
         "fmt:check": "prettier --check .",
-        "test:dashboard": "node --import=tsx --test apps/dashboard/test/*.mjs",
-        "build:dashboard": "npm --prefix apps/dashboard run build",
-        "typecheck:dashboard": "npm --prefix apps/dashboard run typecheck",
         "test:web": "npm --prefix apps/web test",
         "typecheck:web": "npm --prefix apps/web run typecheck",
         "build:web": "npm --prefix apps/web run build"
     },
     "devDependencies": {
-        "prettier": "^3.8.1",
-        "tsx": "^4.23.13"
+        "prettier": "^3.8.1"
     }
 }

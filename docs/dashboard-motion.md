@@ -1,9 +1,10 @@
 # Dashboard motion
 
-How and when the operator dashboard animates. Written from published guidance
-(Atlassian, Carbon, Nielsen Norman Group, Emil Kowalski, WCAG 2.2, motion.dev,
-web.dev); claims tagged _(ours)_ are Flatline's own calls, not sourced rules.
-The Superboard keeps its own behaviour and is not covered here.
+How and when the operator UI (the admin sections of the [web app](dashboard.md))
+animates. Written from published guidance (Atlassian, Carbon, Nielsen Norman
+Group, Emil Kowalski, WCAG 2.2, motion.dev, web.dev); claims tagged _(ours)_
+are Flatline's own calls, not sourced rules. The Superboard keeps its own
+behaviour and is not covered here.
 
 ## Principles
 
@@ -20,7 +21,12 @@ The Superboard keeps its own behaviour and is not covered here.
 
 ## Timings and curves
 
-Tokens live in `src/lib/motion.ts`; components use them rather than literals.
+Tokens and the pure decisions behind them live in `apps/web/lib/motion.ts`
+(tested in `apps/web/__tests__/ported/motion.test.mjs`). It imports no
+animation library: the web app animates with CSS (Tailwind transitions,
+`tw-animate-css` for the shadcn dialogs, sheets, menus and tooltips, and a few
+keyframes in `app/globals.css`), and the TypeScript side uses the tokens for
+its decisions.
 
 | Token  | Value                              | Use                                                 |
 | ------ | ---------------------------------- | --------------------------------------------------- |
@@ -36,23 +42,37 @@ Carbon's productive curves are the reference: standard `0.2, 0, 0.38, 0.9`,
 entrance `0, 0, 0.38, 0.9`, exit `0.2, 0, 1, 0.9`. Never ease-in. Never start from
 `scale(0)` (start at 0.9 or above).
 
+Where the tokens are used today:
+
+| Token or function   | Used by                                                                                         |
+| ------------------- | ----------------------------------------------------------------------------------------------- |
+| `LIVE_BATCH_MS`     | `components/board/board-data.tsx`: live beats are applied in one render per 250 ms.             |
+| `planCues`          | `board-data.tsx`: per-row highlights, or one summary cue when more than 6 rows change at once.  |
+| `HIGHLIGHT_MS`      | `board-data.tsx`: how long a cue lasts; the row flash itself is `.board-flash` (900 ms) in CSS. |
+| `shouldHoldReorder` | `components/monitors/monitors-board.tsx`: a status-driven reorder waits (rule 7 below).         |
+| `isCalm`            | `hooks/use-idle-calm.ts`: after 5 minutes without input, row flashes and fresh-cell fades stop. |
+
+The duration, curve and spring values are not imported by components yet; the
+CSS uses the same numbers (row background 100 ms, strip cells 180 ms). Use the
+tokens when motion needs a value in TypeScript, and the same numbers in CSS.
+
 ## What to use where
 
-| Interaction                  | Motion                                                                     | Notes                                                    |
-| ---------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------- |
-| Hover, focus, press          | Colour/background fade, `fast`. Press scale 0.97 on buttons only           | Never scale or move rows on hover                        |
-| Row enter/exit (filter, new) | Opacity, tiny y-offset at most                                             | `initial={false}` so existing rows never animate on load |
-| List reorder                 | `layout="position"` spring                                                 | Only rows that can move; see live rules                  |
-| Group expand/collapse        | Height + opacity, `base` (`slow` for large groups); chevron rotates        | One `LayoutGroup` per tree                               |
-| Attention section in/out     | Fade and height, `slow`; no slide over content being read                  | Section is absent when healthy                           |
-| Status change                | Dot/word colour transition `base`, plus one short highlight that fades out | Always with a persistent icon or word                    |
-| New beat in the strip        | Shift by one cell or fade the new cell in, once per beat _(ours)_          | Not on a resnapshot                                      |
-| Detail pane                  | Slide + fade, spring; sheet on narrow screens                              | Dismiss is faster; `Esc` closes                          |
-| Tooltip, popover             | Fade + scale 0.97, about 125 ms, origin at the trigger                     | Skip the animation if another tooltip is already open    |
-| Toast                        | Fade with a short slide, `slow`; exit faster                               |                                                          |
-| Route change                 | None, or an opacity crossfade of at most 150 ms _(ours)_                   |                                                          |
-| Loading                      | Static skeleton, fade to content                                           | No looping shimmer on a wall screen                      |
-| Counters and numbers         | Swap instantly _(ours)_                                                    | Optionally one brief flash when a value changed          |
+| Interaction                  | Motion                                                                     | Notes                                                 |
+| ---------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Hover, focus, press          | Colour/background fade, `fast`. Press scale 0.97 on buttons only           | Never scale or move rows on hover                     |
+| Row enter/exit (filter, new) | Opacity, tiny y-offset at most                                             | Existing rows never animate on load                   |
+| List reorder                 | Position only, spring                                                      | Only rows that can move; see live rules               |
+| Group expand/collapse        | Height + opacity, `base` (`slow` for large groups); chevron rotates        |                                                       |
+| Attention item in/out        | Fade and height, `slow`; no slide over content being read                  |                                                       |
+| Status change                | Dot/word colour transition `base`, plus one short highlight that fades out | Always with a persistent icon or word                 |
+| New beat in the strip        | Shift by one cell or fade the new cell in, once per beat _(ours)_          | Not on a resnapshot                                   |
+| Detail pane                  | Slide + fade; sheet on narrow screens                                      | Dismiss is faster; `Esc` closes                       |
+| Tooltip, popover             | Fade + scale 0.97, about 125 ms, origin at the trigger                     | Skip the animation if another tooltip is already open |
+| Toast                        | Fade with a short slide, `slow`; exit faster                               |                                                       |
+| Route change                 | None, or an opacity crossfade of at most 150 ms _(ours)_                   |                                                       |
+| Loading                      | Static skeleton, fade to content                                           | No looping shimmer on a wall screen                   |
+| Counters and numbers         | Swap instantly _(ours)_                                                    | Optionally one brief flash when a value changed       |
 
 ## Rules for a live, streaming board
 
@@ -66,8 +86,8 @@ These are our synthesis; the sources cover the general principle, not streaming.
 3. **Coalesce.** Apply live events in one render per frame or per about 250 ms, so
    one reconcile drives all animations.
 4. **Cap concurrency.** When more than 6 rows change in one batch, skip per-row
-   highlights and show one group-level cue instead (the summary banner counts up
-   and tints once). Tune the number in `motion.ts`.
+   highlights and show one group-level cue instead (the status summary shows how
+   many changed). Tune the number (`LIVE_BURST_CAP`) in `motion.ts`.
 5. **No stagger on live data.** Stagger delays information. At most on first load,
    with a total budget under 200 ms.
 6. **Highlights decay and never loop.** One pulse, under one second. No infinite
@@ -77,35 +97,36 @@ These are our synthesis; the sources cover the general principle, not streaming.
    its place and shows its new state) and applies when the pointer leaves.
 8. **Wall screens.** After 5 minutes without input, non-essential motion switches
    off (highlights shorten to a colour change). A "pause live updates" control exists
-   (WCAG 2.2.2: auto-updating content must be pausable).
+   (**Pause** on Monitors; WCAG 2.2.2: auto-updating content must be pausable).
 
 ## Accessibility
 
-- `<MotionConfig reducedMotion="user">` wraps the app: transform and layout
-  animation are removed, opacity and colour stay. Do not strip feedback altogether;
-  swap movement for a fade or an instant change.
+- `prefers-reduced-motion: reduce` cuts every animation and transition to
+  effectively zero (`app/globals.css`), and components add
+  `motion-reduce:transition-none` where a transition would move something.
+  Colour and state changes still happen instantly: do not strip feedback
+  altogether; swap movement for a fade or an instant change.
 - No flashing: never more than three flashes in any second (WCAG 2.3.1).
 - Status is never carried by motion alone, nor by colour alone: dot plus word or
   icon shape, always.
-- Everything works with motion off. A test runs with `reducedMotion="always"`.
+- Everything works with motion off.
 
 ## Implementation notes
 
-- Import from `motion/react`. Use `LazyMotion` with `strict` and the `m` components.
-  `domAnimation` (about 24 kB) covers presence, hover and tap; `layout` and drag
-  need `domMax` (about 38 kB). Use `domMax` only if layout animation is kept, and
-  load it with the dashboard chunk so status pages and the kiosk board never pay
-  for it.
-- `AnimatePresence`: `initial={false}`, stable keys (never indexes);
-  `mode="popLayout"` for list removals so siblings reflow at once.
-- `layout="position"` on rows (no scale distortion); `LayoutGroup` where siblings
-  affect each other; namespace any `layoutId`. Borders on laid-out elements cause
-  layout recalculation; prefer shadows, background or pseudo-element lines.
+- Prefer CSS: Tailwind `transition-*` utilities with the token durations, the
+  `tw-animate-css` enter/exit classes the shadcn components already use, and a
+  named keyframe in `app/globals.css` for anything bespoke. There is no
+  animation library in the bundle; adding one (for layout animation) is a
+  deliberate choice, kept off the Superboard and status pages.
 - Animate `transform` and `opacity`. Animating `height` is costly: do it only for
   group and section expansion, in isolation.
-- There are no authoritative figures for `layout` cost at large counts. Put it only
-  on rows that can actually move, and measure with 100+ monitors under 4x CPU
-  throttling before widening its use.
+- Borders on moving elements cause layout recalculation; prefer shadows,
+  background or pseudo-element lines (the board's row separators are `::after`
+  lines).
+- A highlight that must restart on each change is keyed by a sequence number
+  (`monitor-row.tsx` re-keys its `.board-flash` span), so CSS replays it.
+- Measure with 100+ monitors under 4x CPU throttling before widening the use of
+  any animation on rows.
 
 ## Checklist
 

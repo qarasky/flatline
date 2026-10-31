@@ -1,7 +1,7 @@
 # Flatline HTTP API
 
-The Flatline backend (`backend-rs/`) serves the dashboard and the API from one
-process and one origin, so a browser, an LLM tool and the Go agent in
+The Flatline backend (`backend-rs/`) serves the API; Caddy puts it and the web
+app (`apps/web/`) on one origin, so a browser, an LLM tool and the Go agent in
 `superboard/` all use the same base URL. See [architecture](architecture.md) for
 how the pieces fit, [agent](agent.md) for the agent side of the push contract,
 and [superboard](superboard.md), [deployment](deployment.md) and
@@ -10,11 +10,14 @@ and [superboard](superboard.md), [deployment](deployment.md) and
 ## Base URL and same-origin model
 
 - The backend binds `0.0.0.0:3001` by default (`UPTIME_KUMA_HOST`, `PORT`).
-  Every path below is absolute to that origin; there is no separate API host.
-- API paths are `/api/...`, `/add-push-server.md`, `/llms.txt`, `/agent/...`
-  and `/api/v1/openapi.json`. The built dashboard is served by the same
-  process: unknown non-API `GET`/`HEAD` paths get the SPA shell, while API paths
-  always get a JSON `404`.
+  In the compose stacks it is not published: Caddy listens on the published
+  port (`3001` by default) and forwards the backend's paths to it. Every path
+  below is absolute to that origin; there is no separate API host.
+- Backend paths are `/api/...`, `/agent/...`, `/healthz`, `/add-push-server.md`,
+  `/llms.txt` and `/robots.txt` (`/api/v1/openapi.json` among them); Caddy
+  sends everything else to the web app. The backend itself serves no web app:
+  any other path, whatever the method, is a JSON `404`
+  (`{"ok":false,"error":"not_found"}`).
 - Absolute URLs inside the provisioning runbook, the installer and
   `/agent/version` use `FLATLINE_PUBLIC_URL` when set, otherwise the request's
   `Host` / `X-Forwarded-*` headers. Set it behind a proxy. The OpenAPI document
@@ -36,14 +39,15 @@ token, backup-agent hash). New tokens are always minted with a family prefix.
 
 **Operator bearer token.** Every `/api/v1` route except `auth/setup`, `auth/session`,
 `auth/login` and `openapi.json` requires
-`Authorization: Bearer flatline_op_<hex>`. Tokens come from the dashboard's
-**Agents** panel, backed by `POST /api/v1/api-keys`, or from the bootstrapped
+`Authorization: Bearer flatline_op_<hex>`. Tokens come from the web app's
+**Tokens** section, backed by `POST /api/v1/api-keys`, or from the bootstrapped
 admin token printed on first boot and written to `data/initial-token.txt`
 (`0600`). `POST /api/v1/auth/login` accepts the token in the `password` field and echoes
 it back together with `tokenKind:"operator"`, `GET /api/v1/auth/me` reports the
 credential kind and capabilities, and `GET /api/v1/api-keys` lists operator
-tokens only. The `username` field is ignored — these routes exist so the
-dashboard's sign-in flow works unchanged.
+tokens only. The `username` field is ignored — `auth/login` is the old
+dashboard's token sign-in; the web app uses `POST /api/v1/auth/session`
+instead.
 
 **Browser session cookie.** The web app signs a browser in with
 `POST /api/v1/auth/session`: body `{"email": ..., "password": ...}` signs a
@@ -80,7 +84,7 @@ agent endpoints are rejected symmetrically with
 `operator_token_on_agent_api`.
 
 **There is exactly one scope: full.** Every token is a full-permission operator
-credential — the admin token and keys minted from the Agents panel or
+credential — the admin token and keys minted from the Tokens section or
 `POST /api/v1/api-keys` are identical in authority, and so is a member account. There is no read-only key
 and no way to restrict a token. `GET /api/v1/api-keys` reports
 `availableScopes: ["full"]` and each key reports `scopes: ["full"]`. Tokens are

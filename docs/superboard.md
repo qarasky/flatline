@@ -1,8 +1,9 @@
 # Superboard
 
 The wall board: one card per server that pushes telemetry, sized and coloured to
-be read from across the room. It is a route in the dashboard app, not a separate
-application.
+be read from across the room. It is a route in the [web app](dashboard.md)
+(`apps/web/`), not a separate application, and keeps the old dashboard's look
+(`app/legacy.css`).
 
 | Route               | Chrome                 | Use                 |
 | ------------------- | ---------------------- | ------------------- |
@@ -139,7 +140,7 @@ prints.
 
 Some outages are known and cannot be fixed yet (a client who stopped paying, a
 box waiting for a part). Right-click a red card and choose **Mute**; the same
-action is on a down monitor's detail view in the dashboard.
+action is on a down monitor's detail view in Monitors.
 
 - The card turns **dark red** (border and status badge) and shows
   `muted 2d ago` under the badge. It still reads as broken.
@@ -163,7 +164,7 @@ no alert of its own. Each muted monitor that recovers drops out of the mute, so
 a later outage is new; when nothing muted is still down, the mute is gone.
 **Unmute** (same menu) ends it by hand.
 
-Muting a group from the dashboard mutes the monitors down inside it; one going
+Muting a group from Monitors mutes the monitors down inside it; one going
 down later ends the mute. The mute is stored on the server, so every screen, the
 wall included, shows it.
 
@@ -171,8 +172,8 @@ wall included, shows it.
 
 A monitor's `provider` id (usually a domain, e.g. `hetzner`, `ps.kz`) draws that
 provider's symbol before the title: transparent, no badge, sized with the title
-text. Bundled logos live in `apps/dashboard/public/providers/` and are listed in
-`apps/dashboard/src/lib/providers.ts`; a provider the catalogue does not know but
+text. Bundled logos live in `apps/web/public/providers/` and are listed in
+`apps/web/lib/providers.ts`; a provider the catalogue does not know but
 that looks like a domain falls back to that site's favicon, so adding a provider
 is an edit rather than a release. Unknown slugs draw nothing, and a favicon that
 cannot load (offline kiosk) collapses to no logo instead of a broken image.
@@ -247,7 +248,7 @@ Small fleets stay on one page instead of rotating.
 | `perPage`       | measured | Explicit page size override.                                                                                                       |
 
 A kiosk with no session shows a QR code to sign in with a phone; see
-[Signing in](dashboard.md#signing-in).
+[Sign in with a QR code](dashboard.md#sign-in-with-a-qr-code).
 
 Kiosk mode is chrome-free and hides scrollbars. Reaching it is a route, not a
 parameter.

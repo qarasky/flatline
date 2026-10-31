@@ -7,8 +7,9 @@ status-page specs, the rewrite plan and the parity record). Items already
 shipped are not relisted; where a shipped item is useful context it appears in
 the "recently shipped" line.
 
-Current state (for calibration): Rust backend, one React/Vite SPA (dashboard +
-public status pages — see [architecture](architecture.md)), and a Go agent
+Current state (for calibration): Rust backend, one Next.js web app behind Caddy
+(operator UI, Superboard and public status pages — see
+[architecture](architecture.md)), and a Go agent
 ([agent](agent.md), [superboard](superboard.md)) on each host. The scope of the
 Rust rewrite was deliberately frozen — see [history](history.md). Deployment
 and operations context: [deployment](deployment.md), [operations](operations.md).
