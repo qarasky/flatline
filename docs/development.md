@@ -134,7 +134,13 @@ load history, containers, linked websites, thresholds and the server's backups. 
 (`/backups`) lists the backup agents; an agent's page edits its settings, lists
 runs with downloads and recorded checks, and rotates or revokes its token
 (shown once). Servers open from ⌘K and from Attention's silence and agent-warning
-rows; backup problems open their agent.
+rows; backup problems open their agent. **Notifications** (`/notifications`)
+lists the Telegram configs with the monitors using each; editing one leaves
+the bot-token field empty, and an empty field keeps the stored token.
+**Tokens** (`/tokens`) lists operator tokens (device sign-ins from the kiosk's
+QR included) with who made each and when it was last used; a new token is
+shown once, and disabling or deleting the one this browser signed in with
+signs it out.
 
 The **Superboard** (`/superboard`, `/superboard/<scope>`, `/superboard/kiosk…`),
 the phone's approve page (`/device`) and public **status pages**

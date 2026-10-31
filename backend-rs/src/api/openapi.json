@@ -1203,13 +1203,17 @@
                                         },
                                         "monitor": {
                                             "allOf": [
-                                                { "$ref": "#/components/schemas/Monitor" },
+                                                {
+                                                    "$ref": "#/components/schemas/Monitor"
+                                                },
                                                 {
                                                     "type": "object",
                                                     "properties": {
                                                         "notificationIds": {
                                                             "type": "array",
-                                                            "items": { "type": "integer" }
+                                                            "items": {
+                                                                "type": "integer"
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -1537,10 +1541,32 @@
         "/api/v1/notifications": {
             "get": {
                 "summary": "List notification configs",
-                "description": "Requires the `read` scope. `telegramBotToken` is redacted. Only the `telegram` type exists in this build.",
+                "description": "Only the `telegram` type exists in this build. Each notification carries `monitorIds`: the monitors that alert through it, ascending. The bot token (`telegramBotToken`) is never returned.",
                 "responses": {
                     "200": {
                         "description": "Notifications with secrets redacted"
+                    }
+                }
+            },
+            "post": {
+                "summary": "Create a notification",
+                "description": "Body `{name, type?, active?, isDefault?, config}`; `type` defaults to `telegram`, `active` to true, `isDefault` to false. For Telegram, `config` holds `telegramBotToken`, `telegramChatID` and optionally `telegramMessageThreadID`, `telegramSendSilently` and `telegramProtectContent`.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "`{ok, id}`"
+                    },
+                    "400": {
+                        "description": "The body or its `config` is not a JSON object."
                     }
                 }
             }
@@ -4312,6 +4338,51 @@
                     },
                     "401": {
                         "$ref": "#/components/responses/Unauthorized"
+                    }
+                }
+            }
+        },
+        "/api/v1/notifications/{id}": {
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "integer"
+                    }
+                }
+            ],
+            "patch": {
+                "summary": "Update a notification",
+                "description": "Body `{name?, type?, active?, isDefault?, config?}`; only the fields sent change. A `config` replaces the stored one, except that a `config` without `telegramBotToken`, or with it empty, keeps the stored token (the list never returns it, so an edit form cannot send it back). 404 when unknown.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "`{ok, id}`"
+                    },
+                    "404": {
+                        "description": "No such notification."
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Delete a notification",
+                "description": "Its monitor links go with it. 404 when unknown.",
+                "responses": {
+                    "200": {
+                        "description": "`{ok, deleted}`"
+                    },
+                    "404": {
+                        "description": "No such notification."
                     }
                 }
             }
