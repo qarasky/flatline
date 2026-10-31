@@ -10,8 +10,6 @@ pub struct Config {
     pub port: u16,
     /// Bind address. 0.0.0.0 by default so containers work unchanged.
     pub host: String,
-    /// Directory of the built SPA. Served when it exists.
-    pub web_dist: PathBuf,
     /// Public origin used in provisioning docs and scripts
     /// (`https://uptime.example`). Empty falls back to the request's Host.
     pub public_url: Option<String>,
@@ -73,9 +71,6 @@ impl Config {
 
         let host = set("UPTIME_KUMA_HOST").unwrap_or_else(|| "0.0.0.0".to_string());
 
-        let web_dist = set("FLATLINE_WEB_DIST")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/app/dashboard"));
 
         let public_url = set("FLATLINE_PUBLIC_URL");
 
@@ -107,7 +102,6 @@ impl Config {
             data_dir,
             port,
             host,
-            web_dist,
             public_url,
             agent_dir,
             backup_agent_dir,

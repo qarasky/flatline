@@ -241,3 +241,15 @@ async fn resolve_host_answers_503_on_a_database_error_not_unmapped() {
         "no slug field on an error: {body}"
     );
 }
+
+/// The web app is served by Next behind Caddy, never by the backend: any
+/// path the router does not know is a JSON 404, whatever the method.
+#[tokio::test]
+async fn unknown_paths_are_json_404s() {
+    let h = common::harness().await;
+    for (method, path) in [("GET", "/"), ("GET", "/monitors"), ("GET", "/index.html"), ("POST", "/nope"), ("GET", "/api/v1/nope")] {
+        let (status, json) = common::send(&h.app, common::request(method, path, None, None)).await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND, "{method} {path}");
+        assert_eq!(json["error"], "not_found", "{method} {path}: {json}");
+    }
+}

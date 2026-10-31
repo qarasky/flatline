@@ -1,6 +1,7 @@
 ############################################
-# Rust backend image: the API, the check engine and the web app in one
-# binary plus one directory of static assets.
+# Rust backend image: the API, the check engine and the agent downloads.
+# The web app is its own image (docker/web.dockerfile) behind Caddy
+# (docker/caddy.dockerfile); see compose.yaml.
 #
 # Build from the repository root (linux/amd64 for the office server):
 #   docker build --platform linux/amd64 -f docker/rust.dockerfile \
@@ -9,24 +10,6 @@
 # The database is created and migrated on first start; to bring an older
 # database across, `flatline-backend import`. See docs/deployment.md.
 ############################################
-
-# Web app build (dashboard + status pages, one Vite app).
-FROM node:26-trixie-slim AS web
-WORKDIR /app
-
-COPY packages/shared/package.json packages/shared/package.json
-COPY packages/shared/src packages/shared/src
-COPY apps/dashboard/package.json apps/dashboard/package.json
-COPY apps/dashboard/package-lock.json apps/dashboard/package-lock.json
-COPY apps/dashboard/index.html apps/dashboard/index.html
-COPY apps/dashboard/vite.config.ts apps/dashboard/vite.config.ts
-COPY apps/dashboard/tsconfig.json apps/dashboard/tsconfig.json
-COPY apps/dashboard/src apps/dashboard/src
-COPY apps/dashboard/public apps/dashboard/public
-
-WORKDIR /app/apps/dashboard
-RUN npm ci --no-audit --no-fund
-RUN npm run build
 
 # Agent build: the Go binary served under /agent/* for installs and updates.
 # Static (CGO off) so it runs on any glibc/musl host. VERSION is what
@@ -106,12 +89,10 @@ WORKDIR /app
 ENV UPTIME_KUMA_IS_CONTAINER=1 \
     DATA_DIR=/app/data \
     PORT=3001 \
-    FLATLINE_WEB_DIST=/app/dashboard \
     FLATLINE_AGENT_DIR=/app/agent \
     FLATLINE_BACKUP_AGENT_DIR=/app/backup-agent
 
 COPY --from=build /app/target/release/flatline-backend /usr/local/bin/flatline-backend
-COPY --from=web /app/apps/dashboard/dist /app/dashboard
 COPY --from=agent /out /app/agent
 COPY docker/entrypoint.sh /usr/local/bin/flatline-entrypoint
 COPY --from=backup-agent /out /app/backup-agent
