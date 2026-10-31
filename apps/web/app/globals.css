@@ -413,3 +413,128 @@
     line-height: 1;
     font-variant-numeric: tabular-nums;
 }
+
+/* Server load history (ported from the old dashboard's history dialog). */
+.history-panel {
+    padding: 0;
+}
+.history-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-block: 20px 12px;
+}
+.history-controls > span {
+    margin-left: auto;
+}
+.history-note {
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    line-height: 1.6;
+    margin-block: 10px;
+}
+.history-charts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+}
+.history-chart {
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+}
+.history-chart h3 {
+    font-size: 0.875rem;
+    color: var(--history-line);
+    font-weight: 600;
+}
+.history-stats {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+    margin-block: 16px 8px;
+}
+.history-stats dt {
+    font-size: 0.7rem;
+    color: var(--muted-foreground);
+}
+.history-stats dd {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-top: 3px;
+}
+.history-chart svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+.history-axis {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--muted-foreground);
+    font-size: 0.65rem;
+}
+.history-hover {
+    min-height: 2em;
+    margin-top: 8px;
+    font-size: 0.7rem;
+    color: var(--muted-foreground);
+}
+.history-no-data {
+    min-height: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted-foreground);
+    font-size: 0.875rem;
+}
+
+/* Container rows (servers page; the Superboard reuses them). */
+.fleet-container-rows {
+    display: grid;
+    gap: 0.25rem;
+}
+.fleet-container-row {
+    min-width: 0;
+    min-height: 1.7rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+.fleet-container-row[data-tone="up"] {
+    background: color-mix(in srgb, var(--foreground) 3%, transparent);
+}
+.fleet-container-row[data-tone="stopped"] {
+    color: var(--muted-foreground);
+}
+.fleet-container-row[data-tone="bad"] {
+    border-color: color-mix(in srgb, var(--status-down) 55%, transparent);
+    background: color-mix(in srgb, var(--status-down) 14%, transparent);
+}
+.fleet-container-row[data-tone="pending"] {
+    border-color: color-mix(in srgb, var(--status-warn) 50%, transparent);
+    background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+}
+.fleet-container-symbol {
+    flex-shrink: 0;
+    font-size: 0.65rem;
+}
+.fleet-container-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-weight: 600;
+}
+.fleet-container-state {
+    margin-left: auto;
+    flex-shrink: 0;
+    color: var(--muted-foreground);
+}

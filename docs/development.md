@@ -129,7 +129,8 @@ board's keys (`/`, `j`/`k`, `Enter`, `x`, `Esc`; `apps/web/lib/board-keys.ts`). 
 the sidebar. `⌘K` / `Ctrl+K` (or Search in the sidebar) jumps to any section,
 monitor or server, or runs New monitor, Superboard, Change password or Sign out. **Servers**
 (`/servers`) lists every push monitor with live CPU, RAM and fullest-disk use and
-how fresh the numbers are.
+how fresh the numbers are. `/servers/<id>` adds the agent's report (with Clear warnings),
+load history, containers, linked websites, thresholds and the server's backups.
 
 ## Conventions
 
