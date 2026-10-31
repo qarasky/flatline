@@ -68,3 +68,8 @@ function isPublic(pathname: string): boolean {
         pathname === "/" || under("/superboard/kiosk") || under("/status") || under("/device") || pathname === "/build"
     );
 }
+
+/** Sign-in for a signed-out visitor at the root, keeping an old dashboard link (`/?m=12`) as the way back. */
+export function rootSignInHref(search: string): string {
+    return search && search !== "?" ? `${SIGN_IN_PATH}?next=${encodeURIComponent(`/${search}`)}` : SIGN_IN_PATH;
+}

@@ -5,9 +5,14 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { isApiError } from "@/lib/api";
-import { approveDeviceRequest, denyDeviceRequest, lookupDeviceRequest, type DeviceRequestInfo } from "@/lib/device-api";
+import {
+    approveDeviceRequest,
+    deviceSignInHref,
+    denyDeviceRequest,
+    lookupDeviceRequest,
+    type DeviceRequestInfo,
+} from "@/lib/device-api";
 import { codeFromHash, hostMismatch, isSignedOut } from "@/lib/device-auth";
-import { SIGN_IN_PATH } from "@/lib/session";
 
 type View =
     | { kind: "loading" }
@@ -26,10 +31,9 @@ function failure(e: unknown): string {
     return e instanceof Error ? e.message : "Could not reach the Flatline server.";
 }
 
-/** Signed out: sign in, then come back here with the code (it lives in the fragment, which never reaches the server). */
+/** Signed out: sign in, then come back here with the code. */
 function signInAndReturn(code: string | null): void {
-    const back = code ? `/device#${code}` : "/device";
-    window.location.assign(`${SIGN_IN_PATH}?next=${encodeURIComponent(back)}`);
+    window.location.assign(deviceSignInHref(code));
 }
 
 /**

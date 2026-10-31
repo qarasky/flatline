@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { pollDeviceSignIn, startDeviceSignIn } from "@/lib/device-api";
 import { qrSvg } from "@/lib/device-auth";
+import { exchangeTokenForSession } from "@/lib/kiosk-exchange";
 import { abortableWait, runDeviceSignIn, type DeviceSignInStatus } from "@/lib/device-poll";
 
 function formatRemaining(ms: number): string {
@@ -41,12 +42,17 @@ export function KioskSignIn() {
             if (!token) {
                 return;
             }
-            try {
-                await api("/api/v1/auth/session", { method: "POST", body: { token } });
+            const signedIn = await exchangeTokenForSession(
+                () => api("/api/v1/auth/session", { method: "POST", body: { token } }),
+                (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))
+            );
+            if (signedIn) {
                 window.location.reload();
-            } catch {
-                setFailed(true);
+                return;
             }
+            // Start over with a fresh QR shortly; the unused screen token can be deleted in Tokens.
+            setFailed(true);
+            window.setTimeout(() => window.location.reload(), 30_000);
         });
         return () => {
             controller.abort();
@@ -70,7 +76,7 @@ export function KioskSignIn() {
                 <p className="m-0 text-sm">Scan with your phone, where you&apos;re already signed in</p>
                 <p className="mt-1 mb-0 text-xs text-muted-foreground" role="status">
                     {failed
-                        ? "Approved, but this screen could not sign in. Reload to try again."
+                        ? "Approved, but this screen could not sign in. Showing a new code in 30 seconds…"
                         : status === "denied"
                           ? "Request denied. Showing a new code…"
                           : status === "error"

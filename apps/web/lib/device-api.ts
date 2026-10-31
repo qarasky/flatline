@@ -5,6 +5,7 @@
  */
 
 import { api } from "@/lib/api";
+import { SIGN_IN_PATH } from "@/lib/session";
 
 export interface DeviceSignInStart {
     code: string;
@@ -47,4 +48,14 @@ export async function approveDeviceRequest(code: string, name: string): Promise<
 /** Turn a waiting screen away. */
 export async function denyDeviceRequest(code: string): Promise<void> {
     await api("/api/v1/auth/device/deny", { method: "POST", body: { code } });
+}
+
+/**
+ * Where a signed-out phone signs in, coming back to the approve page with
+ * the code (it lives in the fragment, which never reaches the server).
+ * Marked `expired` so a dead session cookie cannot bounce it straight back.
+ */
+export function deviceSignInHref(code: string | null): string {
+    const back = code ? `/device#${code}` : "/device";
+    return `${SIGN_IN_PATH}?expired=1&next=${encodeURIComponent(back)}`;
 }

@@ -49,7 +49,14 @@ export function UnlockForm({ slug, onUnlocked }: { slug: string; onUnlocked: () 
     return (
         <div className="status-page">
             <div className="wrap">
-                <form className="unlock" onSubmit={onSubmit}>
+                {/* A real POST target: before scripts load, Enter must not put the password in a URL.
+                    The API sets the unlock cookie and redirects back here. */}
+                <form
+                    className="unlock"
+                    method="post"
+                    action={`/api/v1/status-pages/unlock/${encodeURIComponent(slug)}`}
+                    onSubmit={onSubmit}
+                >
                     <h1>This status page is private</h1>
                     <p className="sub">Enter the password you were given.</p>
 

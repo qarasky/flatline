@@ -6,7 +6,9 @@ import { redirect } from "next/navigation";
 
 import { StatusNotice, StatusPageApp } from "@/components/status/status-page-app";
 import { UpdateWatcher } from "@/components/update-watcher";
-import { HOME_PATH, SESSION_COOKIE, SIGN_IN_PATH } from "@/lib/session";
+import { rootSignInHref } from "@/lib/gate";
+import { toSearchString } from "@/lib/search-string";
+import { HOME_PATH, SESSION_COOKIE } from "@/lib/session";
 import { readStatusPage, resolveRequestHost } from "@/lib/status-server";
 
 export const metadata: Metadata = {
@@ -20,13 +22,18 @@ export const metadata: Metadata = {
  * sign-in. A failed lookup never falls back to the operator UI: it says so
  * and tries again.
  */
-export default async function Root() {
+export default async function Root({
+    searchParams,
+}: {
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
     if ((await cookies()).get(SESSION_COOKIE)?.value) {
         redirect(HOME_PATH);
     }
     const host = await resolveRequestHost();
     if (host.kind === "unmapped") {
-        redirect(SIGN_IN_PATH);
+        // An old dashboard link (`/?m=12`, `/?status=down`) survives sign-in.
+        redirect(rootSignInHref(toSearchString(await searchParams)));
     }
     if (host.kind === "mapped") {
         const initial = await readStatusPage(host.slug);
