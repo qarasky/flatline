@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useBoardData } from "@/components/board/board-data";
+import { PausedBanner } from "@/components/board/paused-banner";
 import { BackupAgents } from "@/components/fleet/backup-agents";
 import { ContainerRows } from "@/components/fleet/container-rows";
 import { CoreSquares } from "@/components/fleet/core-squares";
@@ -15,6 +16,7 @@ import { LinkPicker } from "@/components/monitors/link-picker";
 import { MonitorForm, type FormInitial } from "@/components/monitors/monitor-form";
 import { StatusDot, statusTone } from "@/components/monitors/status-dot";
 import { Button } from "@/components/ui/button";
+import { useClock } from "@/hooks/use-clock";
 import {
     Dialog,
     DialogContent,
@@ -395,10 +397,12 @@ export function ServerDetail({
     initial: MonitorSummary;
     initialSample: ServerSample | null;
 }) {
-    const { monitors, now, reload } = useBoardData();
+    const { monitors, reload } = useBoardData();
+    // Freshness keeps counting even while Monitors' Pause holds the roster.
+    const now = useClock(1000);
     const monitor = monitors.find((m) => m.id === initial.id) ?? initial;
     const live = useFleetMetrics(useMemo(() => [initial.id], [initial.id]));
-    const sample = live.get(initial.id) ?? initialSample ?? undefined;
+    const sample = live.samples.get(initial.id) ?? initialSample ?? undefined;
     // The full record (with its notification links) the form edits; null when closed.
     const [editing, setEditing] = useState<FormInitial | null>(null);
     const [muteError, setMuteError] = useState<string | null>(null);
@@ -417,6 +421,12 @@ export function ServerDetail({
 
     return (
         <div className="flex flex-1 flex-col">
+            <PausedBanner />
+            {live.failed ? (
+                <p role="status" className="text-warn border-b px-4 py-1.5 text-xs">
+                    Could not load the latest metrics; the numbers may be old.
+                </p>
+            ) : null}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-3">
                 <ProviderLogo provider={monitor.provider} />
                 <h1 className="text-base font-semibold">{monitor.name}</h1>

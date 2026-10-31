@@ -168,6 +168,8 @@ export function BackupAgentDetail({
     const [verifying, setVerifying] = useState<BackupRunSummary | null>(null);
     const [token, setToken] = useState<string | null>(null);
     const [confirm, setConfirm] = useState<"rotate" | "revoke" | null>(null);
+    // One request per confirm: a double-click must not rotate twice and show a dead token.
+    const [confirming, setConfirming] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const health = backupHealth(agent);
 
@@ -181,6 +183,10 @@ export function BackupAgentDetail({
     }, [agent.id, reload]);
 
     async function runTokenAction(kind: "rotate" | "revoke") {
+        if (confirming) {
+            return;
+        }
+        setConfirming(true);
         setError(null);
         try {
             if (kind === "rotate") {
@@ -195,6 +201,8 @@ export function BackupAgentDetail({
         } catch (e) {
             setError(e instanceof Error ? e.message : "That did not work.");
             setConfirm(null);
+        } finally {
+            setConfirming(false);
         }
     }
 
@@ -366,7 +374,11 @@ export function BackupAgentDetail({
                         <Button variant="ghost" onClick={() => setConfirm(null)}>
                             Cancel
                         </Button>
-                        <Button variant="destructive" onClick={() => confirm && void runTokenAction(confirm)}>
+                        <Button
+                            variant="destructive"
+                            disabled={confirming}
+                            onClick={() => confirm && void runTokenAction(confirm)}
+                        >
                             {confirm === "rotate" ? "Rotate" : "Revoke"}
                         </Button>
                     </DialogFooter>

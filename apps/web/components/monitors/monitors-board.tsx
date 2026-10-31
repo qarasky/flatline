@@ -6,8 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 
 import { useBoardData } from "@/components/board/board-data";
+import { PausedBanner } from "@/components/board/paused-banner";
 import { useAttention } from "@/components/board/use-attention";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useIdleCalm } from "@/hooks/use-idle-calm";
 import { attentionMonitorIds } from "@/lib/attention";
@@ -492,20 +492,7 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
                         />
                     </div>
                 </div>
-                {data.paused ? (
-                    <div
-                        role="status"
-                        className="bg-status-warn/10 text-status-warn flex items-center gap-3 px-4 py-1.5 text-xs"
-                    >
-                        <span>
-                            Live updates paused
-                            {data.pending > 0 ? <span className="tabular-nums"> · {data.pending} waiting</span> : null}
-                        </span>
-                        <Button variant="outline" size="xs" onClick={() => data.setPaused(false)}>
-                            Resume
-                        </Button>
-                    </div>
-                ) : null}
+                <PausedBanner />
                 {data.error && rosterLoaded ? (
                     <p role="status" className="text-status-warn px-4 py-1.5 text-xs">
                         {data.error}

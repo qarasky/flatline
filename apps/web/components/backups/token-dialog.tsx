@@ -21,8 +21,14 @@ import { Input } from "@/components/ui/input";
 export function TokenDialog({ agentName, token, onClose }: { agentName: string; token: string; onClose: () => void }) {
     const [copied, setCopied] = useState(false);
     return (
-        <Dialog open onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="sm:max-w-lg">
+        // Only Done closes it: a stray click or Esc must not lose a token shown once.
+        <Dialog open>
+            <DialogContent
+                className="sm:max-w-lg"
+                showCloseButton={false}
+                onInteractOutside={(event) => event.preventDefault()}
+                onEscapeKeyDown={(event) => event.preventDefault()}
+            >
                 <DialogHeader>
                     <DialogTitle>Token for {agentName}</DialogTitle>
                     <DialogDescription>
@@ -42,11 +48,13 @@ export function TokenDialog({ agentName, token, onClose }: { agentName: string; 
                         variant="outline"
                         size="icon"
                         aria-label="Copy token"
-                        onClick={() =>
-                            void navigator.clipboard.writeText(token).then(() => {
-                                setCopied(true);
-                            })
-                        }
+                        onClick={() => {
+                            // The clipboard API needs a secure origin; on plain http the field is there to select.
+                            if (!navigator.clipboard) {
+                                return;
+                            }
+                            void navigator.clipboard.writeText(token).then(() => setCopied(true));
+                        }}
                     >
                         <Copy />
                     </Button>

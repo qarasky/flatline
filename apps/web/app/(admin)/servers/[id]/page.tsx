@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { ServerDetail } from "@/components/servers/server-detail";
 import { isApiError } from "@/lib/api";
+import { orNull } from "@/lib/fleet-metrics";
 import { fetchLatestMetrics, fetchMonitor } from "@/lib/monitors-api";
 
 export const metadata: Metadata = { title: "Server · Flatline" };
@@ -16,7 +17,8 @@ export default async function ServerPage({ params }: { params: Promise<{ id: str
         notFound();
     }
     try {
-        const [{ monitor }, sample] = await Promise.all([fetchMonitor(id), fetchLatestMetrics(id)]);
+        // The sample is optional: if it cannot be read, the page loads it live.
+        const [{ monitor }, sample] = await Promise.all([fetchMonitor(id), orNull(fetchLatestMetrics(id))]);
         if (monitor.type !== "push") {
             notFound();
         }

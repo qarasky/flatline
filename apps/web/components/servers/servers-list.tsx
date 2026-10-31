@@ -5,10 +5,12 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { useBoardData } from "@/components/board/board-data";
+import { PausedBanner } from "@/components/board/paused-banner";
 import { UsageBar } from "@/components/fleet/metric-bar";
 import { ProviderLogo } from "@/components/fleet/provider-logo";
 import { StatusDot, statusTone } from "@/components/monitors/status-dot";
 import { Input } from "@/components/ui/input";
+import { useClock } from "@/hooks/use-clock";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { STATUS_LABEL } from "@/lib/board-format";
 import { statusKeyOf, statusRank } from "@/lib/board-model";
@@ -42,7 +44,7 @@ function Meter({ label, value }: { label: string; value: number | null }) {
     );
 }
 
-function Row({ monitor, row }: { monitor: MonitorSummary; row: ServerRow }) {
+function Row({ monitor, row, loaded }: { monitor: MonitorSummary; row: ServerRow; loaded: boolean }) {
     const status = statusKeyOf(monitor);
     const muted = status === "down" && isCovered(monitor);
     return (
@@ -61,7 +63,9 @@ function Row({ monitor, row }: { monitor: MonitorSummary; row: ServerRow }) {
                     {muted ? "Down · muted" : STATUS_LABEL[status]}
                 </span>
                 {row.freshness === "none" ? (
-                    <span className="text-muted-foreground col-span-3 text-xs">No metrics yet</span>
+                    <span className="text-muted-foreground col-span-3 text-xs">
+                        {loaded ? "No metrics yet" : "Loading metrics…"}
+                    </span>
                 ) : (
                     <>
                         <Meter label="CPU" value={row.cpu} />
@@ -92,9 +96,11 @@ function Row({ monitor, row }: { monitor: MonitorSummary; row: ServerRow }) {
  * fullest-disk use, the agent version and how fresh the numbers are.
  */
 export function ServersList() {
-    const { monitors, rosterLoaded, now } = useBoardData();
+    const { monitors, rosterLoaded } = useBoardData();
+    // Freshness keeps counting even while Monitors' Pause holds the roster.
+    const now = useClock(1000);
     const servers = useMemo(() => monitors.filter((m) => m.type === "push"), [monitors]);
-    const samples = useFleetMetrics(useMemo(() => servers.map((s) => s.id), [servers]));
+    const { samples, loaded, failed } = useFleetMetrics(useMemo(() => servers.map((s) => s.id), [servers]));
     const [query, setQuery] = useState("");
     const [sort, setSort] = useState<SortKey>("worst");
 
@@ -131,6 +137,12 @@ export function ServersList() {
     }
     return (
         <section aria-label="Servers" className="flex flex-1 flex-col">
+            <PausedBanner />
+            {failed ? (
+                <p role="status" className="text-warn border-b px-4 py-1.5 text-xs">
+                    Could not load the latest metrics for some servers; their numbers may be old.
+                </p>
+            ) : null}
             <div className="flex min-h-11 items-center gap-2 border-b px-4 py-2">
                 <span className="text-muted-foreground text-xs tnum">
                     {servers.length} server{servers.length === 1 ? "" : "s"}
@@ -168,7 +180,7 @@ export function ServersList() {
             ) : (
                 <ul>
                     {rows.map(({ monitor, row }) => (
-                        <Row key={monitor.id} monitor={monitor} row={row} />
+                        <Row key={monitor.id} monitor={monitor} row={row} loaded={loaded} />
                     ))}
                 </ul>
             )}
