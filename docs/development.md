@@ -114,6 +114,12 @@ account with a starting password is held on `/account/password` until it
 chooses its own. Accounts are added, reset and removed on **Members**
 (`/members`); removing someone can also revoke the tokens they made.
 
+**Monitors** (`/monitors`) lists the group tree with live status, 24 h strips
+and uptime, rendered on the server and kept live by one shared stream per tab
+(`components/board/board-data.tsx`, under the admin layout). The board's pure
+logic is a copy of the old dashboard's `src/lib/` modules, with their tests in
+`apps/web/__tests__/ported/`.
+
 ## Conventions
 
 - **TypeScript/React**: formatted by Prettier (4-space indent, double quotes,
