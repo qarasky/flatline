@@ -1,14 +1,63 @@
-# Production stack: one process serves the API, the web app (operator
-# dashboard and public status pages) and the agent downloads.
+# Flatline: three containers behind one published port.
 #
-# The backend is the Rust service in backend-rs/; docker/rust.dockerfile also
-# builds the dashboard and the Go agent into the same image.
+#   caddy     the only published service; routes the backend's paths to
+#             `flatline` and everything else to `web` (docker/Caddyfile)
+#   flatline  the Rust backend: API, check engine, agent downloads
+#   web       the Next.js web app: operator UI, Superboard, status pages
 #
-# First run: the operator token is written to
-# ./data/initial-token.txt (mode 0600) — use it to sign in. There is no
-# account setup, no seed script and no Node runtime.
+#   docker compose up -d --build
+#
+# First run: the operator token is written to ./data/initial-token.txt
+# (mode 0600); sign in with it and create the first account. There is no
+# seed script. FLATLINE_BIND/FLATLINE_PORT choose where Caddy listens
+# (default 0.0.0.0:3001); FLATLINE_SUBNET is the address range Caddy trusts
+# X-Forwarded-* from (the Docker host reaching it), change it if it collides
+# with a network you already use.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 
 services:
+  caddy:
+    build:
+      context: .
+      dockerfile: docker/caddy.dockerfile
+    image: artchsh/flatline-caddy:2
+    restart: unless-stopped
+    ports:
+      - "${FLATLINE_BIND:-0.0.0.0}:${FLATLINE_PORT:-3001}:80"
+    environment:
+      # Must match networks.edge below.
+      FLATLINE_SUBNET: ${FLATLINE_SUBNET:-172.31.254.0/24}
+    tmpfs:
+      - /data
+      - /config
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    networks: [edge, internal]
+    # Caddy drains for up to 30 s (grace_period in the Caddyfile).
+    stop_grace_period: 40s
+    mem_limit: 256m
+    pids_limit: 256
+    depends_on:
+      flatline:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+
   flatline:
     build:
       context: .
@@ -18,8 +67,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/app/data
-    ports:
-      - "3001:3001"
+    # Not published: Caddy reaches it over `internal`; `egress` is for the
+    # checks themselves (HTTP, ping, DNS) and Telegram.
+    networks: [internal, egress]
     # Backend graceful shutdown finishes within ~20 s (streams close, engine
     # and metrics jobs flush); Docker's default 10 s would SIGKILL it.
     stop_grace_period: 30s
@@ -29,12 +79,44 @@ services:
     sysctls:
       net.ipv4.ping_group_range: "0 2147483647"
     # Bounded resources: a leak or runaway fork cannot take the host down.
-    # Normal usage is far below both; check with `docker stats`.
     mem_limit: 1g
     pids_limit: 1024
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
+    logging: *logging
     # Healthcheck comes from the image: GET /healthz (database + engine).
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.dockerfile
+    image: artchsh/flatline-web:2
+    restart: unless-stopped
+    environment:
+      API_URL: http://flatline:3001
+    tmpfs:
+      - /tmp
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    networks: [internal]
+    stop_grace_period: 20s
+    mem_limit: 512m
+    pids_limit: 256
+    depends_on:
+      flatline:
+        condition: service_healthy
+    logging: *logging
+    # Healthcheck comes from the image: GET /build.
+
+networks:
+  # Only Caddy is on a network with a published port; its fixed subnet is
+  # what the Caddyfile trusts.
+  edge:
+    ipam:
+      config:
+        - subnet: ${FLATLINE_SUBNET:-172.31.254.0/24}
+  # Caddy, the backend and the web app; no way out.
+  internal:
+    internal: true
+  # The backend's way out, for the checks and alerts.
+  egress: {}

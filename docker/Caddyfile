@@ -1,0 +1,79 @@
+# Flatline's front door: the only published service (see compose.yaml and
+# docker/compose.rust.yaml). It sends the backend's paths to the Rust
+# backend and everything else to the Next.js web app, as one origin.
+#
+# TLS ends before Caddy (the Cloudflare Tunnel on office) or nowhere at all
+# (LAN), so Caddy speaks plain HTTP. Baked into its image by
+# docker/caddy.dockerfile.
+{
+	admin off
+	auto_https off
+	# On stop, let in-flight uploads, downloads and streams finish (the
+	# compose files allow 40 s before SIGKILL).
+	grace_period 30s
+	servers {
+		# Trust X-Forwarded-* only from the Docker host itself: cloudflared
+		# on the host reaches the loopback-published port through
+		# docker-proxy and arrives from the gateway of Caddy's own network,
+		# FLATLINE_SUBNET. Anyone else has X-Forwarded-For/Proto/Host
+		# overwritten with what Caddy sees, so only the tunnel's
+		# "X-Forwarded-Proto: https" makes the session cookie Secure.
+		trusted_proxies static 127.0.0.0/8 ::1 {$FLATLINE_SUBNET:172.31.254.0/24}
+	}
+}
+
+:80 {
+	# The backend takes the client address for sign-in limits from
+	# CF-Connecting-IP. Keep it only from the trusted sources above; anyone
+	# else could pick a fresh "client IP" for every attempt.
+	@untrustedCF {
+		header CF-Connecting-IP *
+		not remote_ip 127.0.0.0/8 ::1 {$FLATLINE_SUBNET:172.31.254.0/24}
+	}
+	request_header @untrustedCF -CF-Connecting-IP
+
+	# Nothing here is for search engines: the operator UI, the API and the
+	# status pages alike (docs/status-pages.md, "Indexing").
+	# Deferred, so it replaces the web app's own copy on status pages
+	# instead of adding a second one.
+	header {
+		defer
+		X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
+	}
+
+	# The backend's own paths. backend-rs/tests/caddy_routes.rs fails when
+	# a route in the backend is not matched here. No body size limit, no
+	# buffering, responses flushed as written: the live stream (SSE) and
+	# backup chunk uploads and downloads pass straight through, uncompressed.
+	@backend path /api/* /agent/* /healthz /add-push-server.md /llms.txt /robots.txt
+	handle @backend {
+		reverse_proxy flatline:3001 {
+			flush_interval -1
+		}
+	}
+
+	# Everything else: the web app (Next.js, server-rendered).
+	handle {
+		encode zstd gzip
+		header {
+			X-Content-Type-Options nosniff
+			Referrer-Policy same-origin
+			# Next streams its payload in inline <script> tags and React sets
+			# inline styles, so 'unsafe-inline' is needed without per-request
+			# nonces. Nothing loads from another host: no fonts, images or
+			# scripts from outside (the QR code is a data: image).
+			Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+			X-Frame-Options DENY
+		}
+		# Status pages may be embedded on a client's own site: the same
+		# policy without the framing ban. Deferred so it wins over the block above.
+		header /status/* {
+			defer
+			-X-Frame-Options
+			Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'"
+		}
+		reverse_proxy web:3000 {
+			flush_interval -1
+		}
+	}
+}

@@ -1,6 +1,6 @@
-# Build context for the Flatline image (docker/rust.dockerfile).
+# Build context for the Flatline images (docker/rust.dockerfile, web.dockerfile, caddy.dockerfile).
 #
-# The stages copy: packages/shared, apps/dashboard, superboard, backend-rs,
+# The stages copy: packages/shared, apps/web, superboard, backup-agent, backend-rs,
 # docs/provisioning.md, agent-install.sh and docker/entrypoint.sh. Everything below is local state,
 # dependency trees or build output the image never needs.
 
