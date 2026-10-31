@@ -139,6 +139,7 @@ export function MonitorDetail({
     compact = false,
     onClose,
     onDeleted,
+    startEditing = false,
 }: {
     id: number;
     initial?: DetailInitial;
@@ -147,9 +148,11 @@ export function MonitorDetail({
     onClose?: () => void;
     /** The monitor is gone (deleted by someone else). */
     onDeleted?: () => void;
+    /** Show the edit form straight away. */
+    startEditing?: boolean;
 }) {
     const { now, reload: reloadBoard } = useBoardData();
-    const [editing, setEditing] = useState(false);
+    const [editing, setEditing] = useState(startEditing);
     const reloadRef = useRef<() => Promise<void>>(async () => undefined);
     const [monitor, setMonitor] = useState<DetailMonitor | null>(initial?.monitor ?? null);
     // One state so a live beat updates the list and the total together.
@@ -214,7 +217,6 @@ export function MonitorDetail({
         }
 
         reloadRef.current = () => load();
-        setEditing(false);
         const stop = subscribeLive({
             metrics: false,
             snapshot: load,

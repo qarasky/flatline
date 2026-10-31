@@ -1,7 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
-
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useMedia } from "@/hooks/use-media";
 
@@ -12,42 +10,29 @@ export const WIDE_QUERY = "(min-width: 1280px)";
 
 /**
  * The open monitor beside the list (Plane's peek): the list stays visible
- * and in place. Esc closes it unless a dialog or menu is open, which closes
- * itself first.
+ * and in place. Esc (handled by the board's keyboard) closes it.
  */
 export function PeekPanel({
     id,
     onClose,
     onGone,
+    startEditing = false,
 }: {
     id: number | null;
     onClose: () => void;
     /** The monitor was deleted while open: the panel says so, the URL drops it. */
     onGone: () => void;
+    /** Open with the edit form showing ("Edit…" from a row menu). */
+    startEditing?: boolean;
 }) {
     const wide = useMedia(WIDE_QUERY);
-
-    useEffect(() => {
-        if (id === null || !wide) {
-            return;
-        }
-        function onKey(event: KeyboardEvent) {
-            if (event.key !== "Escape" || event.defaultPrevented) {
-                return;
-            }
-            if (document.querySelector('[role="dialog"],[role="menu"]')) {
-                return;
-            }
-            onClose();
-        }
-        document.addEventListener("keydown", onKey);
-        return () => document.removeEventListener("keydown", onKey);
-    }, [id, wide, onClose]);
 
     if (id === null) {
         return null;
     }
-    const detail = <MonitorDetail key={id} id={id} compact onClose={onClose} onDeleted={onGone} />;
+    const detail = (
+        <MonitorDetail key={id} id={id} compact onClose={onClose} onDeleted={onGone} startEditing={startEditing} />
+    );
     if (wide) {
         return (
             <aside

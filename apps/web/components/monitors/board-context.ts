@@ -3,6 +3,7 @@
 import { createContext, useContext } from "react";
 
 import type { Density } from "@/lib/board-url";
+import type { RowMenuId } from "@/lib/row-menu";
 import type { Strip } from "@/lib/heartbeat-strip";
 
 /** Stable callbacks (identity never changes), so memoised rows are not re-rendered by them. */
@@ -10,6 +11,10 @@ export interface BoardActions {
     openMonitor: (id: number) => void;
     toggleSelect: (id: number) => void;
     toggleGroup: (id: number) => void;
+    /** A row menu item was chosen. */
+    menuAction: (id: number, item: RowMenuId) => void;
+    /** A row menu opened or closed (an open menu holds the row order). */
+    menuOpenChange: (open: boolean) => void;
 }
 
 /** What the rows need to draw themselves. */
