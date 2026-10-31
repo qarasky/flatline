@@ -107,6 +107,7 @@
     --color-maint: var(--status-maint);
     --color-quiet: var(--muted-foreground);
     --color-surface-2: var(--raised);
+    --color-critical: #c0262c;
 
     --radius-sm: calc(var(--radius) - 2px);
     --radius-md: var(--radius);
