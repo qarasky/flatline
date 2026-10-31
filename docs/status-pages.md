@@ -1,20 +1,23 @@
 # Status pages
 
 A status page is a public, read-only view of a set of monitors: an overall
-status hero, incident cards, and monitor groups with heartbeat bars. Pages live
-in the dashboard app and are served by the backend on the same origin, under
-`/status/:slug` and on host-mapped client domains.
+status hero, incident cards, and monitor groups with heartbeat bars. Pages are a
+route in the [web app](dashboard.md), rendered on the server from the backend's
+public status-page API and served on the same origin, under `/status/:slug` and
+on host-mapped client domains. The status route loads no admin code, keeps the
+old dashboard's look, and reloads itself after a deploy.
 
 ## How a page is reached
 
 | Path                 | Purpose                                      |
 | -------------------- | -------------------------------------------- |
-| `/status/:slug`      | The page itself (SPA route).                 |
+| `/status/:slug`      | The page itself (web app route).             |
 | `status.client-a.kz` | Same page, resolved from the request `Host`. |
 
 `GET /api/status-page/resolve-host?host=…` maps a hostname (with or without
-port) to a page slug; the SPA uses it on a branded domain so one deployment can
-serve several client domains. Unknown hosts — and hosts mapped to an unpublished
+port) to a page slug; the web app's `/` uses it on a branded domain so one
+deployment can serve several client domains (a signed-in operator still lands
+on Monitors there). Unknown hosts — and hosts mapped to an unpublished
 page — match nothing rather than falling back to a default page. A lookup that
 fails (database error) answers `503` with `error:"unavailable"`, never
 `slug: null`, so a client can tell "unmapped" from "try again".
@@ -37,8 +40,8 @@ Only **published** pages are public. An unpublished page answers `404` on every
 endpoint above and on the unlock route, exactly like a slug that does not exist,
 so its existence is not confirmed. A request with a valid operator bearer token
 (`Authorization: Bearer …`) still gets the data, for previews and tooling; the
-dashboard's `/status/:slug` view sends no token, so it shows published pages
-only.
+web app's `/status/:slug` route sends no token (only the visitor's cookies, so
+an unlocked page stays unlocked), so it shows published pages only.
 
 Responses are cached for 10 seconds (pages refresh every 30), so a new heartbeat
 or an edited title can take that long to appear. The published flag and the
@@ -64,10 +67,19 @@ advisory.
 
 ## Indexing
 
-Every status page is `noindex, nofollow, noarchive, nosnippet`, the responses
-carry an `X-Robots-Tag`, and `robots.txt` disallows the whole site. Compliant
+Every status page is `noindex, nofollow, noarchive, nosnippet` in its metadata,
+every response (Caddy sets it for the whole origin) carries the same
+`X-Robots-Tag`, and `robots.txt` disallows the whole site. Compliant
 crawlers stay out; a determined one is not stopped by any of it — treat
 unpredictable slugs plus the password as the actual boundary.
+
+## Embedding
+
+`/status/*` is the one part of the origin that may be framed: Caddy leaves out
+`X-Frame-Options` and `frame-ancestors` there, so a client can embed its status
+page on its own site. The same page served at `/` on a client domain is not
+frameable; embed the `/status/<slug>` URL. Every other page is `frame-ancestors 'none'` and
+`X-Frame-Options: DENY`.
 
 ## Branding
 

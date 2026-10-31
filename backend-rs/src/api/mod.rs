@@ -18,7 +18,6 @@ pub mod status_pages;
 pub mod stream;
 pub mod strips;
 pub mod users;
-pub mod web;
 
 use axum::extract::DefaultBodyLimit;
 use axum::extract::State;
@@ -131,8 +130,9 @@ impl IntoResponse for ApiError {
 ///
 /// Public: the sign-in flow, the agent push endpoint (monitor token in the
 /// path), badges, the status-page read API, `robots.txt` and the OpenAPI
-/// document. Everything else under `/api/v1` needs a bearer token. The SPA
-/// fallback answers the remaining GET/HEAD paths when a build exists.
+/// document. Everything else under `/api/v1` needs a bearer token. Any other
+/// path is a JSON 404: the web app is served by Next, behind Caddy
+/// (docker/Caddyfile), never by the backend.
 ///
 /// Request budgets are applied per route group (see [`limits`]): most
 /// groups get [`limits::DEFAULT_TIMEOUT`] and a slot from the instance-wide
@@ -371,7 +371,7 @@ pub fn router(state: AppState) -> Router {
         // body deadlines instead of the request timeout.
         .merge(standard(backup_agent))
         .merge(untimed(backup_transfers))
-        .fallback(web::fallback)
+        .fallback(not_found)
         .with_state(state)
 }
 
@@ -527,4 +527,17 @@ async fn monitor_types() -> impl IntoResponse {
         "types": types,
         "writableFields": crate::monitors::WRITABLE_FIELDS,
     }))
+}
+
+/// The router's fallback: an unknown path, whatever the method.
+async fn not_found() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({
+            "ok": false,
+            "error": "not_found",
+            "message": "No such endpoint.",
+        })),
+    )
+        .into_response()
 }

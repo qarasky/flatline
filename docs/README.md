@@ -1,7 +1,7 @@
 # Flatline documentation
 
-Flatline is a self-hosted uptime monitor: a Rust backend, a Go host agent and a
-React dashboard, deployed as one origin. Start with [architecture](architecture.md)
+Flatline is a self-hosted uptime monitor: a Rust backend, a Next.js web app, a
+Go host agent and a Go backup agent, deployed as one origin behind Caddy. Start with [architecture](architecture.md)
 for the shape of the system, then go to whichever document matches your task.
 
 ## Reading guide
@@ -13,7 +13,7 @@ for the shape of the system, then go to whichever document matches your task.
 | [agent.md](agent.md)                           | Installing, configuring, updating or debugging the `superboard` host agent.                                  |
 | [backup-agent.md](backup-agent.md)             | Named backup agents (encryption optional): configuration, scheduling, offline verify and restore.            |
 | [superboard.md](superboard.md)                 | Changing or explaining the wall board: card anatomy, scopes, history, links.                                 |
-| [dashboard.md](dashboard.md)                   | Working on the operator UI: routes, panels, groups, monitor types.                                           |
+| [dashboard.md](dashboard.md)                   | Working on the web app (`apps/web/`): routes, sections, sign-in, live updates, adding a section.             |
 | [dashboard-motion.md](dashboard-motion.md)     | Adding or changing animation in the operator UI.                                                             |
 | [status-pages.md](status-pages.md)             | Publishing, theming or password-gating a public status page.                                                 |
 | [deployment.md](deployment.md)                 | Shipping a release: the office host, the image, rollout, the fleet inventory.                                |
@@ -27,15 +27,16 @@ for the shape of the system, then go to whichever document matches your task.
 
 ## Where things live in the repository
 
-| Path                     | What                                                                        |
-| ------------------------ | --------------------------------------------------------------------------- |
-| `backend-rs/`            | The Rust backend, its migrations and its integration tests.                 |
-| `backend-rs/migrations/` | Ordered SQL migrations, applied automatically at startup.                   |
-| `superboard/`            | The Go agent, plus `superboard/mockagent` for local development.            |
-| `backup-agent/`          | The separate Go backup agent (`flatline-backup`) and its integration tests. |
-| `apps/dashboard/`        | The React/Vite web app (dashboard, Superboard, status pages).               |
-| `packages/shared/`       | Types shared between the dashboard and its tests.                           |
-| `agent-install.sh`       | The installer/updater served at `/agent/install.sh`.                        |
-| `docs/provisioning.md`   | The runbook served at `/add-push-server.md`.                                |
-| `docker/`                | Dockerfiles and the office compose file.                                    |
-| `dev.sh`                 | The local development stack.                                                |
+| Path                     | What                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| `backend-rs/`            | The Rust backend, its migrations and its integration tests.                    |
+| `backend-rs/migrations/` | Ordered SQL migrations, applied automatically at startup.                      |
+| `superboard/`            | The Go agent, plus `superboard/mockagent` for local development.               |
+| `backup-agent/`          | The separate Go backup agent (`flatline-backup`) and its integration tests.    |
+| `apps/web/`              | The Next.js web app (operator UI, Superboard, status pages).                   |
+| `packages/shared/`       | The status-page client and types the web app uses.                             |
+| `agent-install.sh`       | The installer/updater served at `/agent/install.sh`.                           |
+| `docs/provisioning.md`   | The runbook served at `/add-push-server.md`.                                   |
+| `docker/`                | Dockerfiles (backend, web app, Caddy), the Caddyfile, the office compose file. |
+| `compose.yaml`           | The three-container stack for a self-hosted install.                           |
+| `dev.sh`                 | The local development stack.                                                   |

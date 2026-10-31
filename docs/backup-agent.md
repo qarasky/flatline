@@ -68,7 +68,7 @@ tar archive (`<run>.tar` in the spool, downloaded as `.tar`). Set `recipient`
 to an age X25519 public key for sensitive data and every bundle is
 age-encrypted instead (`.age`). A `recipient` that is present but malformed is
 refused at `check`, never silently treated as "off". `check` prints which mode
-an instance is in, and the dashboard marks encrypted runs.
+an instance is in, and the web app's Backups section marks encrypted runs.
 
 A plain bundle is protected in transit by HTTPS and at rest only by the office
 host's disk permissions. Its integrity rests on the per-entry SHA-256 in the
@@ -271,12 +271,12 @@ a restore test; see [Recovery](#recovery) for the restore procedure.
   ([muting](superboard.md#muting-a-known-outage)), `failed` and `overdue`
   alerts are not sent (the state is still recorded); the recovery message is.
 - Backup changes publish a `{"type":"backups"}` live event, not the generic
-  `invalidate`; the dashboard reloads backup rows only on that event, on
+  `invalidate`; the web app reloads backup rows only on that event, on
   mount and after a reconnect.
 
 ## Downloads
 
-The dashboard asks for `POST /api/v1/backup-runs/{id}/download-ticket` and
+The web app asks for `POST /api/v1/backup-runs/{id}/download-ticket` and
 navigates to the returned `/api/v1/backup-downloads/{ticket}` URL, so the
 browser streams the bundle to disk. A ticket names one completed run,
 expires after two minutes, works once and exists only in memory (a restart

@@ -1,6 +1,6 @@
 # Documentation screenshots
 
-Screenshots of the real dashboard components, rendered against the **mock
+Screenshots of the real web app, rendered against the **mock
 fleet** rather than a production installation: the hosts, websites, container
 names and measurements all come from `superboard/mockagent`. Nothing here is
 hand-drawn, and no production database is opened.
@@ -16,15 +16,22 @@ hand-drawn, and no production database is opened.
 From the repository root, with the dev stack running:
 
 ```sh
-./dev.sh                                    # backend :3001, old dashboard :3004, mock fleet
+./dev.sh                                    # backend :3001, web app :3003, mock fleet
 npm ci
 npx playwright install chromium
 node docs/screenshots/capture.mjs
 ```
 
-`capture.mjs` signs in with the local dev token from `.dev-data/initial-token.txt`,
-waits for the mock fleet to be painted, and writes the three PNGs at 1920×1080
-with device scale factor 1. It touches nothing but those files.
+`capture.mjs` trades the local dev token from `.dev-data/initial-token.txt` for
+a session cookie, waits for the mock fleet to be painted, and writes the three
+PNGs at 1920×1080 with device scale factor 1. It touches nothing but those
+files.
+
+The images were taken before the switch from the Vite dashboard to the Next.js
+web app. The Superboard kept its look; `dashboard.png` still shows the old
+operator board (with its Needs-attention section, now the Attention page). The
+script has been updated for the web app (port, routes, sign-in, the history
+dialog) but not yet rerun.
 
 Two caveats when regenerating:
 

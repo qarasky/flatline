@@ -1,28 +1,56 @@
 # Architecture
 
-Flatline is four programs and one database.
+Flatline is four programs, a reverse proxy and one database.
 
-| Process              | Language     | Runs on                           | Job                                                                                                                    |
-| -------------------- | ------------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Backend              | Rust         | The Flatline server               | Check engine, REST API, storage, alerts, and serving the built web app.                                                |
-| Dashboard            | React + Vite | Build output in the backend image | Operator dashboard, Superboard, public status pages. Runs in the browser; in development it is a separate Vite server. |
-| Agent (`superboard`) | Go           | Each monitored host               | Collects telemetry and pushes it outbound. Never listens on a port.                                                    |
-| Backup agent         | Go           | Selected hosts                    | Exports PostgreSQL/Garage, optionally encrypts, uploads resumable chunks. One process per named instance.              |
+| Process              | Language | Runs on                         | Job                                                                                                                     |
+| -------------------- | -------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Backend              | Rust     | The Flatline server             | Check engine, REST API, storage, alerts, agent downloads and the provisioning documents.                                |
+| Web app              | Next.js  | The Flatline server (own image) | Operator UI, Superboard, public status pages. Server-rendered by a Node process; the browser calls the API same-origin. |
+| Caddy                | Caddy 2  | The Flatline server (own image) | The only published service: routes the backend's paths to the backend and everything else to the web app.               |
+| Agent (`superboard`) | Go       | Each monitored host             | Collects telemetry and pushes it outbound. Never listens on a port.                                                     |
+| Backup agent         | Go       | Selected hosts                  | Exports PostgreSQL/Garage, optionally encrypts, uploads resumable chunks. One process per named instance.               |
 
-There is no message broker, no Redis and no second service: one backend process
-owns the SQLite database, the in-memory live cache and the HTTP surface.
+There is no message broker and no Redis: one backend process owns the SQLite
+database, the in-memory live cache and the API. The web app holds no state of
+its own; it renders pages from the API.
 
 ## Request flow
 
 ```
-browser ──HTTP/SSE──▶ backend ──SQLite──▶ data/flatline.db
-                        ▲
-agent ──POST /api/push──┘   (outbound only, per-monitor push token)
+browser ──HTTP/SSE──▶ caddy ──/api/*, /agent/*, /healthz, …──▶ backend ──SQLite──▶ data/flatline.db
+                        │                                         ▲
+                        └──everything else──▶ web (Next.js) ──API─┘
+agent ──POST /api/push──▶ caddy   (outbound only, per-monitor push token)
 ```
 
-- The browser and the API are **same origin**: whatever host serves the app
-  serves the API, so there is no backend URL to configure. A reverse proxy must
-  disable response buffering for the SSE stream.
+- The browser and the API are **same origin**: Caddy
+  ([`docker/Caddyfile`](../docker/Caddyfile)) sends `/api/*`, `/agent/*`,
+  `/healthz`, `/add-push-server.md`, `/llms.txt` and `/robots.txt` to the
+  backend and everything else to the web app, so there is no backend URL to
+  configure in the browser. The backend routes are proxied unbuffered (flushed
+  as written, no body size limit), so the SSE stream and backup chunk uploads
+  and downloads stream through. `backend-rs/tests/caddy_routes.rs` fails when a
+  backend route is not matched by Caddy's `@backend` matcher.
+- The web app renders pages on the server, calling the backend directly at
+  `API_URL` (`http://flatline:3001` in the containers) and forwarding the
+  browser's `fl_session` cookie, so a page arrives already filled in. In the
+  browser it calls the same-origin `/api/...`.
+- In the compose files only Caddy is published (`FLATLINE_BIND:FLATLINE_PORT`,
+  `0.0.0.0:3001` in `compose.yaml`, loopback on office). The backend and the
+  web app share an `internal` network that has no way out; the backend also has an
+  `egress` network for its checks and Telegram.
+- Caddy sets the browser-facing headers. Every response carries
+  `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet`. The web app's pages
+  also get a Content-Security-Policy that loads nothing from another host,
+  `Referrer-Policy: same-origin`, `nosniff`, and `frame-ancestors 'none'` with
+  `X-Frame-Options: DENY` everywhere except `/status/*`, which stays frameable
+  so a client can embed its status page. It trusts
+  `X-Forwarded-*` and `CF-Connecting-IP` only from the Docker host (`127.0.0.0/8`
+  and `FLATLINE_SUBNET`, default `172.31.254.0/24`); from anyone else
+  `CF-Connecting-IP` is stripped and `X-Forwarded-*` overwritten, so only the
+  tunnel's `X-Forwarded-Proto: https` makes the session cookie `Secure`.
+- The backend serves no web app: an unknown path is a JSON `404`
+  (`{"ok":false,"error":"not_found"}`).
 - The agent authenticates with the **push token of its own monitor**. There is
   no inbound path to an agent, so a client behind NAT needs no firewall change.
 - The backend also serves the agent downloads and the provisioning documents
@@ -163,7 +191,8 @@ failing or newly full disk.
 
 ## Live updates
 
-The dashboard and Superboard hold one SSE connection to `/api/v1/events`:
+Each browser tab of the web app (operator pages and the Superboard) holds one
+SSE connection to `/api/v1/events`, shared by every view on the page:
 
 - REST snapshots run on connect, on reconnect, and on a coalesced configuration
   invalidation (the backend publishes one whenever monitors, links, status pages
@@ -193,7 +222,7 @@ events without touching their payload.
 
 ## Shutdown
 
-On `SIGTERM` or Ctrl-C one shared token stops everything, in about 16 s at
+On `SIGTERM` or Ctrl-C the backend's one shared token stops everything, in about 16 s at
 worst (the compose file grants 30 s before `SIGKILL`):
 
 1. SSE streams end at once and the HTTP server drains for at most 3 s; check
@@ -242,11 +271,17 @@ The backend reads its configuration from the environment:
 | `PORT`                              | `3001`       | Listen port.                                         |
 | `DATA_DIR`                          | `./data`     | SQLite database directory.                           |
 | `UPTIME_KUMA_HOST`                  | `0.0.0.0`    | Bind address.                                        |
-| `FLATLINE_WEB_DIST`                 | `./dist`     | Built web app to serve.                              |
 | `FLATLINE_AGENT_DIR`                | —            | Directory of agent binaries served under `/agent/*`. |
 | `FLATLINE_PUBLIC_URL`               | request host | Absolute origin used in the provisioning documents.  |
 | `FLATLINE_HEARTBEAT_RETENTION_DAYS` | `90`         | Heartbeat retention; `0` keeps forever.              |
 | `FLATLINE_PASSWORD_COST`            | `12`         | bcrypt cost for account passwords.                   |
+
+The web app reads `API_URL` (the backend's address for server-side calls,
+default `http://127.0.0.1:3001`; `http://flatline:3001` in the images) at
+runtime, and bakes `FLATLINE_BUILD_ID` (the build id `GET /build` answers) in
+at build time. Caddy reads `FLATLINE_SUBNET`, the range it trusts forwarded
+headers from; the compose files also take `FLATLINE_BIND` and `FLATLINE_PORT`
+for where Caddy listens.
 
 ## Deliberate limits
 

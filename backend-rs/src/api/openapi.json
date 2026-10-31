@@ -16,7 +16,7 @@
             "bearerAuth": {
                 "type": "http",
                 "scheme": "bearer",
-                "description": "Operator token `flatline_op_...` from the dashboard's Agents panel, or the admin token from data/initial-token.txt. Legacy `flatline_...` tokens are still accepted. Agent tokens are rejected here with `agent_token_on_operator_api`."
+                "description": "Operator token `flatline_op_...` from the web app's Tokens section, or the admin token from data/initial-token.txt. Legacy `flatline_...` tokens are still accepted. Agent tokens are rejected here with `agent_token_on_operator_api`."
             },
             "cookieAuth": {
                 "type": "apiKey",

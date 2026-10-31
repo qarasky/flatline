@@ -4,7 +4,7 @@ The host agent is a single Go binary that runs on each monitored machine,
 sampling the host every second and pushing the samples, plus a self-report, to
 one Flatline push monitor over HTTP. It is the only component a monitored host
 runs; see [architecture](architecture.md) for its place beside the Rust backend
-and dashboard, and [superboard](superboard.md) for the card it feeds.
+and the web app, and [superboard](superboard.md) for the card it feeds.
 
 ## Design constraints
 

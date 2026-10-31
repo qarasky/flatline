@@ -59,13 +59,19 @@ function legacyRoot(params: URLSearchParams): string {
  * Pages a signed-out visitor may open: the root (a client's status domain
  * renders there; the page sends anyone else to sign-in), the kiosk (it shows
  * its QR sign-in), status pages, the phone's approve page (it signs in
- * itself, keeping the code from the fragment) and the build id the
- * unattended screens poll.
+ * itself, keeping the code from the fragment), the build id the
+ * unattended screens poll, and `/index.html`, which an old dashboard tab
+ * still polls to notice a deploy (it holds a token, not a session cookie).
  */
 function isPublic(pathname: string): boolean {
     const under = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
     return (
-        pathname === "/" || under("/superboard/kiosk") || under("/status") || under("/device") || pathname === "/build"
+        pathname === "/" ||
+        under("/superboard/kiosk") ||
+        under("/status") ||
+        under("/device") ||
+        pathname === "/build" ||
+        pathname === "/index.html"
     );
 }
 

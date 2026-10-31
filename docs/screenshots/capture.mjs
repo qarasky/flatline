@@ -1,17 +1,21 @@
 // Regenerate the documentation screenshots from the local dev stack.
 //
-//   ./dev.sh                                   # backend :3001, old dashboard :3004, mock fleet
+//   ./dev.sh                                   # backend :3001, web app :3003, mock fleet
 //   npm ci && npx playwright install chromium  # from the repository root
 //   node docs/screenshots/capture.mjs
 //
 // Writes superboard.png, dashboard.png and history.png (1920x1080, device
 // scale factor 1) next to this file. The data is the mock fleet, not a real
-// installation, and the token is the local dev token from .dev-data/.
+// installation, and the token is the local dev token from .dev-data/, traded
+// for a session cookie before the first page loads.
+//
+// Updated for the Next.js web app (port, routes, the history dialog) but not
+// rerun since the cutover; check the images after regenerating.
 import { chromium } from "playwright";
 import { readFileSync } from "node:fs";
 
 const token = readFileSync(".dev-data/initial-token.txt", "utf8").trim();
-const base = "http://127.0.0.1:3004";
+const base = "http://127.0.0.1:3003";
 
 const browser = await chromium.launch();
 const context = await browser.newContext({
@@ -19,13 +23,14 @@ const context = await browser.newContext({
     deviceScaleFactor: 1,
     colorScheme: "dark",
 });
-await context.addInitScript((value) => {
-    try {
-        localStorage.setItem("flatline.token", value);
-    } catch {
-        /* storage disabled */
-    }
-}, token);
+// Sign in: the session cookie lands in the context's cookie jar.
+const signIn = await context.request.post(`${base}/api/v1/auth/session`, {
+    data: { token },
+    headers: { "X-Flatline-CSRF": "1" },
+});
+if (!signIn.ok()) {
+    throw new Error(`sign-in failed: ${signIn.status()}`);
+}
 const page = await context.newPage();
 page.on("pageerror", (error) => console.error("page error:", error.message));
 
@@ -40,8 +45,8 @@ await openBoard();
 console.log(`superboard.png: ${await page.locator(".fleet-card").count()} cards`);
 await page.screenshot({ path: "docs/screenshots/superboard.png" });
 
-// 2. The operator dashboard: grouped monitor table with the summary bar.
-await page.goto(`${base}/`, { waitUntil: "domcontentloaded" });
+// 2. The operator board: grouped monitor table with the summary bar.
+await page.goto(`${base}/monitors`, { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(6000);
 await page.screenshot({ path: "docs/screenshots/dashboard.png" });
 console.log("dashboard.png");
@@ -53,10 +58,10 @@ await page
     .locator(".fleet-history-link")
     .first()
     .click();
-await page.waitForSelector(".history-dialog[open]", { timeout: 15000 });
+const dialog = page.getByRole("dialog");
+await dialog.waitFor({ timeout: 15000 });
 await page.waitForTimeout(3000);
 
-const dialog = page.locator(".history-dialog");
 const oneHour = dialog.getByRole("button", { name: "1h", exact: true });
 if (await oneHour.count()) {
     await oneHour.click();

@@ -68,6 +68,10 @@ describe("gate", () => {
         expect(gate("/build", "", false)).toEqual({ kind: "next" });
     });
 
+    it("lets the old dashboard's build check reach /index.html signed out", () => {
+        expect(gate("/index.html", "?build-check=1", false)).toEqual({ kind: "next" });
+    });
+
     it("sends a signed-out desk Superboard to sign-in", () => {
         expect(gate("/superboard", "", false)).toEqual({ kind: "redirect", to: "/sign-in?next=%2Fsuperboard" });
         expect(gate("/superboard/work", "", false)).toEqual({

@@ -1,26 +1,77 @@
-# Office stack: one pre-built image, one origin. The Cloudflare Tunnel already
-# points at localhost:3001.
+# Office stack: three pre-built images behind one loopback port. The
+# Cloudflare Tunnel points at localhost:3001 (FLATLINE_PORT in .env), which
+# is Caddy; Caddy routes to the backend and the web app (docker/Caddyfile).
 #
-# The image is built on the host from the synced source tree:
+# The images are built on the host from the synced source tree:
 #
 #   cd /home/office/flatline-src
 #   sudo docker build --platform linux/amd64 -f docker/rust.dockerfile \
 #       -t artchsh/flatline-rust:office-live .
+#   sudo docker build --platform linux/amd64 -f docker/web.dockerfile \
+#       --build-arg FLATLINE_BUILD_ID=<commit> -t artchsh/flatline-web:office-live .
+#   sudo docker build --platform linux/amd64 -f docker/caddy.dockerfile \
+#       -t artchsh/flatline-caddy:office-live .
 #   cd /home/office/flatline && sudo docker compose -f compose.rust.yaml \
 #       -f /home/office/flatline-src/docker/compose.backups.yaml up -d
 #
 # Always pass both files on the office host: backup storage has been enabled
 # there since 2026-10-25, and `up -d` with this file alone recreates the
-# container without the backup mount, so uploads silently answer 503.
+# backend without the backup mount, so uploads silently answer 503.
 #
 # The repository copy of this file and the office copy are kept identical.
 # Steps, backup paths and the rollback procedure: docs/deployment.md.
 #
-# `FLATLINE_PORT` is the published port; `FLATLINE_BIND` defaults to loopback
-# so the tunnel is the only way in from outside.
+# `FLATLINE_BIND` defaults to loopback so the tunnel is the only way in from
+# outside. Kore's stack on the same host uses 172.31.255.0/24; this one's
+# edge network must stay distinct (FLATLINE_SUBNET).
 name: flatline-rust
 
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
+  caddy:
+    image: artchsh/flatline-caddy:office-live
+    restart: unless-stopped
+    ports:
+      - "${FLATLINE_BIND:-127.0.0.1}:${FLATLINE_PORT:-3101}:80"
+    environment:
+      # Must match networks.edge below.
+      FLATLINE_SUBNET: ${FLATLINE_SUBNET:-172.31.254.0/24}
+    tmpfs:
+      - /data
+      - /config
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    networks: [edge, internal]
+    # Caddy drains for up to 10 s (grace_period in the Caddyfile).
+    stop_grace_period: 20s
+    mem_limit: 256m
+    pids_limit: 256
+    # Started, not healthy: Caddy is the only way in, and it answers 502
+    # until an upstream is up. Waiting on the backend's health would keep
+    # status pages and /healthz itself unreachable while the backend is
+    # unhealthy.
+    depends_on:
+      flatline:
+        condition: service_started
+      web:
+        condition: service_started
+    # Caddy and the web app behind it; the backend has its own healthcheck.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/build"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+
   flatline:
     image: artchsh/flatline-rust:office-live
     restart: unless-stopped
@@ -30,8 +81,9 @@ services:
       FLATLINE_PUBLIC_URL: ${FLATLINE_PUBLIC_URL:-}
     volumes:
       - ./data-rust:/app/data
-    ports:
-      - "${FLATLINE_BIND:-127.0.0.1}:${FLATLINE_PORT:-3101}:3001"
+    # Not published: Caddy reaches it over `internal`; `egress` is for the
+    # checks themselves (HTTP, ping, DNS) and Telegram.
+    networks: [internal, egress]
     # Backend graceful shutdown finishes within ~20 s (streams close, engine
     # and metrics jobs flush); Docker's default 10 s would SIGKILL it.
     stop_grace_period: 30s
@@ -44,9 +96,37 @@ services:
     # Normal usage is far below both; check with `docker stats`.
     mem_limit: 1g
     pids_limit: 1024
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
+    logging: *logging
     # Healthcheck comes from the image: GET /healthz (database + engine).
+
+  web:
+    image: artchsh/flatline-web:office-live
+    restart: unless-stopped
+    environment:
+      API_URL: http://flatline:3001
+    tmpfs:
+      - /tmp
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    networks: [internal]
+    stop_grace_period: 20s
+    mem_limit: 512m
+    pids_limit: 256
+    logging: *logging
+    # Healthcheck comes from the image: GET /build. It does not wait for the
+    # backend: pages that need it show their own retrying error until it is up.
+
+networks:
+  # Only Caddy is on a network with a published port; its fixed subnet is
+  # what the Caddyfile trusts.
+  edge:
+    ipam:
+      config:
+        - subnet: ${FLATLINE_SUBNET:-172.31.254.0/24}
+  # Caddy, the backend and the web app; no way out.
+  internal:
+    internal: true
+  # The backend's way out, for the checks and alerts.
+  egress: {}
