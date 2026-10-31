@@ -49,11 +49,35 @@ describe("gate", () => {
         expect(gate("/", "?foo=1", true)).toEqual({ kind: "redirect", to: "/monitors" });
     });
 
-    it("keeps an old link through sign-in", () => {
-        expect(gate("/", "?m=12", false)).toEqual({ kind: "redirect", to: "/sign-in?next=%2F%3Fm%3D12" });
+    it("lets a signed-out visitor reach the root, where a client's status domain resolves", () => {
+        expect(gate("/", "?m=12", false)).toEqual({ kind: "next" });
     });
 
     it("drops an ?m= too large to be a monitor id", () => {
         expect(gate("/", "?m=99999999999999999999", true)).toEqual({ kind: "redirect", to: "/monitors" });
+    });
+
+    it("lets a signed-out wall screen reach the kiosk, which shows its QR", () => {
+        expect(gate("/superboard/kiosk", "", false)).toEqual({ kind: "next" });
+        expect(gate("/superboard/kiosk/work,home", "?rotate=30", false)).toEqual({ kind: "next" });
+    });
+
+    it("keeps status pages, the approve page and the build id public", () => {
+        expect(gate("/status/acme", "", false)).toEqual({ kind: "next" });
+        expect(gate("/device", "", false)).toEqual({ kind: "next" });
+        expect(gate("/build", "", false)).toEqual({ kind: "next" });
+    });
+
+    it("sends a signed-out desk Superboard to sign-in", () => {
+        expect(gate("/superboard", "", false)).toEqual({ kind: "redirect", to: "/sign-in?next=%2Fsuperboard" });
+        expect(gate("/superboard/work", "", false)).toEqual({
+            kind: "redirect",
+            to: "/sign-in?next=%2Fsuperboard%2Fwork",
+        });
+    });
+
+    it("does not mistake a lookalike path for a public one", () => {
+        expect(gate("/statusx", "", false).kind).toBe("redirect");
+        expect(gate("/superboard/kioskish", "", false).kind).toBe("redirect");
     });
 });

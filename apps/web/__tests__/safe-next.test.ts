@@ -29,4 +29,8 @@ describe("safeNext", () => {
             expect(safeNext(value)).toBe("/monitors");
         });
     }
+
+    it("keeps the approve page's code, which lives in the fragment", () => {
+        expect(safeNext("/device#ABCD-1234")).toBe("/device#ABCD-1234");
+    });
 });

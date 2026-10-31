@@ -21,6 +21,9 @@ export function gate(pathname: string, search: string, hasSession: boolean): Gat
     }
 
     if (!hasSession) {
+        if (isPublic(pathname)) {
+            return { kind: "next" };
+        }
         return { kind: "redirect", to: `${SIGN_IN_PATH}?next=${encodeURIComponent(pathname + search)}` };
     }
 
@@ -50,4 +53,18 @@ function legacyRoot(params: URLSearchParams): string {
     }
     const query = kept.toString();
     return query ? `${HOME_PATH}?${query}` : HOME_PATH;
+}
+
+/**
+ * Pages a signed-out visitor may open: the root (a client's status domain
+ * renders there; the page sends anyone else to sign-in), the kiosk (it shows
+ * its QR sign-in), status pages, the phone's approve page (it signs in
+ * itself, keeping the code from the fragment) and the build id the
+ * unattended screens poll.
+ */
+function isPublic(pathname: string): boolean {
+    const under = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+    return (
+        pathname === "/" || under("/superboard/kiosk") || under("/status") || under("/device") || pathname === "/build"
+    );
 }
