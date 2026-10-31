@@ -124,7 +124,9 @@ dashboard links (`/?m=ID`, `/?status=down`) redirect there. **New monitor** open
 in a dialog (also `?new=1`, with `&parent=ID` or `&type=group`); Edit opens it
 in place. The form sets which notifications a monitor alerts through. Rows have a `⋯` and
 right-click menu, a checkbox for bulk Pause, Resume and Delete, and the old
-board's keys (`/`, `j`/`k`, `Enter`, `x`, `Esc`; `apps/web/lib/board-keys.ts`).
+board's keys (`/`, `j`/`k`, `Enter`, `x`, `Esc`; `apps/web/lib/board-keys.ts`). **Attention**
+(`/attention`) lists what needs a look, muted items last; its count sits on
+the sidebar.
 
 ## Conventions
 

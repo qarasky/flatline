@@ -24,6 +24,7 @@ import {
     SidebarMenuItem,
     SidebarRail,
 } from "@/components/ui/sidebar";
+import { AttentionCount } from "@/components/attention/attention-list";
 import { api } from "@/lib/api";
 import { type Me, displayName, initials } from "@/lib/me";
 import { NAV_SECTIONS, activeSection } from "@/lib/nav";
@@ -80,6 +81,7 @@ export function AppSidebar({ me }: { me: Me }) {
                                             </Link>
                                         )}
                                     </SidebarMenuButton>
+                                    {section.id === "attention" ? <AttentionCount /> : null}
                                 </SidebarMenuItem>
                             ))}
                         </SidebarMenu>

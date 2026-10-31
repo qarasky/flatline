@@ -6,10 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 
 import { useBoardData } from "@/components/board/board-data";
+import { useAttention } from "@/components/board/use-attention";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useIdleCalm } from "@/hooks/use-idle-calm";
-import { attentionMonitorIds, deriveAttention } from "@/lib/attention";
+import { attentionMonitorIds } from "@/lib/attention";
 import {
     EMPTY_FILTER,
     boardTotals,
@@ -170,18 +171,7 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
         return () => window.clearTimeout(timer);
     }, [filter, sort, openId]);
 
-    const attention = useMemo(
-        () =>
-            deriveAttention({
-                monitors,
-                strips: data.strips,
-                nowMs: data.now,
-                changedAt: data.changedAt,
-                agentWarnings: data.agentWarnings,
-                backups: data.backups,
-            }),
-        [monitors, data.strips, data.now, data.changedAt, data.agentWarnings, data.backups]
-    );
+    const attention = useAttention();
     const attentionIds = useMemo(() => attentionMonitorIds(attention), [attention]);
 
     // While the pointer is over the list or rows are selected, a status
