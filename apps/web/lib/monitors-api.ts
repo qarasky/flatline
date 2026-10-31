@@ -53,6 +53,9 @@ export function fetchMonitor(
     return api(`/api/v1/monitors/${id}`, { signal });
 }
 
+/** Rows kept in a monitor's recent-checks list. */
+export const BEAT_LIMIT = 120;
+
 /** Recent heartbeats, newest first, plus the total. */
 export async function fetchHeartbeats(
     id: number,

@@ -118,7 +118,9 @@ chooses its own. Accounts are added, reset and removed on **Members**
 and uptime, rendered on the server and kept live by one shared stream per tab
 (`components/board/board-data.tsx`, under the admin layout). The board's pure
 logic is a copy of the old dashboard's `src/lib/` modules, with their tests in
-`apps/web/__tests__/ported/`.
+`apps/web/__tests__/ported/`. Opening a monitor shows it beside the list (a sheet below
+1280 px) with `?m=ID` in the URL; `/monitors/<id>` is its own page. Old
+dashboard links (`/?m=ID`, `/?status=down`) redirect there.
 
 ## Conventions
 

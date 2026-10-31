@@ -40,6 +40,7 @@ import { BoardSkeleton, EmptyBoard, LoadFailed, NoMatches } from "./board-states
 import { BoardTree } from "./board-tree";
 import { DisplayMenu } from "./display-menu";
 import { FilterMenu } from "./filter-menu";
+import { PeekPanel } from "./peek-panel";
 import { StatusSummary } from "./status-summary";
 import { ViewsMenu } from "./views-menu";
 
@@ -67,7 +68,11 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
 
     const [filter, setFilter] = useState<FilterState>(initialQuery.filter);
     const [sort, setSort] = useState<SortKey>(initialQuery.sort);
+    // `openId` is what the URL says is open; `peekId` what the panel shows.
+    // They differ only after the open monitor was deleted: the panel keeps
+    // saying so while the URL forgets it.
     const [openId, setOpenId] = useState<number | null>(initialQuery.open);
+    const [peekId, setPeekId] = useState<number | null>(initialQuery.open);
     const [density, setDensityState] = useState<Density>("comfortable");
     const [views, setViews] = useState<SavedViews>({ views: [], defaultId: null });
     const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
@@ -152,8 +157,14 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
 
     const openMonitor = useCallback((id: number) => {
         setOpenId(id);
+        setPeekId(id);
         setCursorId(id);
     }, []);
+    const closePeek = useCallback(() => {
+        setOpenId(null);
+        setPeekId(null);
+    }, []);
+    const peekGone = useCallback(() => setOpenId(null), []);
     const toggleGroup = useCallback((id: number) => {
         setCollapsed((prev) => {
             const next = new Set(prev);
@@ -199,7 +210,7 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
         selected,
         collapsed,
         forceOpen,
-        openId,
+        openId: peekId,
         cursorId,
         cueRows: data.cue.rows,
         cueSeq: data.cue.seq,
@@ -208,87 +219,96 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
     const hasRows = board.roots.length > 0 || board.ungrouped.length > 0;
 
     return (
-        <div className="flex min-h-0 flex-1 flex-col">
-            <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2">
-                {rosterLoaded ? (
-                    <StatusSummary
-                        totals={totals}
-                        attention={attention}
-                        active={filter.status}
-                        onToggleStatus={toggleStatus}
-                        changed={data.cue.group && !calm ? data.cue.changed : 0}
-                    />
-                ) : null}
-                <div className="ml-auto flex items-center gap-2">
-                    <div className="relative">
-                        <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-                        <Input
-                            id="board-search"
-                            type="search"
-                            value={filter.q}
-                            onChange={(event) => setFilter((prev) => ({ ...prev, q: event.target.value }))}
-                            placeholder="Search  /"
-                            aria-label="Search monitors"
-                            className="h-8 w-56 pl-8"
+        <div className="flex min-h-0 flex-1">
+            <div className="flex min-w-0 flex-1 flex-col">
+                <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2">
+                    {rosterLoaded ? (
+                        <StatusSummary
+                            totals={totals}
+                            attention={attention}
+                            active={filter.status}
+                            onToggleStatus={toggleStatus}
+                            changed={data.cue.group && !calm ? data.cue.changed : 0}
+                        />
+                    ) : null}
+                    <div className="ml-auto flex items-center gap-2">
+                        <div className="relative">
+                            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+                            <Input
+                                id="board-search"
+                                type="search"
+                                value={filter.q}
+                                onChange={(event) => setFilter((prev) => ({ ...prev, q: event.target.value }))}
+                                placeholder="Search  /"
+                                aria-label="Search monitors"
+                                className="h-8 w-56 pl-8"
+                            />
+                        </div>
+                        <FilterMenu
+                            filter={filter}
+                            onChange={setFilter}
+                            types={facets.types}
+                            tags={facets.tags}
+                            attentionCount={attentionIds.size}
+                        />
+                        <DisplayMenu sort={sort} onSort={setSort} density={density} onDensity={setDensity} />
+                        <ViewsMenu
+                            state={views}
+                            onChange={changeViews}
+                            onApply={applyView}
+                            filter={filter}
+                            sort={sort}
                         />
                     </div>
-                    <FilterMenu
-                        filter={filter}
-                        onChange={setFilter}
-                        types={facets.types}
-                        tags={facets.tags}
-                        attentionCount={attentionIds.size}
-                    />
-                    <DisplayMenu sort={sort} onSort={setSort} density={density} onDensity={setDensity} />
-                    <ViewsMenu state={views} onChange={changeViews} onApply={applyView} filter={filter} sort={sort} />
                 </div>
-            </div>
-            {data.paused ? (
-                <div
-                    role="status"
-                    className="bg-status-warn/10 text-status-warn flex items-center gap-3 px-4 py-1.5 text-xs"
-                >
-                    <span>
-                        Live updates paused
-                        {data.pending > 0 ? <span className="tabular-nums"> · {data.pending} waiting</span> : null}
-                    </span>
-                    <Button variant="outline" size="xs" onClick={() => data.setPaused(false)}>
-                        Resume
-                    </Button>
-                </div>
-            ) : null}
-            {data.error && rosterLoaded ? (
-                <p role="status" className="text-status-warn px-4 py-1.5 text-xs">
-                    {data.error}
-                </p>
-            ) : null}
-            <BoardActionsContext.Provider value={actions}>
-                <BoardViewContext.Provider value={view}>
-                    <section
-                        aria-label="Monitors"
-                        className="board-list"
-                        data-density={density}
-                        data-strips={data.strips.size > 0 ? "on" : "off"}
-                        data-selecting={selected.size > 0 || undefined}
-                        onPointerEnter={() => setPointerOverList(true)}
-                        onPointerLeave={() => setPointerOverList(false)}
+                {data.paused ? (
+                    <div
+                        role="status"
+                        className="bg-status-warn/10 text-status-warn flex items-center gap-3 px-4 py-1.5 text-xs"
                     >
-                        {!rosterLoaded ? (
-                            data.error ? (
-                                <LoadFailed message={data.error} onRetry={() => void data.reload()} />
+                        <span>
+                            Live updates paused
+                            {data.pending > 0 ? <span className="tabular-nums"> · {data.pending} waiting</span> : null}
+                        </span>
+                        <Button variant="outline" size="xs" onClick={() => data.setPaused(false)}>
+                            Resume
+                        </Button>
+                    </div>
+                ) : null}
+                {data.error && rosterLoaded ? (
+                    <p role="status" className="text-status-warn px-4 py-1.5 text-xs">
+                        {data.error}
+                    </p>
+                ) : null}
+                <BoardActionsContext.Provider value={actions}>
+                    <BoardViewContext.Provider value={view}>
+                        <section
+                            aria-label="Monitors"
+                            className="board-list"
+                            data-density={density}
+                            data-strips={data.strips.size > 0 ? "on" : "off"}
+                            data-selecting={selected.size > 0 || undefined}
+                            onPointerEnter={() => setPointerOverList(true)}
+                            onPointerLeave={() => setPointerOverList(false)}
+                        >
+                            {!rosterLoaded ? (
+                                data.error ? (
+                                    <LoadFailed message={data.error} onRetry={() => void data.reload()} />
+                                ) : (
+                                    <BoardSkeleton />
+                                )
+                            ) : monitors.length === 0 ? (
+                                <EmptyBoard onNewMonitor={() => router.push("/monitors?new=1")} />
+                            ) : !hasRows ? (
+                                <NoMatches onClear={clearFilters} />
                             ) : (
-                                <BoardSkeleton />
-                            )
-                        ) : monitors.length === 0 ? (
-                            <EmptyBoard onNewMonitor={() => router.push("/monitors?new=1")} />
-                        ) : !hasRows ? (
-                            <NoMatches onClear={clearFilters} />
-                        ) : (
-                            <BoardTree board={board} />
-                        )}
-                    </section>
-                </BoardViewContext.Provider>
-            </BoardActionsContext.Provider>
+                                <BoardTree board={board} />
+                            )}
+                        </section>
+                    </BoardViewContext.Provider>
+                </BoardActionsContext.Provider>
+            </div>
+            <PeekPanel id={peekId} onClose={closePeek} onGone={peekGone} />
         </div>
     );
 }
