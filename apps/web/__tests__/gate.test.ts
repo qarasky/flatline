@@ -52,4 +52,8 @@ describe("gate", () => {
     it("keeps an old link through sign-in", () => {
         expect(gate("/", "?m=12", false)).toEqual({ kind: "redirect", to: "/sign-in?next=%2F%3Fm%3D12" });
     });
+
+    it("drops an ?m= too large to be a monitor id", () => {
+        expect(gate("/", "?m=99999999999999999999", true)).toEqual({ kind: "redirect", to: "/monitors" });
+    });
 });

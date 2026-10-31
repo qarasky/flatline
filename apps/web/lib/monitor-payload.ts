@@ -35,3 +35,12 @@ export function buildMonitorPayload(
     }
     return payload;
 }
+
+/**
+ * The notifications a save sends: the ticked ones once the list loaded,
+ * nothing otherwise. Never for a group: its form shows no picker, so
+ * sending the defaults would add alerts nobody chose.
+ */
+export function notificationsToSend(type: string, loaded: boolean, chosen: Set<number>): number[] | undefined {
+    return loaded && type !== "group" ? [...chosen] : undefined;
+}

@@ -121,7 +121,7 @@ logic is a copy of the old dashboard's `src/lib/` modules, with their tests in
 `apps/web/__tests__/ported/`. Opening a monitor shows it beside the list (a sheet below
 1280 px) with `?m=ID` in the URL; `/monitors/<id>` is its own page. Old
 dashboard links (`/?m=ID`, `/?status=down`) redirect there. **New monitor** opens the form
-in a dialog (also `?new=1`, with `&parent=ID` or `&type=group`); Edit opens it
+in a dialog (also `?new=1`, with `&parent=ID` or `&newType=group`); Edit opens it
 in place. The form sets which notifications a monitor alerts through. Rows have a `⋯` and
 right-click menu, a checkbox for bulk Pause, Resume and Delete, and the old
 board's keys (`/`, `j`/`k`, `Enter`, `x`, `Esc`; `apps/web/lib/board-keys.ts`). **Attention**

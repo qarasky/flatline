@@ -36,6 +36,8 @@ import {
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { shouldHoldReorder } from "@/lib/motion";
 import { boardKey, escapeStep, moveCursor, type KeyTarget } from "@/lib/board-keys";
+import { urlBoardChange } from "@/lib/board-sync";
+import { bulkFailureMessage } from "@/lib/bulk-report";
 import { muteMonitor, pauseMonitor, resumeMonitor, unmuteMonitor } from "@/lib/monitors-api";
 import { orderBasis } from "@/lib/order-basis";
 import type { RowMenuId } from "@/lib/row-menu";
@@ -161,15 +163,31 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
     // The board lives in the URL so it can be linked. History is replaced in
     // place (Next keeps useSearchParams in step) rather than navigated, so a
     // keystroke in the search box never costs a server render.
+    // `ownSearch` remembers what the board wrote, so a URL that changes under
+    // it (the sidebar's Monitors link, the palette, a link to the same page)
+    // can be told apart from its own writes and adopted.
+    const ownSearch = useRef(serializeBoardQuery(initialQuery));
     useEffect(() => {
         const timer = window.setTimeout(() => {
             const search = serializeBoardQuery({ filter, sort, open: openId }, window.location.search);
+            ownSearch.current = serializeBoardQuery({ filter, sort, open: openId });
             if (search !== window.location.search) {
                 window.history.replaceState(null, "", `${window.location.pathname}${search}`);
             }
         }, 250);
         return () => window.clearTimeout(timer);
     }, [filter, sort, openId]);
+    useEffect(() => {
+        const change = urlBoardChange(`?${searchParams.toString()}`, ownSearch.current);
+        if (!change) {
+            return;
+        }
+        ownSearch.current = serializeBoardQuery(change);
+        setFilter(change.filter);
+        setSort(change.sort);
+        setOpenId(change.open);
+        setPeekId(change.open);
+    }, [searchParams]);
 
     const attention = useAttention();
     const attentionIds = useMemo(() => attentionMonitorIds(attention), [attention]);
@@ -312,8 +330,9 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
         const names = failed.map((id) => monitors.find((m) => m.id === id)?.name ?? `#${id}`);
         setSelected(new Set(failed));
         await data.reload();
-        if (names.length > 0) {
-            data.setError(`Could not ${action} ${names.join(", ")}.`);
+        const message = bulkFailureMessage(action, names);
+        if (message) {
+            data.setError(message);
         }
         setBusy(false);
     }
@@ -555,12 +574,17 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
                 <DeleteMonitorsDialog
                     monitors={dialog.monitors}
                     onClose={closeDialog}
-                    onDone={(deleted) => {
+                    onDone={(deleted, failed) => {
                         setSelected((prev) => new Set([...prev].filter((id) => !deleted.includes(id))));
                         if (peekId !== null && deleted.includes(peekId)) {
                             closePeek();
                         }
                         dialogDone();
+                        // The dialog is gone, so failures are reported above the list.
+                        const message = bulkFailureMessage("delete", failed);
+                        if (message) {
+                            data.setError(message);
+                        }
                     }}
                 />
             ) : null}

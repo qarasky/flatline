@@ -21,7 +21,7 @@ import {
     schemaFor,
     type FieldDef,
 } from "@/lib/monitor-schema";
-import { buildMonitorPayload } from "@/lib/monitor-payload";
+import { buildMonitorPayload, notificationsToSend } from "@/lib/monitor-payload";
 import type { MonitorSummary, NotificationSummary } from "@/lib/monitor-types";
 import {
     createMonitor,
@@ -405,7 +405,7 @@ export function MonitorForm({
         setError(null);
         setIgnored([]);
         setSaving(true);
-        const payload = buildMonitorPayload(type, values, notifications ? [...chosen] : undefined);
+        const payload = buildMonitorPayload(type, values, notificationsToSend(type, notifications !== null, chosen));
         try {
             let savedId: number;
             if (editId !== null) {

@@ -12,10 +12,10 @@ export const metadata: Metadata = { title: "Monitor · Flatline" };
 /** A monitor's own page: the same detail as the peek panel, with its groups as breadcrumbs. */
 export default async function MonitorPage({ params }: { params: Promise<{ id: string }> }) {
     const { id: raw } = await params;
-    if (!/^[1-9][0-9]*$/.test(raw)) {
+    const id = Number(raw);
+    if (!/^[1-9][0-9]*$/.test(raw) || !Number.isSafeInteger(id)) {
         notFound();
     }
-    const id = Number(raw);
     try {
         const [{ monitor }, log, roster] = await Promise.all([
             fetchMonitor(id),
@@ -29,7 +29,8 @@ export default async function MonitorPage({ params }: { params: Promise<{ id: st
             </>
         );
     } catch (error) {
-        if (isApiError(error, 404)) {
+        // 400: an id the backend cannot even parse; either way, no such monitor.
+        if (isApiError(error, 404) || isApiError(error, 400)) {
             notFound();
         }
         throw error;

@@ -38,7 +38,7 @@ export function gate(pathname: string, search: string, hasSession: boolean): Gat
  */
 function legacyRoot(params: URLSearchParams): string {
     const id = params.get("m");
-    if (id && /^[1-9][0-9]*$/.test(id)) {
+    if (id && /^[1-9][0-9]*$/.test(id) && Number.isSafeInteger(Number(id))) {
         return `${HOME_PATH}/${id}`;
     }
     const kept = new URLSearchParams();

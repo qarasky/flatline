@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildMonitorPayload } from "@/lib/monitor-payload";
+import { buildMonitorPayload, notificationsToSend } from "@/lib/monitor-payload";
 
 describe("buildMonitorPayload", () => {
     it("drops empty fields and always sends type, thresholds and provider", () => {
@@ -38,5 +38,19 @@ describe("buildMonitorPayload", () => {
         expect(buildMonitorPayload("http", { name: "api", notificationIds: [1] }, [2])).not.toHaveProperty(
             "notificationIds"
         );
+    });
+});
+
+describe("notificationsToSend", () => {
+    it("sends the ticked notifications once the list loaded", () => {
+        expect(notificationsToSend("http", true, new Set([2, 1]))).toEqual([2, 1]);
+    });
+
+    it("sends nothing when the list did not load", () => {
+        expect(notificationsToSend("http", false, new Set([1]))).toBeUndefined();
+    });
+
+    it("sends nothing for a group, whose form has no picker", () => {
+        expect(notificationsToSend("group", true, new Set([1]))).toBeUndefined();
     });
 });
