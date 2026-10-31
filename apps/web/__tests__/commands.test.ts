@@ -75,4 +75,8 @@ describe("buildCommands", () => {
         expect(ids).toContain("new-monitor");
         expect(ids).toContain("sign-out");
     });
+
+    it("opens a server on its Servers page", () => {
+        expect(group("Servers").find((c) => c.label === "db-01")?.href).toBe("/servers/3");
+    });
 });

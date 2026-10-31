@@ -24,4 +24,9 @@ describe("attentionHref", () => {
         expect(attentionHref(item({ kind: "backup", key: "backup:a1b2", monitorId: 4 }))).toBe("/backups/a1b2");
         expect(attentionHref(item({ kind: "backup", key: "backup:c3", monitorId: null }))).toBe("/backups/c3");
     });
+
+    it("opens a silent push monitor or an agent warning on its server page", () => {
+        expect(attentionHref(item({ kind: "stale", monitorId: 3 }))).toBe("/servers/3");
+        expect(attentionHref(item({ kind: "agent", monitorId: 3 }))).toBe("/servers/3");
+    });
 });

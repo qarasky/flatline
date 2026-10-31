@@ -344,6 +344,11 @@ export function MonitorDetail({
                             Edit
                         </Button>
                     )}
+                    {monitor.type === "push" ? (
+                        <Button variant="ghost" size="sm" asChild>
+                            <Link href={`/servers/${monitor.id}`}>Server page</Link>
+                        </Button>
+                    ) : null}
                     {compact ? (
                         <>
                             <Button variant="ghost" size="icon-sm" asChild>

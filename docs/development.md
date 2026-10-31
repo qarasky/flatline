@@ -133,7 +133,8 @@ how fresh the numbers are. `/servers/<id>` adds the agent's report (with Clear w
 load history, containers, linked websites, thresholds and the server's backups. **Backups**
 (`/backups`) lists the backup agents; an agent's page edits its settings, lists
 runs with downloads and recorded checks, and rotates or revokes its token
-(shown once).
+(shown once). Servers open from ⌘K and from Attention's silence and agent-warning
+rows; backup problems open their agent.
 
 ## Conventions
 

@@ -21,14 +21,13 @@ export interface CommandGroup {
 /**
  * What ⌘K offers, in order: the sections, every monitor and group, the
  * servers (push monitors, which report metrics) and the main actions.
- * Monitors and servers open their own page; servers move to `/servers/<id>`
- * once that section exists.
+ * Monitors open their own page and servers their Servers page.
  */
 export function buildCommands(monitors: MonitorSummary[], me: Me): CommandGroup[] {
     const entry = (m: MonitorSummary): Command => ({
         id: `monitor-${m.id}`,
         label: m.name,
-        href: `/monitors/${m.id}`,
+        href: m.type === "push" ? `/servers/${m.id}` : `/monitors/${m.id}`,
         keywords: [m.url, m.hostname, groupPath(monitors, m.parent), m.type].filter(
             (k): k is string => typeof k === "string" && k !== ""
         ),
