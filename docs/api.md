@@ -313,15 +313,15 @@ The last entry is the bucket containing the server's "now", and `start` is the U
 
 ### Notifications and API keys
 
-| Method         | Path                         | Purpose                                                  |
-| -------------- | ---------------------------- | -------------------------------------------------------- |
-| GET            | `/api/v1/notifications`      | List; credential fields are never echoed                 |
-| POST           | `/api/v1/notifications`      | Create (`name`, `type`, `active`, `isDefault`, `config`) |
-| PATCH / DELETE | `/api/v1/notifications/{id}` | Update or delete                                         |
-| GET            | `/api/v1/api-keys`           | List keys (metadata only, with each key's `maker`)       |
-| POST           | `/api/v1/api-keys`           | Mint a full-permission key; `token` returned once        |
-| PATCH          | `/api/v1/api-keys/{id}`      | Enable/disable (`{"active":false}`)                      |
-| DELETE         | `/api/v1/api-keys/{id}`      | Revoke                                                   |
+| Method         | Path                         | Purpose                                                    |
+| -------------- | ---------------------------- | ---------------------------------------------------------- |
+| GET            | `/api/v1/notifications`      | List with `monitorIds`; credential fields are never echoed |
+| POST           | `/api/v1/notifications`      | Create (`name`, `type`, `active`, `isDefault`, `config`)   |
+| PATCH / DELETE | `/api/v1/notifications/{id}` | Update (an omitted or empty bot token is kept) or delete   |
+| GET            | `/api/v1/api-keys`           | List keys (metadata only, with each key's `maker`)         |
+| POST           | `/api/v1/api-keys`           | Mint a full-permission key; `token` returned once          |
+| PATCH          | `/api/v1/api-keys/{id}`      | Enable/disable (`{"active":false}`)                        |
+| DELETE         | `/api/v1/api-keys/{id}`      | Revoke                                                     |
 
 ### Status pages (public reads, password-gated)
 

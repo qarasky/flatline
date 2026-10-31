@@ -21,6 +21,13 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, ApiError
     .fetch_all(&state.pool)
     .await
     .map_err(internal)?;
+    // Which monitors use each notification (read-only on the Notifications page).
+    let links: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT notification_id, monitor_id FROM monitor_notifications ORDER BY notification_id, monitor_id",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(internal)?;
 
     let notifications: Vec<Value> = rows
         .iter()
@@ -37,6 +44,11 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, ApiError
                 "active": *active != 0,
                 "isDefault": *is_default != 0,
                 "config": parsed,
+                "monitorIds": links
+                    .iter()
+                    .filter(|(notification, _)| notification == id)
+                    .map(|(_, monitor)| *monitor)
+                    .collect::<Vec<_>>(),
             })
         })
         .collect();
@@ -141,7 +153,7 @@ pub async fn patch(
         .and_then(Value::as_bool)
         .unwrap_or(is_default != 0);
     let config = match payload.get("config") {
-        Some(value) if value.is_object() => value.to_string(),
+        Some(Value::Object(next)) => keep_bot_token(next.clone(), &config).to_string(),
         Some(_) => return Err(ApiError::bad("`config` must be a JSON object.")),
         None => config,
     };
@@ -185,6 +197,27 @@ pub async fn delete(
     state.events.invalidate();
 
     Ok(Json(json!({ "ok": true, "deleted": id })))
+}
+
+/// The list never returns the bot token, so an edit that leaves it out (or
+/// sends it empty) keeps the stored one instead of wiping it.
+fn keep_bot_token(mut next: serde_json::Map<String, Value>, stored: &str) -> Value {
+    let missing = next
+        .get("telegramBotToken")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty);
+    if missing {
+        let stored: Value = serde_json::from_str(stored).unwrap_or_else(|_| json!({}));
+        match stored.get("telegramBotToken") {
+            Some(token) => {
+                next.insert("telegramBotToken".to_string(), token.clone());
+            }
+            None => {
+                next.remove("telegramBotToken");
+            }
+        }
+    }
+    Value::Object(next)
 }
 
 fn internal(error: sqlx::Error) -> ApiError {
