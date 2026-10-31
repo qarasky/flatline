@@ -70,7 +70,7 @@ function isServer(): boolean {
     return typeof window === "undefined";
 }
 
-function apiBase(): string {
+export function apiBase(): string {
     return (process.env.API_URL || DEFAULT_API_URL).replace(/\/+$/, "");
 }
 

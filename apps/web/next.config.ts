@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { NextConfig } from "next";
 
 // Where the Rust backend listens. In production Caddy routes /api and /agent
@@ -11,10 +13,27 @@ const apiUrl = (process.env.API_URL || "http://127.0.0.1:3001").replace(/\/+$/, 
 // blocks the app's scripts there, so pages never hydrate. Dev only.
 const devOrigins = ["127.0.0.1", ...(process.env.FLATLINE_DEV_ORIGINS ?? "").split(",").filter(Boolean)];
 
+// The repository root: `@flatline/shared` lives in packages/, outside this
+// app, and Turbopack resolves nothing outside its root. The standalone
+// output traces from the same root (so its server is at apps/web/server.js).
+const repoRoot = path.resolve(__dirname, "../..");
+
 const nextConfig: NextConfig = {
     output: "standalone",
+    outputFileTracingRoot: repoRoot,
+    turbopack: { root: repoRoot },
+    transpilePackages: ["@flatline/shared"],
     poweredByHeader: false,
     allowedDevOrigins: devOrigins,
+    // Status pages are advisory-noindexed in their headers too (docs/status-pages.md, "Indexing").
+    async headers() {
+        return [
+            {
+                source: "/status/:path*",
+                headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow, noarchive, nosnippet" }],
+            },
+        ];
+    },
     async rewrites() {
         return [
             { source: "/api/:path*", destination: `${apiUrl}/api/:path*` },
