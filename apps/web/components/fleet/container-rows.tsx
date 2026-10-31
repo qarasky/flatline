@@ -1,3 +1,5 @@
+"use client";
+
 import { containerIssue, containerStatsSummary, containerTone, type FleetContainer } from "@/lib/fleet-presentation";
 
 const SYMBOLS = { up: "●", stopped: "■", bad: "!", pending: "◐" };

@@ -1,3 +1,5 @@
+"use client";
+
 import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 import { usageTone } from "@/components/fleet/metric-bar";

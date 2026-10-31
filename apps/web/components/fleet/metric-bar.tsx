@@ -1,3 +1,5 @@
+"use client";
+
 import { cn } from "@/lib/utils";
 
 export type BarTone = "ok" | "warn" | "bad" | "muted";
