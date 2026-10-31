@@ -130,7 +130,10 @@ the sidebar. `⌘K` / `Ctrl+K` (or Search in the sidebar) jumps to any section,
 monitor or server, or runs New monitor, Superboard, Change password or Sign out. **Servers**
 (`/servers`) lists every push monitor with live CPU, RAM and fullest-disk use and
 how fresh the numbers are. `/servers/<id>` adds the agent's report (with Clear warnings),
-load history, containers, linked websites, thresholds and the server's backups.
+load history, containers, linked websites, thresholds and the server's backups. **Backups**
+(`/backups`) lists the backup agents; an agent's page edits its settings, lists
+runs with downloads and recorded checks, and rotates or revokes its token
+(shown once).
 
 ## Conventions
 

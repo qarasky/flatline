@@ -20,7 +20,8 @@ describe("attentionHref", () => {
         expect(attentionHref(item({ monitorId: 7 }))).toBe("/monitors?m=7");
     });
 
-    it("sends a backup agent with no monitor to Backups", () => {
-        expect(attentionHref(item({ kind: "backup", monitorId: null }))).toBe("/backups");
+    it("opens a backup problem on its agent's page", () => {
+        expect(attentionHref(item({ kind: "backup", key: "backup:a1b2", monitorId: 4 }))).toBe("/backups/a1b2");
+        expect(attentionHref(item({ kind: "backup", key: "backup:c3", monitorId: null }))).toBe("/backups/c3");
     });
 });

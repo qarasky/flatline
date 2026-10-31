@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
 
+import { BackupsList } from "@/components/backups/backups-list";
+import { NewAgentDialog } from "@/components/backups/new-agent-dialog";
 import { PageHeader } from "@/components/page-header";
-import { SectionPlaceholder } from "@/components/section-placeholder";
 
 export const metadata: Metadata = { title: "Backups · Flatline" };
 
 export default function BackupsPage() {
     return (
         <>
-            <PageHeader crumbs={[{ label: "Backups" }]} />
-            <SectionPlaceholder title="Backups" part={3} />
+            <PageHeader crumbs={[{ label: "Backups" }]} actions={<NewAgentDialog />} />
+            <BackupsList />
         </>
     );
 }
