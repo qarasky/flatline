@@ -56,6 +56,14 @@ export function MembersList({ members, meId }: { members: Member[]; meId: number
                                 {own && <span className="text-muted-foreground font-normal"> (you)</span>}
                             </span>
                             <span className="text-muted-foreground min-w-0 flex-1 truncate">{member.email}</span>
+                            {member.tokenCount > 0 && (
+                                <Link
+                                    href="/tokens"
+                                    className="text-muted-foreground text-xs tabular-nums hover:underline"
+                                >
+                                    {member.tokenCount} token{member.tokenCount === 1 ? "" : "s"}
+                                </Link>
+                            )}
                             {status && (
                                 <Badge variant="outline" className={status.className}>
                                     {status.label}
