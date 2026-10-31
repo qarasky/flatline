@@ -38,7 +38,9 @@ export function NotificationsList() {
     const [records, setRecords] = useState<NotificationRecord[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [editing, setEditing] = useState<Editing>(null);
+    // The record stays after the dialog closes, so its text holds while it fades out.
     const [deleting, setDeleting] = useState<NotificationRecord | null>(null);
+    const [deleteOpen, setDeleteOpen] = useState(false);
     const [busy, setBusy] = useState(false);
     const [open, setOpen] = useState<Set<number>>(new Set());
     const names = new Map(monitors.map((m) => [m.id, m.name]));
@@ -59,11 +61,11 @@ export function NotificationsList() {
         setBusy(true);
         try {
             await deleteNotification(record.id);
-            setDeleting(null);
+            setDeleteOpen(false);
             await load();
         } catch (e) {
             setError(e instanceof Error ? e.message : "Could not delete the notification.");
-            setDeleting(null);
+            setDeleteOpen(false);
         } finally {
             setBusy(false);
         }
@@ -152,7 +154,10 @@ export function NotificationsList() {
                                             <DropdownMenuSeparator />
                                             <DropdownMenuItem
                                                 variant="destructive"
-                                                onSelect={() => setDeleting(record)}
+                                                onSelect={() => {
+                                                    setDeleting(record);
+                                                    setDeleteOpen(true);
+                                                }}
                                             >
                                                 Delete…
                                             </DropdownMenuItem>
@@ -188,7 +193,7 @@ export function NotificationsList() {
                     }}
                 />
             ) : null}
-            <Dialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
+            <Dialog open={deleteOpen} onOpenChange={(o) => !o && setDeleteOpen(false)}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle>Delete {deleting?.name}?</DialogTitle>
@@ -199,7 +204,7 @@ export function NotificationsList() {
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>
-                        <Button variant="ghost" onClick={() => setDeleting(null)} disabled={busy}>
+                        <Button variant="ghost" onClick={() => setDeleteOpen(false)} disabled={busy}>
                             Cancel
                         </Button>
                         <Button variant="destructive" disabled={busy} onClick={() => deleting && void remove(deleting)}>

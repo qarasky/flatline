@@ -59,7 +59,7 @@ export function NotificationDialog({
         setBusy(true);
         setError(null);
         try {
-            const body = notificationBody(values, editing);
+            const body = notificationBody(values, record);
             if (record) {
                 await updateNotification(record.id, body);
             } else {
@@ -96,7 +96,7 @@ export function NotificationDialog({
                         <Input
                             id="notification-token"
                             type="password"
-                            autoComplete="off"
+                            autoComplete="new-password"
                             value={values.botToken}
                             onChange={(e) => set("botToken", e.target.value)}
                             placeholder={editing ? "Leave empty to keep the current token" : "123456:ABC…"}

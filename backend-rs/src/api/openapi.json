@@ -1541,10 +1541,32 @@
         "/api/v1/notifications": {
             "get": {
                 "summary": "List notification configs",
-                "description": "Requires the `read` scope. `telegramBotToken` is redacted. Only the `telegram` type exists in this build. Each notification carries `monitorIds`: the monitors that alert through it, ascending. The bot token is never returned.",
+                "description": "Only the `telegram` type exists in this build. Each notification carries `monitorIds`: the monitors that alert through it, ascending. The bot token (`telegramBotToken`) is never returned.",
                 "responses": {
                     "200": {
                         "description": "Notifications with secrets redacted"
+                    }
+                }
+            },
+            "post": {
+                "summary": "Create a notification",
+                "description": "Body `{name, type?, active?, isDefault?, config}`; `type` defaults to `telegram`, `active` to true, `isDefault` to false. For Telegram, `config` holds `telegramBotToken`, `telegramChatID` and optionally `telegramMessageThreadID`, `telegramSendSilently` and `telegramProtectContent`.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "`{ok, id}`"
+                    },
+                    "400": {
+                        "description": "The body or its `config` is not a JSON object."
                     }
                 }
             }

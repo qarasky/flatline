@@ -63,7 +63,6 @@ async fn listed(h: &Harness, id: i64) -> Value {
 }
 
 fn patch(h: &Harness, id: i64, body: Value) -> axum::http::Request<axum::body::Body> {
-    let _ = h;
     request("PATCH", &format!("/api/v1/notifications/{id}"), Some(&h.token), Some(body))
 }
 

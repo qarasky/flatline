@@ -46,7 +46,13 @@ export function TokensList({ me }: { me: Me }) {
     const now = useClock(30_000);
     const [keys, setKeys] = useState<TokenKey[] | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // The pending action stays after the dialog closes, so its text holds while it fades out.
     const [pending, setPending] = useState<Pending>(null);
+    const [confirmOpen, setConfirmOpen] = useState(false);
+    const ask = (next: NonNullable<Pending>) => {
+        setPending(next);
+        setConfirmOpen(true);
+    };
     const [busy, setBusy] = useState(false);
 
     const load = useCallback(async () => {
@@ -65,7 +71,7 @@ export function TokensList({ me }: { me: Me }) {
         setBusy(true);
         try {
             await action();
-            setPending(null);
+            setConfirmOpen(false);
             if (signsOut) {
                 // This browser's session stopped with its token: reloading lands on sign-in.
                 window.location.reload();
@@ -74,7 +80,7 @@ export function TokensList({ me }: { me: Me }) {
             await load();
         } catch (e) {
             setError(e instanceof Error ? e.message : "The change did not go through.");
-            setPending(null);
+            setConfirmOpen(false);
         } finally {
             setBusy(false);
         }
@@ -151,13 +157,13 @@ export function TokensList({ me }: { me: Me }) {
                                                     <DropdownMenuItem
                                                         onSelect={() =>
                                                             row.isCurrent
-                                                                ? setPending({ kind: "disable", key })
+                                                                ? ask({ kind: "disable", key })
                                                                 : void run(() => setTokenActive(key.id, false), false)
                                                         }
                                                     >
                                                         Disable
                                                     </DropdownMenuItem>
-                                                ) : (
+                                                ) : row.status === "expired" ? null : (
                                                     <DropdownMenuItem
                                                         onSelect={() =>
                                                             void run(() => setTokenActive(key.id, true), false)
@@ -169,7 +175,7 @@ export function TokensList({ me }: { me: Me }) {
                                                 <DropdownMenuSeparator />
                                                 <DropdownMenuItem
                                                     variant="destructive"
-                                                    onSelect={() => setPending({ kind: "delete", key })}
+                                                    onSelect={() => ask({ kind: "delete", key })}
                                                 >
                                                     Delete…
                                                 </DropdownMenuItem>
@@ -182,7 +188,7 @@ export function TokensList({ me }: { me: Me }) {
                     </tbody>
                 </table>
             )}
-            <Dialog open={pending !== null} onOpenChange={(o) => !o && setPending(null)}>
+            <Dialog open={confirmOpen} onOpenChange={(o) => !o && setConfirmOpen(false)}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle>
@@ -196,7 +202,7 @@ export function TokensList({ me }: { me: Me }) {
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>
-                        <Button variant="ghost" onClick={() => setPending(null)} disabled={busy}>
+                        <Button variant="ghost" onClick={() => setConfirmOpen(false)} disabled={busy}>
                             Cancel
                         </Button>
                         <Button

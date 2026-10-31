@@ -96,11 +96,19 @@ export function MintTokenDialog({ onMinted }: { onMinted: () => void }) {
 
     return (
         <>
-            <Button size="sm" onClick={() => setOpen(true)}>
+            <Button
+                size="sm"
+                onClick={() => {
+                    setName("");
+                    setExpiry("never");
+                    setError(null);
+                    setOpen(true);
+                }}
+            >
                 <Plus />
                 New token
             </Button>
-            <Dialog open={open} onOpenChange={setOpen}>
+            <Dialog open={open} onOpenChange={(next) => !busy && setOpen(next)}>
                 <DialogContent className="sm:max-w-md">
                     <form onSubmit={(e) => void submit(e)} className="grid gap-4">
                         <DialogHeader>
