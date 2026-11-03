@@ -28,7 +28,7 @@ import (
 var version = "1.8.2"
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `superboard %s — Flatline fleet agent
+	fmt.Fprintf(os.Stderr, `superboard %s — KoreMonitor fleet agent
 
 Usage:
   superboard run [--config PATH]

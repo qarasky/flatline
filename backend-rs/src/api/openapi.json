@@ -1,7 +1,7 @@
 {
     "openapi": "3.1.0",
     "info": {
-        "title": "Flatline API",
+        "title": "KoreMonitor API",
         "version": "1.0.0",
         "description": "Monitoring API for automation and agents. Every response includes an `ok` boolean. Authenticate machine calls with `Authorization: Bearer <token>`. Credential families: `flatline_op_...` operator API token (every /api/v1 call; people sign in to the web app with Kore ID), `flatline_agent_push_...` host agent (only /api/push/{token} and /agent/*), `flatline_agent_backup_...` backup agent (only /api/backup/v1). Using a credential on the wrong surface returns an explicit error code with a `hint`. Failures use `{ ok, error, code, message, hint?, details? }`. A Kore ID access token (a JWT whose audience is this app's client id) is also accepted as `Authorization: Bearer` for an account that has signed in through Kore ID."
     },

@@ -341,7 +341,7 @@ async fn import_monitors(
     report: &mut ImportReport,
 ) -> anyhow::Result<()> {
     if !table_exists(old, "monitor").await {
-        bail!("old database has no `monitor` table — is this a Flatline database?");
+        bail!("old database has no `monitor` table — is this a KoreMonitor database?");
     }
     let cols = columns(old, "monitor").await;
     let rows = sqlx::query("SELECT * FROM monitor ORDER BY id")
