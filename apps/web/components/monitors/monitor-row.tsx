@@ -116,7 +116,7 @@ export const MonitorRow = memo(function MonitorRow({
                         status === "up"
                             ? "text-muted"
                             : muted
-                              ? "text-status-muted font-medium"
+                              ? "text-status-down-muted font-medium"
                               : `${statusTone(status)} font-medium`
                     )}
                 >

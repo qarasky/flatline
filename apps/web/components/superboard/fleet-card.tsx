@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useEffect, useState } from "react";
-import { IconButton, StatusDot, cn, type Status } from "@qarasky/kore-ui";
+import { IconButton, StatusDot, pointFromEvent, type MenuPoint, type Status } from "@qarasky/kore-ui";
 import { MoreHorizontal } from "lucide-react";
 import type {
     BackupAgentSummary,
@@ -154,7 +154,7 @@ export const FleetCard = memo(function FleetCard({
     peakFresh: boolean;
     onOpenHistory: (id: number) => void;
     /** Open the card's action menu at a viewport point. */
-    onMenu: (x: number, y: number, monitor: MonitorSummary) => void;
+    onMenu: (point: MenuPoint, monitor: MonitorSummary) => void;
 }) {
     const { monitor, metrics, time } = server;
     const { containers, issues, hot } = fleetAttention(metrics, time, monitor.interval || 60);
@@ -254,7 +254,7 @@ export const FleetCard = memo(function FleetCard({
             aria-label={`${displayName}: ${headline}${attention === "muted" ? ", muted" : ""}`}
             onContextMenu={(e) => {
                 e.preventDefault();
-                onMenu(e.clientX, e.clientY, monitor);
+                onMenu(pointFromEvent(e), monitor);
             }}
         >
             <header className="fleet-heading">
@@ -303,7 +303,7 @@ export const FleetCard = memo(function FleetCard({
                             <StatusDot
                                 status={attentionDot(attention, monitor.status)}
                                 aria-hidden="true"
-                                className={cn(attention === "muted" && "[&_span]:bg-status-muted")}
+                                muted={attention === "muted"}
                             />
                             {headline}
                         </span>
@@ -315,7 +315,7 @@ export const FleetCard = memo(function FleetCard({
                             className="fleet-card-more"
                             onClick={(e) => {
                                 const rect = e.currentTarget.getBoundingClientRect();
-                                onMenu(rect.left, rect.bottom + 4, monitor);
+                                onMenu({ x: rect.left, y: rect.bottom + 4 }, monitor);
                             }}
                         />
                     </span>

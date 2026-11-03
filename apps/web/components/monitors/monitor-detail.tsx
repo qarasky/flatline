@@ -330,7 +330,7 @@ export function MonitorDetail({
                 </span>
                 <Badge>{monitor.type}</Badge>
                 {covered ? (
-                    <span className="text-status-muted text-meta">
+                    <span className="text-status-down-muted text-meta">
                         {ownMute
                             ? monitor.mute?.mutedAt
                                 ? `Muted ${ageOf(monitor.mute.mutedAt, now)} ago`

@@ -159,8 +159,8 @@ function Superboard({
     const [menu, setMenu] = useState<MenuAnchor | null>(null);
     const [renaming, setRenaming] = useState<{ monitor: MonitorSummary; name: string } | null>(null);
     const [linkServer, setLinkServer] = useState<MonitorSummary | null>(null);
-    const openMenu = useCallback((x: number, y: number, monitor: MonitorSummary) => {
-        setMenu({ x, y, monitor });
+    const openMenu = useCallback((point: MenuAnchor["point"], monitor: MonitorSummary) => {
+        setMenu({ point, monitor });
     }, []);
 
     // Menu contents for the current anchor. "Clear agent warnings" only
@@ -633,14 +633,7 @@ function Superboard({
                                 label={mutedCount > 0 ? "Nothing new" : "All hosts up"}
                             />
                         )}
-                        {mutedCount > 0 ? (
-                            <StatusDot
-                                status="down"
-                                label={`${mutedCount} muted`}
-                                tintLabel={false}
-                                className="[&>span:first-child_span]:bg-status-muted [&>span:last-child]:text-muted"
-                            />
-                        ) : null}
+                        {mutedCount > 0 ? <StatusDot status="down" label={`${mutedCount} muted`} muted /> : null}
                         {position}
                         <Clock />
                     </span>
@@ -658,7 +651,9 @@ function Superboard({
                     <span className="text-meta text-muted">
                         <span className="tnum">{servers.length}</span> {servers.length === 1 ? "server" : "servers"}
                         {down > 0 ? <span className="ml-1 font-semibold text-status-down">· {down} down</span> : null}
-                        {mutedCount > 0 ? <span className="ml-1 text-status-muted">· {mutedCount} muted</span> : null}
+                        {mutedCount > 0 ? (
+                            <span className="ml-1 text-status-down-muted">· {mutedCount} muted</span>
+                        ) : null}
                     </span>
                     <div className="ml-auto flex items-center gap-3">
                         {position}

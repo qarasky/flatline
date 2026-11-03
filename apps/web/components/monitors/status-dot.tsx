@@ -33,12 +33,12 @@ export function statusTone(status: StatusKey): string {
 export function StatusDot({
     status,
     title,
+    size = "md",
     muted = false,
     className,
 }: {
     status: StatusKey;
-    /** Kept for callers that still pass it; kore-ui's dot has one size (8px). */
-    size?: number;
+    size?: "sm" | "md" | "lg";
     title?: string;
     /** An acknowledged outage: a down mark in the dim red. */
     muted?: boolean;
@@ -47,10 +47,11 @@ export function StatusDot({
     return (
         <KoreStatusDot
             status={KORE[status]}
+            size={size}
+            muted={muted}
             role="img"
             aria-label={title ?? STATUS_LABEL[status]}
-            data-muted={(muted && status === "down") || undefined}
-            className={cn("shrink-0", muted && status === "down" && "[&_span]:bg-status-muted", className)}
+            className={cn("shrink-0", className)}
         />
     );
 }

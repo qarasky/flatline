@@ -10,12 +10,11 @@
 @source "../node_modules/@qarasky/kore-ui/src";
 
 /*
- * Monitoring states kore-ui has no token for: a down monitor that is muted
- * (acknowledged, dimmed red) and a critical resource level (a deeper red
- * than down, for fleet meters).
+ * A monitoring state kore-ui has no token for: a critical resource level
+ * (a deeper red than down, for fleet meters). The muted down colour is
+ * kore-ui's `status-down-muted`.
  */
 @theme {
-    --color-status-muted: #8a3a3d;
     --color-status-critical: #c0262c;
 }
 
@@ -479,7 +478,7 @@
     border-color: var(--color-status-down);
 }
 .fleet-card[data-attention="muted"] {
-    border-color: var(--color-status-muted);
+    border-color: var(--color-status-down-muted);
 }
 .fleet-heading {
     display: flex;
@@ -550,14 +549,14 @@
     background: color-mix(in srgb, var(--color-status-down) 4%, transparent);
 }
 [data-attention="muted"] .fleet-status {
-    color: var(--color-status-muted);
-    border-color: color-mix(in srgb, var(--color-status-muted) 40%, transparent);
-    background: color-mix(in srgb, var(--color-status-muted) 4%, transparent);
+    color: var(--color-status-down-muted);
+    border-color: color-mix(in srgb, var(--color-status-down-muted) 40%, transparent);
+    background: color-mix(in srgb, var(--color-status-down-muted) 4%, transparent);
 }
 .fleet-muted {
     font-size: var(--fleet-small);
     line-height: 1.5;
-    color: var(--color-status-muted);
+    color: var(--color-status-down-muted);
 }
 /* CPU, then RAM and Disk on their own full-width rows. */
 .fleet-primary {

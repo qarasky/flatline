@@ -11,8 +11,7 @@
     },
     "dependencies": {
         "@flatline/shared": "file:../../packages/shared",
-        "@qarasky/kore-ui": "https://codeload.github.com/qarasky/kore-ui/tar.gz/refs/tags/v0.1.1",
-        "cmdk": "^1.1.1",
+        "@qarasky/kore-ui": "https://codeload.github.com/qarasky/kore-ui/tar.gz/refs/tags/v0.2.0",
         "lucide-react": "^1.67.0",
         "next": "16.4.2",
         "qrcode-generator": "^2.0.4",

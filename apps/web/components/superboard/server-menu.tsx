@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
     Button,
     Dialog,
@@ -9,19 +9,17 @@ import {
     DialogFooter,
     Field,
     Input,
-    Menu,
-    MenuContent,
     MenuItem as KoreMenuItem,
     MenuSeparator,
-    MenuTrigger,
+    PointMenu,
+    type MenuPoint,
 } from "@qarasky/kore-ui";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { updateMonitor } from "@/lib/monitors-api";
 import { cleanMonitorName } from "@/lib/fleet-presentation";
 
 export interface MenuAnchor {
-    x: number;
-    y: number;
+    point: MenuPoint;
     monitor: MonitorSummary;
 }
 
@@ -33,26 +31,14 @@ export interface MenuItem {
 }
 
 /**
- * Right-click / "More actions" menu for a server card: kore-ui's Menu,
- * anchored at a point (the pointer, or the card's ⋯ button). The caller
+ * Right-click / "More actions" menu for a server card: kore-ui's PointMenu,
+ * opened at a point (the pointer, or the card's ⋯ button). The caller
  * supplies the items; the menu only handles anchoring and dismissal.
  *
  * Radix closes it on Escape and outside pointer; scroll and resize close it
- * too, since the anchor point would no longer match. Focus lands on the
- * first item when it opens so keyboard operators are not stranded.
+ * too, since the anchor point would no longer match the card.
  */
 export function ServerMenu({ anchor, items, onClose }: { anchor: MenuAnchor; items: MenuItem[]; onClose: () => void }) {
-    const content = useRef<HTMLDivElement>(null);
-
-    // Radix focuses the panel itself; put focus on the first item, as a
-    // keyboard-opened menu does, once it has mounted.
-    useEffect(() => {
-        const frame = window.requestAnimationFrame(() =>
-            content.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
-        );
-        return () => window.cancelAnimationFrame(frame);
-    }, [anchor]);
-
     useEffect(() => {
         const onDismiss = () => onClose();
         window.addEventListener("scroll", onDismiss, true);
@@ -72,35 +58,11 @@ export function ServerMenu({ anchor, items, onClose }: { anchor: MenuAnchor; ite
     );
 
     return (
-        <Menu
-            open
-            modal={false}
-            onOpenChange={(open) => {
-                if (!open) {
-                    onClose();
-                }
-            }}
-        >
-            {/* A zero-size point the menu anchors to; Radix keeps it on screen. */}
-            <MenuTrigger asChild>
-                <span
-                    aria-hidden="true"
-                    className="pointer-events-none fixed size-0"
-                    style={{ left: anchor.x, top: anchor.y }}
-                />
-            </MenuTrigger>
-            <MenuContent
-                aria-label={`Actions for ${anchor.monitor.name || "server"}`}
-                onContextMenu={(e) => e.preventDefault()}
-                ref={content}
-                // The anchor is not focusable: leave focus where the operator was.
-                onCloseAutoFocus={(e) => e.preventDefault()}
-            >
-                {regular.map(render)}
-                {regular.length > 0 && destructive.length > 0 ? <MenuSeparator /> : null}
-                {destructive.map(render)}
-            </MenuContent>
-        </Menu>
+        <PointMenu point={anchor.point} onClose={onClose} label={`Actions for ${anchor.monitor.name || "server"}`}>
+            {regular.map(render)}
+            {regular.length > 0 && destructive.length > 0 ? <MenuSeparator /> : null}
+            {destructive.map(render)}
+        </PointMenu>
     );
 }
 

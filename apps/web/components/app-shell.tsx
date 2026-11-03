@@ -115,10 +115,9 @@ export function AdminShell({
         me.principal === "account"
             ? { name, email: me.account.email }
             : { name, email: "Signed in with an operator token" };
-    // Without Kore ID there is no Kore ID account page: the menu's account entry opens the password page.
-    const accountUrl = methods.accountUrl ?? PASSWORD_PATH;
-    const canChangePassword =
-        me.principal === "account" && !me.account.sso && methods.localLogin && methods.accountUrl !== null;
+    // The menu shows the Kore ID account entry only while Kore ID is on; without it,
+    // a local account changes its password through the child item below.
+    const canChangePassword = me.principal === "account" && !me.account.sso && methods.localLogin;
     const hasApps = Object.keys(methods.apps).length > 0;
 
     return (
@@ -142,8 +141,7 @@ export function AdminShell({
                             ) : null}
                             <AccountMenu
                                 user={user}
-                                accountUrl={accountUrl}
-                                labels={methods.accountUrl ? undefined : { account: "Change password" }}
+                                accountUrl={methods.accountUrl ?? undefined}
                                 apps={{ urls: methods.apps, current: KORE_APP, names: KORE_NAMES }}
                                 onSignOut={signOut}
                             >
