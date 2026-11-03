@@ -407,14 +407,21 @@ fn token_login_disabled() -> ApiError {
     .with_hint("Operator tokens still work as `Authorization: Bearer` on /api/v1. Sign in with Kore ID in the browser.")
 }
 
-/// GET /api/v1/auth/sso/config — public. What the sign-in page offers.
+/// GET /api/v1/auth/sso/config — public. What the sign-in page offers, and
+/// for the account menu the Kore ID account page and the other Kore apps.
 pub async fn sso_config(State(state): State<AppState>) -> Json<Value> {
+    let kore = state.sso.as_ref().map(|sso| &sso.config);
+    let apps: serde_json::Map<String, Value> = kore
+        .map(|k| k.app_urls.iter().map(|(app, url)| (app.clone(), json!(url))).collect())
+        .unwrap_or_default();
     Json(json!({
         "ok": true,
         "sso": state.sso.is_some(),
         "provider": "Kore ID",
         "localLogin": state.config.local_login,
         "tokenLogin": state.config.token_login,
+        "accountUrl": kore.map(|k| k.account_url.clone()),
+        "apps": apps,
     }))
 }
 

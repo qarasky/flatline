@@ -92,6 +92,8 @@ services:
       KORE_ID_AUTO_PROVISION: ${KORE_ID_AUTO_PROVISION:-true}
       KORE_ID_ALLOWED_EMAILS: ${KORE_ID_ALLOWED_EMAILS:-}
       KORE_ID_ALLOWED_SUBS: ${KORE_ID_ALLOWED_SUBS:-}
+      KORE_APP_URLS: ${KORE_APP_URLS:-}
+      KORE_ID_ACCOUNT_URL: ${KORE_ID_ACCOUNT_URL:-}
       # Set to false to turn email/password (or operator-token) sign-in off.
       FLATLINE_LOCAL_LOGIN: ${FLATLINE_LOCAL_LOGIN:-true}
       FLATLINE_TOKEN_LOGIN: ${FLATLINE_TOKEN_LOGIN:-true}

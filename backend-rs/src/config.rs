@@ -73,6 +73,13 @@ pub struct KoreIdConfig {
     /// Optional extra filter: provider `sub` values that may get an account
     /// on first sign-in.
     pub allowed_subs: Vec<String>,
+    /// The person's Kore ID account page, linked from the account menu
+    /// (`KORE_ID_ACCOUNT_URL`, default `<issuer>/account`).
+    pub account_url: String,
+    /// The other Kore apps for the app switcher (`KORE_APP_URLS`, e.g.
+    /// `kore=https://files.example,koremind=https://mind.example`). Only the
+    /// keys `kore`, `koremind`, `korecalendar` and `flatline` are kept.
+    pub app_urls: Vec<(String, String)>,
 }
 
 fn flag(
@@ -95,6 +102,28 @@ fn list(lookup: &impl Fn(&str) -> Option<String>, name: &str) -> Vec<String> {
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .collect()
+}
+
+/// `KORE_APP_URLS`: `app=https://url` pairs for the Kore app switcher.
+fn app_urls(lookup: &impl Fn(&str) -> Option<String>) -> anyhow::Result<Vec<(String, String)>> {
+    const APPS: [&str; 4] = ["kore", "koremind", "korecalendar", "flatline"];
+    let mut urls = Vec::new();
+    for pair in list(lookup, "KORE_APP_URLS") {
+        let Some((app, url)) = pair.split_once('=') else {
+            anyhow::bail!("KORE_APP_URLS entries look like app=https://url, got {pair:?}");
+        };
+        let (app, url) = (app.trim().to_ascii_lowercase(), url.trim().to_string());
+        if !APPS.contains(&app.as_str()) {
+            anyhow::bail!("KORE_APP_URLS: unknown app {app:?} (kore, koremind, korecalendar, flatline)");
+        }
+        let parsed = reqwest::Url::parse(&url)
+            .map_err(|e| anyhow::anyhow!("KORE_APP_URLS: {app} is not a URL ({url:?}): {e}"))?;
+        if !matches!(parsed.scheme(), "https" | "http") {
+            anyhow::bail!("KORE_APP_URLS: {app} must be an http(s) URL, got {url:?}");
+        }
+        urls.push((app, url));
+    }
+    Ok(urls)
 }
 
 impl KoreIdConfig {
@@ -136,7 +165,6 @@ impl KoreIdConfig {
             Some(other) => anyhow::bail!("KORE_ID_CLIENT_AUTH must be basic or post, got {other:?}"),
         };
         Ok(Some(Self {
-            issuer,
             client_id: set("KORE_ID_CLIENT_ID").unwrap_or_else(|| "flatline".to_string()),
             client_secret: set("KORE_ID_CLIENT_SECRET"),
             client_auth_post,
@@ -148,6 +176,9 @@ impl KoreIdConfig {
                 .map(|e| e.to_lowercase())
                 .collect(),
             allowed_subs: list(lookup, "KORE_ID_ALLOWED_SUBS"),
+            account_url: set("KORE_ID_ACCOUNT_URL").unwrap_or_else(|| format!("{issuer}/account")),
+            app_urls: app_urls(lookup)?,
+            issuer,
         }))
     }
 }
@@ -309,6 +340,29 @@ mod tests {
         ])
         .unwrap();
         assert!(!off.kore_id.unwrap().auto_provision);
+
+        let apps = config(&[
+            ("KORE_ID_ISSUER", "https://id.kore.example"),
+            ("FLATLINE_PUBLIC_URL", "https://uptime.example"),
+            ("KORE_APP_URLS", "kore=https://files.example, koremind=https://mind.example"),
+        ])
+        .unwrap()
+        .kore_id
+        .unwrap();
+        assert_eq!(apps.account_url, "https://id.kore.example/account");
+        assert_eq!(
+            apps.app_urls,
+            [
+                ("kore".to_string(), "https://files.example".to_string()),
+                ("koremind".to_string(), "https://mind.example".to_string())
+            ]
+        );
+        assert!(config(&[
+            ("KORE_ID_ISSUER", "https://id.kore.example"),
+            ("FLATLINE_PUBLIC_URL", "https://uptime.example"),
+            ("KORE_APP_URLS", "files=https://files.example"),
+        ])
+        .is_err());
     }
 
     #[test]

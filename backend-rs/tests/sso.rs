@@ -194,6 +194,8 @@ fn kore(mock: &Mock, emails: &[&str], subs: &[&str]) -> KoreIdConfig {
         redirect_uri: "https://uptime.example/api/v1/auth/sso/callback".into(),
         post_logout_redirect_uri: "https://uptime.example/sign-in".into(),
         auto_provision: true,
+        account_url: format!("{}/account", mock.issuer),
+        app_urls: vec![("kore".into(), "https://files.example".into())],
         allowed_emails: emails.iter().map(|e| e.to_string()).collect(),
         allowed_subs: subs.iter().map(|s| s.to_string()).collect(),
     }
@@ -553,6 +555,8 @@ async fn local_login_can_be_switched_off_without_touching_bearer_tokens() {
 
     let (_, body) = send(&app, request("GET", "/api/v1/auth/sso/config", None, None)).await;
     assert_eq!((body["sso"].clone(), body["localLogin"].clone(), body["tokenLogin"].clone()), (json!(true), json!(false), json!(false)));
+    assert_eq!(body["accountUrl"], format!("{}/account", mock.issuer));
+    assert_eq!(body["apps"], json!({"kore": "https://files.example"}));
 
     // The operator token as a bearer, for scripts and AI agents, still works.
     let (status, _) = send(&app, request("GET", "/api/v1/monitors", Some(&h.token), None)).await;

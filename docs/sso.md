@@ -138,18 +138,20 @@ the one you expect.
 
 ## Configuration
 
-| Variable                                       | Default                                          | Meaning                                                                                                                    |
-| ---------------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `KORE_ID_ISSUER`                               | unset (SSO off)                                  | Provider base URL, e.g. `https://id.kore.example`. `https` required except for localhost.                                  |
-| `KORE_ID_CLIENT_ID`                            | `flatline`                                       | This app's client id (`koremonitor` after the rename).                                                                     |
-| `KORE_ID_CLIENT_SECRET`                        | unset                                            | Confidential client secret. Unset means a public client (only if Kore ID registers one without a secret).                  |
-| `KORE_ID_CLIENT_AUTH`                          | `basic`                                          | `basic` or `post`: how the secret reaches the token endpoint.                                                              |
-| `KORE_ID_REDIRECT_URI`                         | `<FLATLINE_PUBLIC_URL>/api/v1/auth/sso/callback` | Must be registered with Kore ID exactly. Required if `FLATLINE_PUBLIC_URL` is unset.                                       |
-| `KORE_ID_POST_LOGOUT_REDIRECT_URI`             | `<origin of the redirect URI>/sign-in`           | Must be registered as a post-logout redirect.                                                                              |
-| `KORE_ID_AUTO_PROVISION`                       | `true`                                           | Anyone Kore ID admits to the app gets an account on first sign-in. `false`: only already-tied accounts and the allowlists. |
-| `KORE_ID_ALLOWED_EMAILS`                       | empty                                            | Optional extra filter: comma-separated (verified) emails that may get an account on first sign-in.                         |
-| `KORE_ID_ALLOWED_SUBS`                         | empty                                            | Optional extra filter: comma-separated `sub` values that may get an account on first sign-in.                              |
-| `FLATLINE_LOCAL_LOGIN`, `FLATLINE_TOKEN_LOGIN` | `true`                                           | See above.                                                                                                                 |
+| Variable                                       | Default                                          | Meaning                                                                                                                                |
+| ---------------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `KORE_ID_ISSUER`                               | unset (SSO off)                                  | Provider base URL, e.g. `https://id.kore.example`. `https` required except for localhost.                                              |
+| `KORE_ID_CLIENT_ID`                            | `flatline`                                       | This app's client id (`koremonitor` after the rename).                                                                                 |
+| `KORE_ID_CLIENT_SECRET`                        | unset                                            | Confidential client secret. Unset means a public client (only if Kore ID registers one without a secret).                              |
+| `KORE_ID_CLIENT_AUTH`                          | `basic`                                          | `basic` or `post`: how the secret reaches the token endpoint.                                                                          |
+| `KORE_ID_REDIRECT_URI`                         | `<FLATLINE_PUBLIC_URL>/api/v1/auth/sso/callback` | Must be registered with Kore ID exactly. Required if `FLATLINE_PUBLIC_URL` is unset.                                                   |
+| `KORE_ID_POST_LOGOUT_REDIRECT_URI`             | `<origin of the redirect URI>/sign-in`           | Must be registered as a post-logout redirect.                                                                                          |
+| `KORE_ID_AUTO_PROVISION`                       | `true`                                           | Anyone Kore ID admits to the app gets an account on first sign-in. `false`: only already-tied accounts and the allowlists.             |
+| `KORE_ID_ALLOWED_EMAILS`                       | empty                                            | Optional extra filter: comma-separated (verified) emails that may get an account on first sign-in.                                     |
+| `KORE_ID_ALLOWED_SUBS`                         | empty                                            | Optional extra filter: comma-separated `sub` values that may get an account on first sign-in.                                          |
+| `KORE_ID_ACCOUNT_URL`                          | `<issuer>/account`                               | The Kore ID account page, linked as **Kore ID account** in the account menu.                                                           |
+| `KORE_APP_URLS`                                | empty                                            | The other Kore apps for the app switcher, `app=https://url` pairs (`kore`, `koremind`, `korecalendar`). Apps without a URL are hidden. |
+| `FLATLINE_LOCAL_LOGIN`, `FLATLINE_TOKEN_LOGIN` | `true`                                           | See above.                                                                                                                             |
 
 A bad value stops the backend at startup with the variable named.
 

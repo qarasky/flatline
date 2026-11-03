@@ -4390,7 +4390,7 @@
         "/api/v1/auth/sso/config": {
             "get": {
                 "summary": "Which sign-in methods are on",
-                "description": "Public. `{ok, sso, provider, localLogin, tokenLogin}`: whether Kore ID sign-in is configured, and whether email/password and operator-token sign-in are allowed. The sign-in page reads it.",
+                "description": "Public. `{ok, sso, provider, localLogin, tokenLogin, accountUrl, apps}`: whether Kore ID sign-in is configured, whether email/password and operator-token sign-in are allowed, and (with Kore ID) the Kore ID account page and the other Kore apps' URLs (`KORE_APP_URLS`) for the account menu and app switcher. The sign-in page and the app shell read it.",
                 "security": [],
                 "responses": {
                     "200": {
