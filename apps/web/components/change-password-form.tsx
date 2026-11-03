@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
 import { signInMessage } from "@/lib/legacy-token";
 import { passwordProblem } from "@/lib/password";
+import { endSession } from "@/lib/sso";
 import { HOME_PATH, SIGN_IN_PATH } from "@/lib/session";
 
 /**
@@ -47,12 +48,13 @@ export function ChangePasswordForm({ email, required }: { email: string; require
     }
 
     async function signOut() {
-        try {
-            await api("/api/v1/auth/session", { method: "DELETE" });
-        } finally {
-            router.replace(SIGN_IN_PATH);
-            router.refresh();
+        const providerLogout = await endSession();
+        if (providerLogout) {
+            window.location.assign(providerLogout);
+            return;
         }
+        router.replace(SIGN_IN_PATH);
+        router.refresh();
     }
 
     const invalid = error ? true : undefined;

@@ -39,6 +39,8 @@ pub struct Account {
     pub must_change_password: bool,
     pub password_set_at: String,
     pub created_at: String,
+    /// The Kore ID subject, once the account has signed in through SSO.
+    pub kore_sub: Option<String>,
 }
 
 impl Account {
@@ -66,6 +68,7 @@ impl Account {
             "mustChangePassword": self.must_change_password,
             "startingPasswordExpired": self.starting_password_expired(),
             "createdAt": self.created_at,
+            "sso": self.kore_sub.is_some(),
         })
     }
 }
@@ -213,7 +216,7 @@ fn check_strength(password: &str) -> Result<(), AccountError> {
 /// The `Account` columns, as a literal so queries stay static strings.
 macro_rules! columns {
     () => {
-        "id, email, name, must_change_password, password_set_at, created_at"
+        "id, email, name, must_change_password, password_set_at, created_at, kore_sub"
     };
 }
 
@@ -422,6 +425,135 @@ pub async fn password_matches(
         .await?
         .ok_or(AccountError::NotFound)?;
     Ok(check_password(password.to_string(), hash).await)
+}
+
+/// The `password_hash` of an account made by SSO: not a bcrypt hash, so no
+/// password ever matches it.
+pub const SSO_PASSWORD_SENTINEL: &str = "!sso";
+
+/// Why a Kore ID identity did not get an account.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SsoDenied {
+    /// Not on `KORE_ID_ALLOWED_EMAILS` / `KORE_ID_ALLOWED_SUBS`.
+    NotAllowed,
+    /// The provider sent no usable email.
+    NoEmail,
+    /// The email belongs to a local account already tied to another subject.
+    Conflict,
+}
+
+/// The account a verified Kore ID identity signs in as.
+///
+/// An account already tied to this `sub` signs in (its name and email follow
+/// the provider). Otherwise an account is created, or an existing local one
+/// with the same email is linked, only when the subject or the email is on
+/// the allowlist. Flatline has one level of access, so creation must be an
+/// explicit decision of the operator, never a default. An email the provider
+/// explicitly marks unverified is not trusted for the allowlist.
+pub async fn sso_sign_in(
+    pool: &SqlitePool,
+    kore: &crate::config::KoreIdConfig,
+    claims: &crate::sso::Claims,
+) -> Result<Result<Account, SsoDenied>, AccountError> {
+    let existing: Option<Account> = sqlx::query_as(concat!(
+        "SELECT ",
+        columns!(),
+        " FROM users WHERE kore_sub = ?"
+    ))
+    .bind(&claims.sub)
+    .fetch_optional(pool)
+    .await?;
+    let email = claims.email.as_deref().map(str::trim).filter(|e| !e.is_empty());
+    let name = claims
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty() && n.chars().count() <= MAX_NAME_CHARS);
+
+    if let Some(account) = existing {
+        // Follow the provider's profile; a clash with another account's email
+        // keeps the old one rather than failing the sign-in.
+        if let Some(name) = name
+            && name != account.name
+        {
+            sqlx::query("UPDATE users SET name = ? WHERE id = ?")
+                .bind(name)
+                .bind(account.id)
+                .execute(pool)
+                .await?;
+        }
+        if let Some(email) = email
+            && clean_email(email).is_ok()
+            && email_key(email) != email_key(&account.email)
+        {
+            let _ = sqlx::query("UPDATE users SET email = ?, email_key = ? WHERE id = ?")
+                .bind(email)
+                .bind(email_key(email))
+                .bind(account.id)
+                .execute(pool)
+                .await;
+        }
+        return Ok(Ok(get(pool, account.id).await?));
+    }
+
+    let Some(email) = email.filter(|e| clean_email(e).is_ok()) else {
+        return Ok(Err(SsoDenied::NoEmail));
+    };
+    let key = email_key(email);
+    let sub_allowed = kore.allowed_subs.iter().any(|sub| *sub == claims.sub);
+    let email_allowed =
+        claims.email_verified != Some(false) && kore.allowed_emails.iter().any(|e| *e == key);
+    if !sub_allowed && !email_allowed {
+        return Ok(Err(SsoDenied::NotAllowed));
+    }
+
+    let local: Option<(i64, Option<String>)> =
+        sqlx::query_as("SELECT id, kore_sub FROM users WHERE email_key = ?")
+            .bind(&key)
+            .fetch_optional(pool)
+            .await?;
+    if let Some((id, tied)) = local {
+        if tied.is_some() {
+            return Ok(Err(SsoDenied::Conflict));
+        }
+        sqlx::query("UPDATE users SET kore_sub = ? WHERE id = ? AND kore_sub IS NULL")
+            .bind(&claims.sub)
+            .bind(id)
+            .execute(pool)
+            .await?;
+        return Ok(Ok(get(pool, id).await?));
+    }
+
+    let name = name.map(str::to_string).unwrap_or_else(|| {
+        email.split('@').next().unwrap_or(email).chars().take(MAX_NAME_CHARS).collect()
+    });
+    let account = sqlx::query_as(concat!(
+        "INSERT INTO users (email, email_key, name, password_hash, must_change_password,
+                            password_set_at, kore_sub)
+         VALUES (?, ?, ?, ?, 0, strftime('%Y-%m-%d %H:%M:%S', 'now'), ?)
+         RETURNING ",
+        columns!()
+    ))
+    .bind(email)
+    .bind(&key)
+    .bind(&name)
+    .bind(SSO_PASSWORD_SENTINEL)
+    .bind(&claims.sub)
+    .fetch_one(pool)
+    .await?;
+    Ok(Ok(account))
+}
+
+/// The account tied to a Kore ID subject, if it has signed in through SSO.
+pub async fn by_kore_sub(pool: &SqlitePool, sub: &str) -> Result<Option<Account>, AccountError> {
+    Ok(sqlx::query_as(concat!(
+        "SELECT ",
+        columns!(),
+        " FROM users WHERE kore_sub = ?"
+    ))
+    .bind(sub)
+    .fetch_optional(pool)
+    .await?)
 }
 
 /// Failed password sign-ins allowed per email in one window.

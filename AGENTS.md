@@ -57,7 +57,7 @@ Do not run `cargo fmt` across the tree: it is not uniformly `rustfmt`-formatted.
 - **One level of operator access.** Member accounts (email and password) and
   `flatline_op_` tokens are both full-permission operator credentials; push
   tokens only affect their own monitor; backup-agent tokens are separate again.
-  Never describe roles, scoped or read-only tokens or accounts.
+  Kore ID sign-in (`docs/sso.md`) creates the same full-permission accounts, only for allowlisted `sub`/emails. Never describe roles, scoped or read-only tokens or accounts.
 - **The agents are push-only.** Neither agent listens on a port and the backend
   never connects to a client host.
 - Commit subjects follow `type(scope): summary` (`feat(agent): ...`,

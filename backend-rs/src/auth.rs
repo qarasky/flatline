@@ -652,13 +652,58 @@ pub struct Authed {
 
 /// Whether a credential still authenticates: the SSE stream's periodic
 /// revalidation. A store error is `Err`, not a revocation.
-pub async fn still_valid(pool: &SqlitePool, credential: &Credential) -> Result<bool, VerifyError> {
+pub async fn still_valid(
+    pool: &SqlitePool,
+    sso: Option<&crate::sso::Sso>,
+    credential: &Credential,
+) -> Result<bool, VerifyError> {
     match credential {
+        Credential::Bearer(token) if crate::sso::looks_like_jwt(token) => match sso {
+            Some(sso) => Ok(matches!(
+                kore_bearer(pool, sso, token).await,
+                Ok(Principal::Account { .. })
+            )),
+            None => Ok(false),
+        },
         Credential::Bearer(token) => Ok(matches!(
             verify_token(pool, token).await?,
             TokenVerdict::Operator(_)
         )),
         Credential::Session(raw) => Ok(crate::sessions::resolve(pool, raw).await?.is_some()),
+    }
+}
+
+/// The account behind a Kore ID access token used as a bearer: verified
+/// against the provider's keys (audience = this app's client id) and tied
+/// to an account that already signed in through SSO. Machine credentials
+/// never take this path; they are not JWTs.
+pub async fn kore_bearer(
+    pool: &SqlitePool,
+    sso: &crate::sso::Sso,
+    token: &str,
+) -> Result<Principal, Response> {
+    let claims = match sso.verify_access_token(token).await {
+        Ok(claims) => claims,
+        Err(crate::sso::SsoError::Unavailable(why)) => {
+            tracing::warn!("sso: bearer check could not reach the provider: {why}");
+            return Err(verify_error_response(&VerifyError::Unavailable("sso".into())));
+        }
+        Err(error) => {
+            tracing::debug!("sso: bearer refused: {error:?}");
+            return Err(unauthorized());
+        }
+    };
+    match crate::accounts::by_kore_sub(pool, &claims.sub).await {
+        Ok(Some(account)) => Ok(Principal::Account {
+            user_id: account.id,
+            must_change_password: false,
+        }),
+        // A valid Kore ID token for someone who has never signed in here.
+        Ok(None) => Err(unauthorized()),
+        Err(error) => {
+            tracing::error!("sso: account lookup: {error:?}");
+            Err(verify_error_response(&VerifyError::Unavailable("sso".into())))
+        }
     }
 }
 
@@ -740,6 +785,18 @@ pub async fn require_token(
 ) -> Response {
     let authed = if let Some(token) = bearer(request.headers()) {
         let token = token.to_string();
+        if crate::sso::looks_like_jwt(&token) {
+            let Some(sso) = state.sso.as_deref() else {
+                return unauthorized();
+            };
+            match kore_bearer(&state.pool, sso, &token).await {
+                Ok(principal) => Authed {
+                    principal,
+                    credential: Credential::Bearer(token),
+                },
+                Err(response) => return response,
+            }
+        } else {
         match verify_token(&state.pool, &token).await {
             Ok(TokenVerdict::Operator(token_id)) => Authed {
                 principal: Principal::Token { token_id },
@@ -748,6 +805,7 @@ pub async fn require_token(
             Ok(TokenVerdict::Agent(kind)) => return agent_token_on_operator_api(kind),
             Ok(TokenVerdict::Invalid) => return unauthorized(),
             Err(error) => return verify_error_response(&error),
+        }
         }
     } else if let Some(session) = session_id(request.headers()) {
         match crate::sessions::resolve(&state.pool, &session).await {

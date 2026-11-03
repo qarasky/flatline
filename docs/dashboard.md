@@ -68,6 +68,11 @@ cookie, which holds a server-side session id; no credential is kept in the
 browser. The cookie is `Secure` when the request came in over https (the
 tunnel's `X-Forwarded-Proto`, which Caddy trusts only from the Docker host).
 
+- **Kore ID.** When the backend has Kore ID configured, the page leads with
+  **Continue with Kore ID** (a link to `GET /api/v1/auth/sso/start`); the
+  password and token forms hide when `FLATLINE_LOCAL_LOGIN` /
+  `FLATLINE_TOKEN_LOGIN` are off. Signing out of a Kore ID session follows the
+  `ssoLogoutUrl` the backend returns. See [sso.md](sso.md).
 - **First run.** With no account yet the sign-in page offers **Create the
   first account**, which asks for an operator token (`initial-token.txt`)
   besides the new account's details.

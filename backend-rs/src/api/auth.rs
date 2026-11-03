@@ -6,7 +6,7 @@
 //! dashboard's `POST /auth/login` still takes a token in the password field
 //! and hands it back. `/auth/me` says who is signed in.
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::{Extension, Json};
 use axum::response::{IntoResponse, Response};
@@ -36,6 +36,9 @@ pub async fn setup(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
+    if !state.config.local_login {
+        return Err(local_login_disabled());
+    }
     let setup_done = || {
         ApiError::new(
             StatusCode::CONFLICT,
@@ -151,6 +154,9 @@ pub async fn login(
     State(state): State<AppState>,
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
+    if !state.config.token_login {
+        return Err(token_login_disabled());
+    }
     let password = body
         .get("password")
         .and_then(Value::as_str)
@@ -248,6 +254,9 @@ pub async fn create_session(
     };
 
     if body.get("email").is_some() {
+        if !state.config.local_login {
+            return Err(local_login_disabled());
+        }
         let email = text("email");
         let password = text("password");
         let email_key = accounts::email_key(&email);
@@ -279,6 +288,9 @@ pub async fn create_session(
         .await;
     }
 
+    if !state.config.token_login {
+        return Err(token_login_disabled());
+    }
     let token = text("token").trim().to_string();
     match auth::verify_token(&state.pool, &token).await {
         Ok(auth::TokenVerdict::Operator(token_id)) => {
@@ -299,13 +311,22 @@ pub async fn create_session(
 /// or already-ended session. Ends the session server-side and clears the
 /// cookie.
 pub async fn delete_session(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if let Some(session) = auth::session_id(&headers)
-        && let Err(error) = sessions::end(&state.pool, &session).await
-    {
-        tracing::error!("sign-out: {error}");
+    let mut body = json!({ "ok": true });
+    if let Some(session) = auth::session_id(&headers) {
+        // A Kore ID session also ends at the provider: hand the browser the
+        // end-session URL (the id token is the hint) to follow.
+        if let Some(sso) = &state.sso
+            && let Ok(Some(id_token)) = sessions::sso_id_token(&state.pool, &session).await
+            && let Some(url) = sso.logout_url(&id_token).await
+        {
+            body["ssoLogoutUrl"] = json!(url);
+        }
+        if let Err(error) = sessions::end(&state.pool, &session).await {
+            tracing::error!("sign-out: {error}");
+        }
     }
     let cookie = auth::clear_session_cookie(auth::request_is_https(&headers));
-    ([(header::SET_COOKIE, cookie)], Json(json!({ "ok": true }))).into_response()
+    ([(header::SET_COOKIE, cookie)], Json(body)).into_response()
 }
 
 /// GET /api/v1/auth/me — authenticated.
@@ -366,4 +387,136 @@ pub async fn me(
 fn internal(error: sqlx::Error) -> ApiError {
     tracing::error!("auth api: {error}");
     api::ApiError::server()
+}
+
+fn local_login_disabled() -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "local_login_disabled",
+        "Email and password sign-in is turned off on this instance.",
+    )
+    .with_hint("Sign in with Kore ID (`GET /api/v1/auth/sso/start`).")
+}
+
+fn token_login_disabled() -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "token_login_disabled",
+        "Signing in with an operator token is turned off on this instance.",
+    )
+    .with_hint("Operator tokens still work as `Authorization: Bearer` on /api/v1. Sign in with Kore ID in the browser.")
+}
+
+/// GET /api/v1/auth/sso/config — public. What the sign-in page offers.
+pub async fn sso_config(State(state): State<AppState>) -> Json<Value> {
+    Json(json!({
+        "ok": true,
+        "sso": state.sso.is_some(),
+        "provider": "Kore ID",
+        "localLogin": state.config.local_login,
+        "tokenLogin": state.config.token_login,
+    }))
+}
+
+fn sso_redirect(location: &str, cookies: &[String]) -> Response {
+    let mut response = (StatusCode::SEE_OTHER, [(header::LOCATION, location.to_string())]).into_response();
+    for cookie in cookies {
+        if let Ok(value) = axum::http::HeaderValue::from_str(cookie) {
+            response.headers_mut().append(header::SET_COOKIE, value);
+        }
+    }
+    response
+}
+
+fn sso_failed(code: &str, secure: bool) -> Response {
+    sso_redirect(
+        &format!("/sign-in?sso_error={code}"),
+        &[crate::sso::clear_binding_cookie(secure)],
+    )
+}
+
+/// GET /api/v1/auth/sso/start?next=/path — public. Redirects the browser to
+/// Kore ID. `next` is a local path to land on afterwards.
+pub async fn sso_start(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let secure = auth::request_is_https(&headers);
+    let Some(sso) = &state.sso else {
+        return sso_failed("disabled", secure);
+    };
+    match sso.start(params.get("next").map(String::as_str)).await {
+        Ok((url, binding)) => sso_redirect(&url, &[crate::sso::binding_cookie(&binding, secure)]),
+        Err(error) => {
+            tracing::warn!("sso: could not start: {error:?}");
+            sso_failed(error.code(), secure)
+        }
+    }
+}
+
+/// GET /api/v1/auth/sso/callback — public. Kore ID returns the browser here
+/// with `code` and `state` (or `error`). On success the response sets the
+/// `fl_session` cookie and redirects to the page the person came for; on
+/// any failure it redirects to `/sign-in?sso_error=<code>` and sets no
+/// session.
+pub async fn sso_callback(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let secure = auth::request_is_https(&headers);
+    let Some(sso) = &state.sso else {
+        return sso_failed("disabled", secure);
+    };
+    let fail = |error: crate::sso::SsoError| {
+        tracing::warn!("sso: sign-in failed: {error:?}");
+        sso_failed(error.code(), secure)
+    };
+    if let Some(error) = params.get("error") {
+        return fail(crate::sso::SsoError::Provider(error.clone()));
+    }
+    // RFC 9207: a response from another issuer is not ours.
+    if let Some(iss) = params.get("iss")
+        && iss.trim_end_matches('/') != sso.config.issuer
+    {
+        return fail(crate::sso::SsoError::State);
+    }
+    let (Some(code), Some(state_param)) = (params.get("code"), params.get("state")) else {
+        return fail(crate::sso::SsoError::State);
+    };
+    let binding = crate::status_pages::parse_cookies(&headers).remove(crate::sso::SSO_COOKIE);
+    let identity = match sso.finish(code, state_param, binding.as_deref()).await {
+        Ok(identity) => identity,
+        Err(error) => return fail(error),
+    };
+    let account = match accounts::sso_sign_in(&state.pool, &sso.config, &identity.claims).await {
+        Ok(Ok(account)) => account,
+        Ok(Err(denied)) => {
+            tracing::warn!("sso: {} denied: {denied:?}", identity.claims.sub);
+            return sso_failed("denied", secure);
+        }
+        Err(error) => {
+            tracing::error!("sso: account: {error:?}");
+            return sso_failed("unavailable", secure);
+        }
+    };
+    let session = match sessions::create(&state.pool, SessionOwner::Account(account.id)).await {
+        Ok(session) => session,
+        Err(error) => {
+            tracing::error!("sso: session: {error}");
+            return sso_failed("unavailable", secure);
+        }
+    };
+    if let Err(error) = sessions::set_sso_id_token(&state.pool, &session, &identity.id_token).await {
+        tracing::error!("sso: could not keep the id token: {error}");
+    }
+    tracing::info!("auth: account {} signed in with Kore ID", account.id);
+    sso_redirect(
+        &identity.next,
+        &[
+            auth::session_cookie(&session, secure),
+            crate::sso::clear_binding_cookie(secure),
+        ],
+    )
 }

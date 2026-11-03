@@ -44,6 +44,18 @@ The office's `.env` supplies `FLATLINE_PUBLIC_URL`, which is what the
 provisioning documents and installer use to render absolute URLs. Without it they
 fall back to the request's `Host` header.
 
+## Published images (GHCR)
+
+`.github/workflows/images.yml` builds the backend, web and Caddy images for
+`linux/amd64` and `linux/arm64` (native runners, buildx cache) after `ci.yml`
+passes, and publishes `ghcr.io/<owner>/flatline-{backend,web,caddy}`: `:edge`
+and `:sha-<short>` on every push to `master`, and `:X.Y.Z`, `:X.Y`, `:X` and
+`:latest` for a `vX.Y.Z` tag (a pre-release tag gets only its own tag). A tag
+also creates the GitHub release. The root `compose.yaml` pulls these
+(`FLATLINE_VERSION`, `FLATLINE_IMAGE_PREFIX`); the office still builds its own
+`office-live` images below, so shipping to the office is unchanged. The image
+prefix is one variable (`IMAGE_PREFIX` in the workflow) for the KoreMonitor rename.
+
 ## Building the images
 
 The images are built on the office from the source tree, for `linux/amd64`:

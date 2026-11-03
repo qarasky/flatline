@@ -26,9 +26,9 @@ import {
 } from "@/components/ui/sidebar";
 import { AttentionCount } from "@/components/attention/attention-list";
 import { openCommandPalette } from "@/components/command-palette";
-import { api } from "@/lib/api";
 import { type Me, displayName, initials } from "@/lib/me";
 import { NAV_SECTIONS, activeSection } from "@/lib/nav";
+import { endSession } from "@/lib/sso";
 import { PASSWORD_PATH, SIGN_IN_PATH } from "@/lib/session";
 
 export function AppSidebar({ me }: { me: Me }) {
@@ -38,12 +38,13 @@ export function AppSidebar({ me }: { me: Me }) {
     const name = displayName(me);
 
     async function signOut() {
-        try {
-            await api("/api/v1/auth/session", { method: "DELETE" });
-        } finally {
-            router.replace(SIGN_IN_PATH);
-            router.refresh();
+        const providerLogout = await endSession();
+        if (providerLogout) {
+            window.location.assign(providerLogout);
+            return;
         }
+        router.replace(SIGN_IN_PATH);
+        router.refresh();
     }
 
     return (

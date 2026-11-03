@@ -11,15 +11,26 @@ import { createSession, keepMigrating, migrateLegacyToken, signInMessage } from 
 import { passwordProblem } from "@/lib/password";
 import { safeNext } from "@/lib/safe-next";
 import { PASSWORD_PATH } from "@/lib/session";
+import { LOCAL_ONLY, type SignInMethods, ssoErrorMessage, ssoStartHref, toMethods } from "@/lib/sso";
 
 /** Email and password (the usual way), a token (the wall TV, recovery), or the first account. */
 type Mode = "password" | "token" | "setup";
 
-export function SignInForm({ next, expired }: { next: string | null; expired: boolean }) {
+export function SignInForm({
+    next,
+    expired,
+    ssoError,
+}: {
+    next: string | null;
+    expired: boolean;
+    ssoError: string | null;
+}) {
     const router = useRouter();
     const [migrating, setMigrating] = useState(true);
     const [mode, setMode] = useState<Mode>("password");
     const [setupNeeded, setSetupNeeded] = useState(false);
+    // Which methods this instance allows; null until the backend has said.
+    const [methods, setMethods] = useState<SignInMethods | null>(null);
     const [email, setEmail] = useState("");
     const [name, setName] = useState("");
     const [password, setPassword] = useState("");
@@ -39,15 +50,31 @@ export function SignInForm({ next, expired }: { next: string | null; expired: bo
         setError(null);
     };
 
-    // A fresh install has no account yet: offer to create the first one.
+    // Kore ID, email and password, and tokens can each be switched off.
     useEffect(() => {
         if (migrating) {
+            return;
+        }
+        api<Record<string, unknown>>("/api/v1/auth/sso/config")
+            .then((answer) => {
+                const found = toMethods(answer);
+                setMethods(found);
+                if (!found.localLogin) {
+                    setMode(found.tokenLogin ? "token" : "password");
+                }
+            })
+            .catch(() => setMethods(LOCAL_ONLY));
+    }, [migrating]);
+
+    // A fresh install has no account yet: offer to create the first one.
+    useEffect(() => {
+        if (migrating || !methods?.localLogin) {
             return;
         }
         api<{ setupNeeded: boolean }>("/api/v1/auth/setup")
             .then((answer) => setSetupNeeded(answer.setupNeeded))
             .catch(() => setSetupNeeded(false));
-    }, [migrating]);
+    }, [migrating, methods]);
 
     // A browser the old dashboard signed in (the wall TV) still holds its
     // token in localStorage: swap it for a session without asking. If
@@ -123,8 +150,40 @@ export function SignInForm({ next, expired }: { next: string | null; expired: bo
         }
     }
 
-    if (migrating) {
+    if (migrating || methods === null) {
         return <p className="text-muted-foreground">Signing in…</p>;
+    }
+
+    const canPassword = methods.localLogin;
+    const canToken = methods.tokenLogin;
+    const hasForm = canPassword || canToken;
+    const ssoMessage = ssoErrorMessage(ssoError);
+
+    // Kore ID only: no form at all.
+    if (!hasForm) {
+        return (
+            <div className="flex w-full max-w-sm flex-col gap-5">
+                <div className="flex items-center gap-2.5">
+                    <img src="/icon.svg" alt="" width={28} height={28} />
+                    <span className="text-lg font-semibold tracking-tight">Flatline</span>
+                </div>
+                {expired && <p className="text-muted-foreground">Your session ended. Sign in again.</p>}
+                {ssoMessage && (
+                    <p role="alert" className="text-status-down">
+                        {ssoMessage}
+                    </p>
+                )}
+                {methods.sso ? (
+                    <Button asChild>
+                        <a href={ssoStartHref(next)}>Continue with Kore ID</a>
+                    </Button>
+                ) : (
+                    <p role="alert" className="text-status-down">
+                        No sign-in method is enabled on this instance.
+                    </p>
+                )}
+            </div>
+        );
     }
 
     const ready =
@@ -143,6 +202,18 @@ export function SignInForm({ next, expired }: { next: string | null; expired: bo
             </div>
 
             {expired && <p className="text-muted-foreground">Your session ended. Sign in again.</p>}
+            {ssoMessage && (
+                <p role="alert" className="text-status-down">
+                    {ssoMessage}
+                </p>
+            )}
+            {methods.sso && (
+                <Button asChild>
+                    <a href={ssoStartHref(next)}>Continue with Kore ID</a>
+                </Button>
+            )}
+            {methods.sso && <p className="text-muted-foreground text-center">or</p>}
+
             {mode === "setup" && (
                 <p className="text-muted-foreground">
                     Create the first account. The operator token from the server proves this install is yours.
@@ -241,16 +312,16 @@ export function SignInForm({ next, expired }: { next: string | null; expired: bo
             </Button>
 
             <div className="text-muted-foreground flex flex-col items-start gap-1.5">
-                {mode === "password" ? (
+                {mode === "password" && canToken ? (
                     <button type="button" className="hover:text-foreground" onClick={() => switchTo("token")}>
                         Use a token instead
                     </button>
-                ) : (
+                ) : mode !== "password" && canPassword ? (
                     <button type="button" className="hover:text-foreground" onClick={() => switchTo("password")}>
                         Sign in with email and password
                     </button>
-                )}
-                {setupNeeded && mode !== "setup" && (
+                ) : null}
+                {setupNeeded && canPassword && mode !== "setup" && (
                     <button type="button" className="hover:text-foreground" onClick={() => switchTo("setup")}>
                         Create the first account
                     </button>

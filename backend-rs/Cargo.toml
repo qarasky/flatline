@@ -7,8 +7,10 @@ edition = "2024"
 anyhow = "1.0.104"
 async-stream = "0.3.6"
 axum = "0.8.9"
+base64 = "0.22"
 bcrypt = "0.19.3"
 chrono = "0.4.45"
+ed25519-dalek = "2"
 fs4 = "1.1.0"
 hex = "0.4.3"
 http-body-util = "0.1.5"
@@ -23,6 +25,7 @@ tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "signal",
 tokio-util = { version = "0.7.20", features = ["io"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2"
 uuid = { version = "1.28.0", features = ["v4"] }
 
 [dev-dependencies]

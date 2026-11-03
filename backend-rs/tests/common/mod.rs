@@ -30,7 +30,12 @@ pub struct Harness {
 
 /// A fresh instance with a minted token, no monitors, storage disabled.
 pub async fn harness() -> Harness {
-    harness_inner(None).await
+    harness_inner(None, None).await
+}
+
+/// A harness with Kore ID configured (see `tests/sso.rs`).
+pub async fn harness_with_sso(kore_id: flatline_backend::config::KoreIdConfig) -> Harness {
+    harness_inner(None, Some(kore_id)).await
 }
 
 /// A harness whose backup storage root is provisioned. Tests pass deterministic
@@ -39,10 +44,13 @@ pub async fn harness_with_backups(
     free: Arc<dyn FreeSpace>,
     faults: Arc<dyn FaultInjector>,
 ) -> Harness {
-    harness_inner(Some((free, faults))).await
+    harness_inner(Some((free, faults)), None).await
 }
 
-async fn harness_inner(storage: Option<(Arc<dyn FreeSpace>, Arc<dyn FaultInjector>)>) -> Harness {
+async fn harness_inner(
+    storage: Option<(Arc<dyn FreeSpace>, Arc<dyn FaultInjector>)>,
+    kore_id: Option<flatline_backend::config::KoreIdConfig>,
+) -> Harness {
     // The cheapest bcrypt cost: tests hash many passwords.
     flatline_backend::accounts::set_password_cost(4);
     let dir = tempfile::tempdir().unwrap();
@@ -74,6 +82,9 @@ async fn harness_inner(storage: Option<(Arc<dyn FreeSpace>, Arc<dyn FaultInjecto
         backup_agent_dir: dir.path().join("backup-agent"),
         backup_dir,
         heartbeat_retention_days: 0,
+        kore_id: kore_id.clone(),
+        local_login: true,
+        token_login: true,
     };
     let pool = db::connect(&config.data_dir).await.unwrap();
     let token = auth::ensure_initial_token(&pool, &config.data_dir)
@@ -111,6 +122,8 @@ async fn harness_inner(storage: Option<(Arc<dyn FreeSpace>, Arc<dyn FaultInjecto
         strips: std::sync::Arc::new(flatline_backend::api::strips::StripCache::new()),
         devices: std::sync::Arc::new(flatline_backend::device::DeviceRequests::new()),
         sign_ins: std::sync::Arc::new(flatline_backend::accounts::SignInLimiter::new()),
+        sso: kore_id
+            .map(|kore| std::sync::Arc::new(flatline_backend::sso::Sso::new(kore))),
     };
 
     Harness {

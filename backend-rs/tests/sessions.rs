@@ -281,7 +281,7 @@ async fn the_stream_drops_a_removed_account() {
     let h = harness().await;
     let (id, session) = member_session(&h).await;
     let credential = Credential::Session(session.clone());
-    assert_eq!(auth::still_valid(&h.pool, &credential).await, Ok(true));
+    assert_eq!(auth::still_valid(&h.pool, None, &credential).await, Ok(true));
 
     let response = tower::ServiceExt::oneshot(
         h.app.clone(),
@@ -296,9 +296,9 @@ async fn the_stream_drops_a_removed_account() {
         .execute(&h.pool)
         .await
         .unwrap();
-    assert_eq!(auth::still_valid(&h.pool, &credential).await, Ok(false));
+    assert_eq!(auth::still_valid(&h.pool, None, &credential).await, Ok(false));
     assert_eq!(
-        auth::still_valid(&h.pool, &Credential::Bearer(h.token.clone())).await,
+        auth::still_valid(&h.pool, None, &Credential::Bearer(h.token.clone())).await,
         Ok(true)
     );
 }

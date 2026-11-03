@@ -27,6 +27,7 @@ pub mod monitors;
 pub mod mutes;
 pub mod notify;
 pub mod sessions;
+pub mod sso;
 pub mod shutdown;
 pub mod status_pages;
 
@@ -55,6 +56,8 @@ pub struct AppState {
     pub devices: Arc<device::DeviceRequests>,
     /// Failed email/password sign-ins (in memory; see `accounts`).
     pub sign_ins: Arc<accounts::SignInLimiter>,
+    /// Kore ID sign-in, when `KORE_ID_ISSUER` is set.
+    pub sso: Option<Arc<sso::Sso>>,
 }
 
 /// Open the database, run migrations, and make sure an admin token exists.
@@ -72,6 +75,7 @@ pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
     let events = events::Events::new();
     let engine = monitors::engine::Engine::new(pool.clone(), Arc::clone(&events));
     let metrics = metrics::Metrics::new(pool.clone(), Arc::clone(&events));
+    let sso = config.kore_id.clone().map(|kore| Arc::new(sso::Sso::new(kore)));
     let config = Arc::new(config);
     let backups = backups::Backups::new(pool.clone(), Arc::clone(&config), Arc::clone(&events));
     let status_page_secret = status_pages::ensure_secret(&config.data_dir)?;
@@ -87,6 +91,7 @@ pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
         strips: Arc::new(api::strips::StripCache::new()),
         devices: Arc::new(device::DeviceRequests::new()),
         sign_ins: Arc::new(accounts::SignInLimiter::new()),
+        sso,
     })
 }
 

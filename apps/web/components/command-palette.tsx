@@ -6,9 +6,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useBoardData } from "@/components/board/board-data";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { api } from "@/lib/api";
 import { buildCommands, type Command as PaletteCommand } from "@/lib/commands";
 import type { Me } from "@/lib/me";
+import { endSession } from "@/lib/sso";
 import { SIGN_IN_PATH } from "@/lib/session";
 
 /** Window event the sidebar's search button sends to open the palette. */
@@ -78,12 +78,13 @@ export function CommandPalette({ me }: { me: Me }) {
     async function run(command: PaletteCommand) {
         setOpen(false);
         if (command.id === "sign-out") {
-            try {
-                await api("/api/v1/auth/session", { method: "DELETE" });
-            } finally {
-                router.replace(SIGN_IN_PATH);
-                router.refresh();
+            const providerLogout = await endSession();
+            if (providerLogout) {
+                window.location.assign(providerLogout);
+                return;
             }
+            router.replace(SIGN_IN_PATH);
+            router.refresh();
             return;
         }
         router.push(command.href);

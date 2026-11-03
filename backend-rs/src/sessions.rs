@@ -166,3 +166,28 @@ pub async fn end_for_account(
         .await?;
     Ok(())
 }
+
+/// Remember the id token of a Kore ID sign-in, the hint for provider-side
+/// sign-out.
+pub async fn set_sso_id_token(
+    pool: &SqlitePool,
+    raw: &str,
+    id_token: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE sessions SET sso_id_token = ? WHERE hash = ?")
+        .bind(id_token)
+        .bind(hash_token(raw))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// The Kore ID id token a session was made with, if any.
+pub async fn sso_id_token(pool: &SqlitePool, raw: &str) -> Result<Option<String>, sqlx::Error> {
+    let token: Option<Option<String>> =
+        sqlx::query_scalar("SELECT sso_id_token FROM sessions WHERE hash = ?")
+            .bind(hash_token(raw))
+            .fetch_optional(pool)
+            .await?;
+    Ok(token.flatten())
+}

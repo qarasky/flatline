@@ -3,7 +3,7 @@
     "info": {
         "title": "Flatline API",
         "version": "1.0.0",
-        "description": "Monitoring API for automation and agents. Every response includes an `ok` boolean. Authenticate with `Authorization: Bearer <token>`. Credential families: `flatline_op_...` operator (GUI sign-in and every /api/v1 call), `flatline_agent_push_...` host agent (only /api/push/{token} and /agent/*), `flatline_agent_backup_...` backup agent (only /api/backup/v1). Using a credential on the wrong surface returns an explicit error code with a `hint`. Failures use `{ ok, error, code, message, hint?, details? }`."
+        "description": "Monitoring API for automation and agents. Every response includes an `ok` boolean. Authenticate with `Authorization: Bearer <token>`. Credential families: `flatline_op_...` operator (GUI sign-in and every /api/v1 call), `flatline_agent_push_...` host agent (only /api/push/{token} and /agent/*), `flatline_agent_backup_...` backup agent (only /api/backup/v1). Using a credential on the wrong surface returns an explicit error code with a `hint`. Failures use `{ ok, error, code, message, hint?, details? }`. A Kore ID access token (a JWT whose audience is this app's client id) is also accepted as `Authorization: Bearer` for an account that has signed in through Kore ID."
     },
     "servers": [
         {
@@ -1777,7 +1777,7 @@
         "/api/v1/auth/session": {
             "post": {
                 "summary": "Sign a browser in",
-                "description": "Public. Body `{email, password}` signs a member in and answers `{ok:true, principal:\"account\", mustChangePassword}`; body `{token}` signs in with an operator token and answers `{ok:true, principal:\"token\", tokenKind:\"operator\"}`. On success sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/; Max-Age=34560000`, plus `Secure` behind HTTPS) holding a new session id. A wrong email and a wrong password answer the same 401 `unauthorized`; a right password whose starting password expired (unchanged for 7 days) answers 401 `starting_password_expired`. Failed email/password attempts are limited to 5 per email and 20 per client address in 15 minutes, each counted before its password is checked; past that, even the right password answers 429 `rate_limited` with `retryAfterSeconds`. A bad token answers 401 `unauthorized`, an agent token 401 `agent_token_on_operator_api`, a busy token store 503; none of them set a cookie.",
+                "description": "Public. Body `{email, password}` signs a member in and answers `{ok:true, principal:\"account\", mustChangePassword}`; body `{token}` signs in with an operator token and answers `{ok:true, principal:\"token\", tokenKind:\"operator\"}`. On success sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/; Max-Age=34560000`, plus `Secure` behind HTTPS) holding a new session id. A wrong email and a wrong password answer the same 401 `unauthorized`; a right password whose starting password expired (unchanged for 7 days) answers 401 `starting_password_expired`. Failed email/password attempts are limited to 5 per email and 20 per client address in 15 minutes, each counted before its password is checked; past that, even the right password answers 429 `rate_limited` with `retryAfterSeconds`. A bad token answers 401 `unauthorized`, an agent token 401 `agent_token_on_operator_api`, a busy token store 503; none of them set a cookie. When `FLATLINE_LOCAL_LOGIN=false` the email form answers 403 `local_login_disabled`; when `FLATLINE_TOKEN_LOGIN=false` the token form answers 403 `token_login_disabled`.",
                 "security": [],
                 "requestBody": {
                     "required": true,
@@ -1832,7 +1832,7 @@
             },
             "delete": {
                 "summary": "Sign a browser out",
-                "description": "Public. Ends the session server-side and clears the `fl_session` cookie; works with a missing or already-ended session.",
+                "description": "Public. Ends the session server-side and clears the `fl_session` cookie; works with a missing or already-ended session. When the session came from Kore ID, the answer also carries `ssoLogoutUrl`: the provider's end-session URL, which the browser should follow to end the Kore ID session too.",
                 "security": [],
                 "responses": {
                     "200": {
@@ -4383,6 +4383,68 @@
                     },
                     "404": {
                         "description": "No such notification."
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/sso/config": {
+            "get": {
+                "summary": "Which sign-in methods are on",
+                "description": "Public. `{ok, sso, provider, localLogin, tokenLogin}`: whether Kore ID sign-in is configured, and whether email/password and operator-token sign-in are allowed. The sign-in page reads it.",
+                "security": [],
+                "responses": {
+                    "200": {
+                        "description": "Sign-in methods"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/sso/start": {
+            "get": {
+                "summary": "Start Kore ID sign-in",
+                "description": "Public. Redirects (303) the browser to Kore ID's authorization endpoint with PKCE S256, `state` and `nonce`, and sets the short-lived `fl_sso` cookie that binds the callback to this browser. `next` is a local path to open afterwards (anything else becomes `/`). Without Kore ID configured it redirects to `/sign-in?sso_error=disabled`.",
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "next",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "303": {
+                        "description": "Redirect to Kore ID"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/sso/callback": {
+            "get": {
+                "summary": "Kore ID sign-in callback",
+                "description": "Public; Kore ID returns the browser here with `code` and `state`. Verifies state (one use, bound to the `fl_sso` cookie), exchanges the code with the PKCE verifier, verifies the id token (EdDSA against the provider's JWKS, issuer, audience, expiry, nonce), then signs in the account tied to the token's `sub`. An unknown `sub` gets an account only when its `sub` is in `KORE_ID_ALLOWED_SUBS` or its email in `KORE_ID_ALLOWED_EMAILS`. Success: 303 to `next` with the `fl_session` cookie. Failure: 303 to `/sign-in?sso_error=` one of `state`, `provider`, `token`, `unavailable`, `denied`, `disabled`, with no session.",
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "code",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "303": {
+                        "description": "Redirect; Set-Cookie carries the session on success"
                     }
                 }
             }

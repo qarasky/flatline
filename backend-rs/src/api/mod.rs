@@ -152,6 +152,9 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/auth/session",
             post(auth::create_session).delete(auth::delete_session),
         )
+        .route("/api/v1/auth/sso/config", get(auth::sso_config))
+        .route("/api/v1/auth/sso/start", get(auth::sso_start))
+        .route("/api/v1/auth/sso/callback", get(auth::sso_callback))
         .route("/api/v1/auth/device/start", post(device::start))
         .route("/api/v1/auth/device/poll", post(device::poll))
         .route("/api/v1/openapi.json", get(openapi::document))

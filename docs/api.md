@@ -49,6 +49,11 @@ tokens only. The `username` field is ignored — `auth/login` is the old
 dashboard's token sign-in; the web app uses `POST /api/v1/auth/session`
 instead.
 
+**Kore ID bearer token.** When Kore ID sign-in is configured, a Kore ID access
+token (audience: this app's client id) is also accepted as
+`Authorization: Bearer <jwt>` for an account that has signed in through SSO. See
+[sso.md](sso.md). Operator and agent tokens are unchanged.
+
 **Browser session cookie.** The web app signs a browser in with
 `POST /api/v1/auth/session`: body `{"email": ..., "password": ...}` signs a
 member in (see [Accounts](#accounts)) and answers
@@ -178,7 +183,10 @@ The SSE stream and agent binary downloads have no timeout.
 | POST   | `/api/v1/auth/password`       | Body `{currentPassword, newPassword}`; a member changes their own password                                                           |
 | POST   | `/api/v1/auth/login`          | Public; token in `password`, echoed back                                                                                             |
 | POST   | `/api/v1/auth/session`        | Public; body `{email, password}` or `{token}`; sets the session cookie                                                               |
-| DELETE | `/api/v1/auth/session`        | Public; ends the session and clears the cookie                                                                                       |
+| DELETE | `/api/v1/auth/session`        | Public; ends the session and clears the cookie (`ssoLogoutUrl` for a Kore ID session)                                                |
+| GET    | `/api/v1/auth/sso/config`     | Public; `{sso, localLogin, tokenLogin}`: which sign-in methods are on                                                                |
+| GET    | `/api/v1/auth/sso/start`      | Public; redirects to Kore ID (`?next=/path`). See [sso.md](sso.md)                                                                   |
+| GET    | `/api/v1/auth/sso/callback`   | Public; Kore ID returns here; sets the session cookie and redirects, or redirects to `/sign-in?sso_error=`                           |
 | GET    | `/api/v1/auth/me`             | Who is signed in: `principal` `account` or `token`                                                                                   |
 | POST   | `/api/v1/auth/device/start`   | Public; a screen asks to sign in with a QR code. Returns `code`, `pollSecret`, `expiresIn`, `publicUrl`                              |
 | POST   | `/api/v1/auth/device/poll`    | Public; body `{code, pollSecret}`. `pending`, `denied`, `expired`, or `approved` with a new never-expiring operator `token`          |
