@@ -41,7 +41,7 @@ func TestPickAsset(t *testing.T) {
 	manifest := &updateManifest{
 		Version: "1.7.0",
 		Agents: []updateAsset{
-			{Platform: "linux-amd64", File: "superboard-linux-amd64", SHA256: "aa"},
+			{Platform: "plan9-amd64", File: "superboard-plan9-amd64", SHA256: "aa"},
 			{Platform: platformID(), File: "superboard-current", SHA256: "bb"},
 			{Platform: "linux-arm64", File: "superboard-linux-arm64"},
 		},
