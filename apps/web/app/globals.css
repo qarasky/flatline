@@ -187,20 +187,40 @@
     background: color-mix(in srgb, var(--border) 70%, transparent);
     pointer-events: none;
 }
-.board-row[data-kind="group"] {
-    background: color-mix(in srgb, var(--surface) 70%, transparent);
+/* Tree guides: one hairline per ancestor level, centred under that level's
+   chevron, so a row's depth reads at a glance (the padding alone did not). */
+.board-row {
+    background-image: repeating-linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--border) 85%, transparent) 0 1px,
+        transparent 1px 22px
+    );
+    background-repeat: no-repeat;
+    background-position: 26px 0;
+    background-size: calc(var(--depth, 0) * 22px) 100%;
+}
+/* Top-level groups are the sections: a heavier header with a rule above. */
+.board-row[data-kind="group"][data-depth="0"] {
+    background-color: color-mix(in srgb, var(--surface) 85%, transparent);
+    border-top: 1px solid var(--border);
+}
+.board-row[data-kind="group"][data-depth="0"]:first-child {
+    border-top: 0;
+}
+.board-row[data-kind="group"]:not([data-depth="0"]) {
+    background-color: color-mix(in srgb, var(--surface) 35%, transparent);
 }
 .board-row:hover,
 .board-row[data-open] {
-    background: var(--surface-hover);
+    background-color: var(--surface-hover);
 }
 .board-row:has(:focus-visible),
 .board-row[data-cursor] {
-    background: var(--surface-hover);
+    background-color: var(--surface-hover);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring) 55%, transparent);
 }
 .board-row[data-selected] {
-    background: color-mix(in srgb, var(--primary) 9%, var(--surface));
+    background-color: color-mix(in srgb, var(--primary) 9%, var(--surface));
 }
 .board-row[data-open]::before {
     content: "";
@@ -276,6 +296,21 @@
 .board-list[data-density="compact"] .board-compact-inline > button {
     flex: 0 1 auto;
     max-width: 60%;
+}
+
+/* Group health: members as proportional segments, worst first. */
+.group-health {
+    display: flex;
+    flex: 1 1 0;
+    gap: 2px;
+    height: 6px;
+    min-width: 48px;
+    overflow: hidden;
+    border-radius: 3px;
+}
+.group-health > span {
+    min-width: 3px;
+    border-radius: 1px;
 }
 
 /* A live status change tints the row once. */

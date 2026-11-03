@@ -120,7 +120,7 @@ export const MonitorRow = memo(function MonitorRow({
                               : `${statusTone(status)} font-medium`
                     )}
                 >
-                    {label}
+                    {status === "up" ? "" : label}
                 </span>
                 <HeartbeatStrip strip={strip} name={monitor.name} now={now} calm={calm} />
                 <span className="text-muted-foreground text-right text-xs tabular-nums">

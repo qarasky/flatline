@@ -170,10 +170,14 @@ Motion: [dashboard motion](dashboard-motion.md).
   (sort and a comfortable/compact density) and **Views**.
 - **The list:** the group tree, in the same `parent`/`weight` order as the
   Superboard. A row is `[status dot] name (target in quiet text) | status word
-| 24 h strip | uptime`. Group rows show a worst-of dot and up/down counts, so
-  a collapsed group still shows trouble. Status is a dot **and** a word, and
-  the dot's shape differs per status. A muted down monitor reads
-  `Down · muted` with a dark red dot.
+| 24 h strip | uptime`. Hairline guides run down the left of every nested
+  level, so depth reads at a glance; top-level groups are the sections, with a
+  rule above and a heavier header. A group row shows a worst-of dot, a
+  proportional health bar (down, pending, maintenance, up, paused; the whole
+  bar is described to screen readers) and the counts, so a collapsed group still
+  shows trouble. The status word appears only when something is wrong (the dot
+  alone says "Up"; its shape differs per status, and it carries an accessible
+  label). A muted down monitor reads `Down · muted` with a dark red dot.
 - **The 24 h strip:** 48 half-hour buckets coloured by their worst beat (down
   cells are also taller). One bulk request per snapshot,
   `GET /api/v1/monitors/heartbeat-strips?ids=&hours=24&buckets=48`, in chunks

@@ -30,11 +30,36 @@ function Counts({ totals }: { totals: GroupNode["totals"] }) {
         parts.push({ text: `${totals.paused} paused`, tone: "text-muted-foreground" });
     }
     return (
-        <span className="flex flex-wrap justify-end gap-x-2 text-xs tabular-nums">
+        <span className="flex shrink-0 justify-end gap-x-2 text-xs whitespace-nowrap tabular-nums">
             {parts.map((part) => (
                 <span key={part.text} className={part.tone}>
                     {part.text}
                 </span>
+            ))}
+        </span>
+    );
+}
+
+const SEGMENTS: { key: keyof GroupNode["totals"]; color: string; label: string }[] = [
+    { key: "down", color: "var(--status-down)", label: "down" },
+    { key: "pending", color: "var(--status-warn)", label: "pending" },
+    { key: "maintenance", color: "var(--status-maint)", label: "in maintenance" },
+    { key: "up", color: "color-mix(in srgb, var(--status-up) 70%, transparent)", label: "up" },
+    { key: "paused", color: "var(--border)", label: "paused" },
+];
+
+/** Members as proportional segments; the numbers beside it stay for exactness. */
+function HealthBar({ totals }: { totals: GroupNode["totals"] }) {
+    if (totals.total === 0) {
+        return <span className="flex-1" />;
+    }
+    const summary = SEGMENTS.filter((s) => totals[s.key] > 0)
+        .map((s) => `${totals[s.key]} ${s.label}`)
+        .join(", ");
+    return (
+        <span className="group-health" role="img" aria-label={summary} title={summary}>
+            {SEGMENTS.filter((s) => totals[s.key] > 0).map((s) => (
+                <span key={s.key} style={{ flexGrow: totals[s.key], background: s.color }} />
             ))}
         </span>
     );
@@ -60,6 +85,7 @@ export const GroupRow = memo(function GroupRow({
                 className="board-row"
                 data-kind="group"
                 data-status={group.worst}
+                data-depth={depth}
                 data-cursor={isCursor || undefined}
                 data-row-id={group.id}
                 style={{ "--depth": depth } as CSSProperties}
@@ -88,7 +114,9 @@ export const GroupRow = memo(function GroupRow({
                 </button>
                 <StatusDot status={group.worst} muted={isCovered(group.monitor)} />
                 <div className="flex min-w-0 items-baseline gap-2 py-1.5">
-                    <span className="truncate font-semibold">{group.monitor.name}</span>
+                    <span className={cn("truncate", depth === 0 ? "font-semibold" : "font-medium")}>
+                        {group.monitor.name}
+                    </span>
                     <span className="text-muted-foreground shrink-0 text-xs tabular-nums">{group.totals.total}</span>
                 </div>
                 <span
@@ -101,9 +129,10 @@ export const GroupRow = memo(function GroupRow({
                               : "text-muted-foreground"
                     )}
                 >
-                    {group.totals.total === 0 ? "Empty" : STATUS_LABEL[group.worst]}
+                    {group.totals.total === 0 ? "Empty" : group.worst === "up" ? "" : STATUS_LABEL[group.worst]}
                 </span>
-                <div className="board-strip-cell col-span-2 min-w-0 text-right">
+                <div className="board-strip-cell col-span-2 flex min-w-0 items-center justify-end gap-3">
+                    <HealthBar totals={group.totals} />
                     <Counts totals={group.totals} />
                 </div>
                 <RowMenuButton name={`group ${group.monitor.name}`} monitorId={group.id} items={items} />
