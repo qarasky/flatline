@@ -571,6 +571,7 @@ async fn anyone_kore_id_admits_gets_an_account_by_default() {
     let (status, body) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["account"]["email"], "new.person@office.kz");
+    assert_eq!(body["account"]["sso"], true);
     let sub: Option<String> = sqlx::query_scalar("SELECT kore_sub FROM users").fetch_one(&h.pool).await.unwrap();
     assert_eq!(sub.as_deref(), Some(SUB));
 

@@ -366,6 +366,7 @@ pub async fn me(
                 "email": account.email,
                 "name": account.name,
                 "mustChangePassword": account.must_change_password,
+                "sso": account.kore_sub.is_some(),
             });
             body["user"] = json!({ "id": account.id, "username": account.email, "name": account.name });
         }
