@@ -7,7 +7,7 @@ import { LiveUpdateWatcher } from "@/components/live-update-watcher";
 import { boardRouteFrom } from "@/lib/routes";
 import { SESSION_COOKIE } from "@/lib/session";
 
-export const metadata: Metadata = { title: "Superboard · Flatline" };
+export const metadata: Metadata = { title: "Superboard · KoreMonitor" };
 
 /**
  * `/superboard`, `/superboard/<scope>`, `/superboard/kiosk` and

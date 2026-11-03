@@ -7,7 +7,7 @@ import { isApiError } from "@/lib/api";
 import { monitorHeader } from "@/lib/monitor-crumbs";
 import { BEAT_LIMIT, fetchAllMonitors, fetchHeartbeats, fetchMonitor } from "@/lib/monitors-api";
 
-export const metadata: Metadata = { title: "Monitor · Flatline" };
+export const metadata: Metadata = { title: "Monitor · KoreMonitor" };
 
 /** A monitor's own page: the same detail as the peek panel, with its groups as breadcrumbs. */
 export default async function MonitorPage({ params }: { params: Promise<{ id: string }> }) {

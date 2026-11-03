@@ -7,7 +7,7 @@ import { isApiError } from "@/lib/api";
 import { orNull } from "@/lib/fleet-metrics";
 import { fetchLatestMetrics, fetchMonitor } from "@/lib/monitors-api";
 
-export const metadata: Metadata = { title: "Server · Flatline" };
+export const metadata: Metadata = { title: "Server · KoreMonitor" };
 
 /** One server's page. Only push monitors are servers; anything else is not found here. */
 export default async function ServerPage({ params }: { params: Promise<{ id: string }> }) {

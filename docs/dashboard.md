@@ -16,7 +16,7 @@ the Vite dashboard the app replaced, so links to it keep working.)
 - **Tailwind CSS 4 and kore-ui** (`@qarasky/kore-ui`, pinned to a release
   tarball in `apps/web/package.json`), the design system shared by every Kore
   app. Its `DESIGN.md` is the source of truth for tokens, layout, components
-  and copy; Flatline follows it and documents only what is specific to
+  and copy; KoreMonitor follows it and documents only what is specific to
   monitoring. `app/globals.css` imports `@qarasky/kore-ui/theme.css` and keeps
   only monitoring CSS (the monitor board, heartbeat strips, fleet meters,
   history charts, the wall board and status pages), written on kore-ui's
@@ -27,8 +27,10 @@ the Vite dashboard the app replaced, so links to it keep working.)
   the `sidebar_state` cookie, ⌘B toggles it), search in the top bar (⌘K), the
   Kore app switcher and account menu (Kore ID account, other apps from
   `KORE_APP_URLS`, sign out), `PageHeader` with breadcrumbs, and `AuthScreen`
-  for sign-in. The app is shown as "Flatline" until the KoreMonitor rename
-  (`names` override in `lib/kore.ts`).
+  for sign-in. The shell shows the product as **KoreMonitor** (kore-ui's
+  default, pinned by the `names` override in `lib/kore.ts`); the rename from
+  Flatline is display-only, so code and deployment identifiers keep the
+  `flatline` name.
 - **lucide** icons and **cmdk** for the ⌘K palette. Nothing loads from another
   host (Caddy's CSP forbids it): the font is bundled.
 - **Vitest** for tests (`apps/web/__tests__/`). The old dashboard's pure
@@ -131,7 +133,7 @@ id of the build the server runs (`lib/build-id.ts`). Every 5 minutes, when the
 tab becomes visible and whenever the live stream reconnects, an open tab
 compares the two. On a change the kiosk and status pages reload themselves
 (waiting while someone is typing); admin pages and the desk Superboard show
-**A new version of Flatline is available — Reload / Later**. The dev server
+**A new version of KoreMonitor is available — Reload / Later**. The dev server
 has no build id, so it never triggers.
 
 ### Errors
@@ -245,7 +247,7 @@ tokens. Status pages render on the server and load no admin code
    renders kore-ui's `PageHeader` (title, breadcrumbs, actions) and the section's client
    component. Under `(admin)` it gets the session check, the sidebar, the
    palette and the shared live data for free. Set `metadata.title`
-   (`"<Section> · Flatline"`).
+   (`"<Section> · KoreMonitor"`).
 2. **The data:** a `lib/<section>-api.ts` module over `api()` for the
    section's endpoints, usable from server and client components. Live data
    comes from `useBoardData()` or a `subscribeLive` subscriber, not a second

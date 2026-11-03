@@ -6,7 +6,7 @@ import { Button, Card, Field, Input } from "@qarasky/kore-ui";
 /**
  * Password prompt for a protected status page.
  *
- * Posts to the Flatline API, which sets the page-scoped unlock cookie on
+ * Posts to the KoreMonitor API, which sets the page-scoped unlock cookie on
  * this origin; the parent then re-fetches with `credentials: include`.
  * Kept as a component rather than a page so the cookie lands on the origin
  * that actually serves the page.

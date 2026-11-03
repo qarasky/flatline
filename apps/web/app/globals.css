@@ -1,5 +1,5 @@
 /*
- * Flatline web theme: the Kore design system (@qarasky/kore-ui, see its
+ * KoreMonitor web theme: the Kore design system (@qarasky/kore-ui, see its
  * DESIGN.md) brings every token, the font and the base styles. This file
  * keeps only what is specific to monitoring: the monitor board, heartbeat
  * strips, fleet meters and history charts. They read kore-ui's variables

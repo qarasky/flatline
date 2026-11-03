@@ -1,6 +1,6 @@
-# Flatline HTTP API
+# KoreMonitor HTTP API
 
-The Flatline backend (`backend-rs/`) serves the API; Caddy puts it and the web
+The KoreMonitor backend (`backend-rs/`) serves the API; Caddy puts it and the web
 app (`apps/web/`) on one origin, so a browser, an LLM tool and the Go agent in
 `superboard/` all use the same base URL. See [architecture](architecture.md) for
 how the pieces fit, [agent](agent.md) for the agent side of the push contract,

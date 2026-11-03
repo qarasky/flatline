@@ -1,14 +1,14 @@
 # Architecture
 
-Flatline is four programs, a reverse proxy and one database.
+KoreMonitor is four programs, a reverse proxy and one database.
 
-| Process              | Language | Runs on                         | Job                                                                                                                     |
-| -------------------- | -------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Backend              | Rust     | The Flatline server             | Check engine, REST API, storage, alerts, agent downloads and the provisioning documents.                                |
-| Web app              | Next.js  | The Flatline server (own image) | Operator UI, Superboard, public status pages. Server-rendered by a Node process; the browser calls the API same-origin. |
-| Caddy                | Caddy 2  | The Flatline server (own image) | The only published service: routes the backend's paths to the backend and everything else to the web app.               |
-| Agent (`superboard`) | Go       | Each monitored host             | Collects telemetry and pushes it outbound. Never listens on a port.                                                     |
-| Backup agent         | Go       | Selected hosts                  | Exports PostgreSQL/Garage, optionally encrypts, uploads resumable chunks. One process per named instance.               |
+| Process              | Language | Runs on                            | Job                                                                                                                     |
+| -------------------- | -------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Backend              | Rust     | The KoreMonitor server             | Check engine, REST API, storage, alerts, agent downloads and the provisioning documents.                                |
+| Web app              | Next.js  | The KoreMonitor server (own image) | Operator UI, Superboard, public status pages. Server-rendered by a Node process; the browser calls the API same-origin. |
+| Caddy                | Caddy 2  | The KoreMonitor server (own image) | The only published service: routes the backend's paths to the backend and everything else to the web app.               |
+| Agent (`superboard`) | Go       | Each monitored host                | Collects telemetry and pushes it outbound. Never listens on a port.                                                     |
+| Backup agent         | Go       | Selected hosts                     | Exports PostgreSQL/Garage, optionally encrypts, uploads resumable chunks. One process per named instance.               |
 
 There is no message broker and no Redis: one backend process owns the SQLite
 database, the in-memory live cache and the API. The web app holds no state of

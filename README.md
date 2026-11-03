@@ -1,8 +1,8 @@
 <div align="center" width="100%">
-    <img src="./apps/web/app/icon.svg" width="96" alt="Flatline mark" />
+    <img src="./apps/web/app/icon.svg" width="96" alt="KoreMonitor mark" />
 </div>
 
-# Flatline
+# KoreMonitor
 
 Self-hosted uptime monitoring, live server telemetry, and Telegram alerts —
 built for one operator, a wall monitor and AI agents.
@@ -54,7 +54,7 @@ Both agents update themselves from the builds the server ships.
   per-collector error counts on the card, with one right-click action to clear
   the warnings you have seen.
 - **Back up client servers**: named backup agents export each project's Postgres
-  databases and S3/Garage buckets daily to the Flatline server's storage, with
+  databases and S3/Garage buckets daily to the KoreMonitor server's storage, with
   optional age encryption, resumable uploads, retention and offline
   verify/restore. The Superboard shows each server's backup-agent version and a
   live "last backup … ago" line per project, and flags a server whose backup is
@@ -144,7 +144,7 @@ documented in [docs/deployment.md](docs/deployment.md).
 ## Sign in and tokens
 
 People sign in to the web app **only with Kore ID** (the shared OpenID Connect
-provider behind Kore, KoreMind, KoreCalendar and Flatline). A first sign-in
+provider behind Kore, KoreMind, KoreCalendar and KoreMonitor). A first sign-in
 provisions a full operator account; access is managed in Kore ID's admin. There
 is no password, operator-token or first-account sign-in.
 
@@ -172,7 +172,7 @@ Everything lives in [`docs/`](docs/README.md):
 | Document                                     | Read it when                                               |
 | -------------------------------------------- | ---------------------------------------------------------- |
 | [Architecture](docs/architecture.md)         | You want to know how the pieces fit and where data lives.  |
-| [API](docs/api.md)                           | You are calling Flatline from a script or an agent.        |
+| [API](docs/api.md)                           | You are calling KoreMonitor from a script or an agent.     |
 | [Host agent](docs/agent.md)                  | You are installing, configuring or debugging `superboard`. |
 | [Superboard](docs/superboard.md)             | You are changing or explaining the wall board.             |
 | [Web app](docs/dashboard.md)                 | You are working on the operator UI.                        |

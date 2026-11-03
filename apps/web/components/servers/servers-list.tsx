@@ -156,7 +156,7 @@ export function ServersList() {
                     <EmptyState
                         icon={<Server />}
                         title="No servers yet"
-                        description="A server is a push monitor whose host runs the Flatline agent."
+                        description="A server is a push monitor whose host runs the KoreMonitor agent."
                     />
                 ) : (
                     <>

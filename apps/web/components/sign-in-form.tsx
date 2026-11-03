@@ -43,7 +43,7 @@ export function SignInForm({
     const notice = expired ? "Your session ended. Sign in again." : undefined;
     const sso = methods.sso ? { href: ssoStartHref(next) } : undefined;
     const error = unreachable
-        ? "Could not reach Flatline. Try again."
+        ? "Could not reach KoreMonitor. Try again."
         : !methods.sso
           ? "No sign-in method is configured on this instance. Ask an administrator to set KORE_ID_ISSUER."
           : ssoErrorMessage(ssoError);

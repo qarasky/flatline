@@ -6,7 +6,7 @@ import { PageHeader } from "@qarasky/kore-ui";
 import { fetchBackupRuns } from "@/lib/backups-api";
 import { fetchAllBackupAgents } from "@/lib/monitors-api";
 
-export const metadata: Metadata = { title: "Backup agent · Flatline" };
+export const metadata: Metadata = { title: "Backup agent · KoreMonitor" };
 
 /** One backup agent. The API has no single-agent read, so the page finds it in the full list. */
 export default async function BackupAgentPage({ params }: { params: Promise<{ id: string }> }) {

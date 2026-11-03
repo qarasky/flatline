@@ -1,5 +1,5 @@
 /**
- * Client for the Flatline API, usable from server and client components.
+ * Client for the KoreMonitor API, usable from server and client components.
  *
  * - On the server it calls `API_URL` directly and forwards the session cookie,
  *   so server-rendered pages fetch as the signed-in person.
@@ -132,7 +132,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
         if (options.signal?.aborted) {
             throw error;
         }
-        throw new ApiError(503, "unreachable", "Could not reach Flatline.");
+        throw new ApiError(503, "unreachable", "Could not reach KoreMonitor.");
     }
     if (!response.ok) {
         if (server && response.status === 401) {

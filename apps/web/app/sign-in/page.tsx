@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import { SignInForm } from "@/components/sign-in-form";
 
-export const metadata: Metadata = { title: "Sign in · Flatline" };
+export const metadata: Metadata = { title: "Sign in · KoreMonitor" };
 
 export default async function SignInPage({
     searchParams,

@@ -39,7 +39,7 @@ export function KioskSignIn() {
             sso={methods.sso ? { href: ssoStartHref(next) } : undefined}
             error={
                 unreachable
-                    ? "Could not reach Flatline. Try again."
+                    ? "Could not reach KoreMonitor. Try again."
                     : methods.sso
                       ? null
                       : "No sign-in method is configured on this instance. Ask an administrator to set KORE_ID_ISSUER."

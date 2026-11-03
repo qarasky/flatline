@@ -36,7 +36,7 @@ export default function AdminError({ reset }: { error: Error & { digest?: string
             <EmptyState
                 icon={<RefreshCw />}
                 title="Couldn't load this page"
-                description="Flatline may be restarting. Retrying on its own…"
+                description="KoreMonitor may be restarting. Retrying on its own…"
                 action={<Button onClick={retry}>Try again now</Button>}
             />
         </div>

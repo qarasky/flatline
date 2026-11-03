@@ -1,7 +1,7 @@
-# Flatline backup agent
+# KoreMonitor backup agent
 
 `flatline-backup` is a separate Go program that exports application data from
-one Docker host, optionally encrypts it locally and uploads it to Flatline
+one Docker host, optionally encrypts it locally and uploads it to KoreMonitor
 over the existing HTTPS origin. It is independent of the telemetry agent: one host may
 run `superboard` and several named backup agents.
 
@@ -207,7 +207,7 @@ rebuilding a host also needs its application configuration from elsewhere.
 
 ## Where bundles are stored
 
-On the receiving Flatline server, under `FLATLINE_BACKUP_DIR` (office:
+On the receiving KoreMonitor server, under `FLATLINE_BACKUP_DIR` (office:
 `/mnt/mirror/flatline-backups`, the RAID1 mirror):
 `agents/<agent-id>/<run-id>/bundle.tar` (plain) or `bundle.age` (encrypted),
 from the run's `encrypted` flag, owned by the service user, mode 0700
@@ -286,7 +286,7 @@ the operator `Authorization` header.
 ## Recovery
 
 Recovery is offline: it needs the downloaded bundle (and, for an encrypted
-bundle, the age identity), not Flatline. The format is detected from the
+bundle, the age identity), not KoreMonitor. The format is detected from the
 file: `--identity-file` is required for a `.age` bundle and ignored for a
 `.tar` one.
 
@@ -307,7 +307,7 @@ flatline-backup compare --bundle bundle.age --identity-file recovery-identity.tx
 
 `keygen` writes a new mode-0600 identity and prints only the public recipient,
 which goes into the config as `recipient`. Keep the private identity off the
-source host; `restore` never contacts Flatline. `verify` checks every manifest
+source host; `restore` never contacts KoreMonitor. `verify` checks every manifest
 entry, hash, size, exact key, content type and object mapping, rejects
 trailing data and returns only the validated manifest. Archive verification is not a restore test.
 

@@ -46,9 +46,9 @@ export function ssoStartHref(next: string | null): string {
 }
 
 const SSO_ERRORS: Record<string, string> = {
-    denied: "This Kore ID account doesn't have access to Flatline. Ask your Kore ID admin to give you access.",
+    denied: "This Kore ID account doesn't have access to KoreMonitor. Ask your Kore ID admin to give you access.",
     state: "That sign-in link expired or was opened in another browser. Try again.",
-    token: "Kore ID returned a token Flatline could not verify. Try again.",
+    token: "Kore ID returned a token KoreMonitor could not verify. Try again.",
     provider: "Kore ID did not complete the sign-in. Try again.",
     unavailable: "Kore ID could not be reached. Try again in a moment.",
     disabled: "Kore ID sign-in is not set up on this instance.",

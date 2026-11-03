@@ -10,6 +10,6 @@ describe("failureMessage", () => {
     });
 
     it("explains a network failure plainly", () => {
-        expect(failureMessage(new TypeError("fetch failed"))).toBe("Could not reach Flatline. Try again.");
+        expect(failureMessage(new TypeError("fetch failed"))).toBe("Could not reach KoreMonitor. Try again.");
     });
 });

@@ -615,7 +615,7 @@ function Superboard({
             {kiosk ? (
                 <div className="flex items-center justify-between px-4 py-2">
                     <span className="text-heading font-semibold tracking-[-0.01em]">
-                        Flatline <span className="font-normal text-muted">Superboard</span>
+                        KoreMonitor <span className="font-normal text-muted">Superboard</span>
                         {filter ? <span className="font-normal text-muted"> · {scopeTitle}</span> : null}
                     </span>
                     <span className="flex items-center gap-4">
@@ -643,7 +643,7 @@ function Superboard({
                     <Button asChild variant="ghost" size="sm" className="font-semibold">
                         <a href="/monitors">
                             <ArrowLeft />
-                            Flatline
+                            KoreMonitor
                         </a>
                     </Button>
                     <span className="text-sub text-muted">Superboard</span>

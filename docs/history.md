@@ -1,4 +1,4 @@
-# Flatline — history
+# KoreMonitor (formerly Flatline) — history
 
 A durable record of what this project is, what it deliberately removed and
 added relative to upstream, how the Node backend was replaced by a Rust one,
@@ -7,11 +7,14 @@ for someone who was not present. For current architecture, deployment and
 operations see [architecture](architecture.md), [deployment](deployment.md),
 [operations](operations.md), [agent](agent.md) and [superboard](superboard.md).
 
-## What Flatline is
+## What KoreMonitor is
 
-Flatline is a personal fork of [Uptime Kuma](https://github.com/louislam/uptime-kuma)
-(MIT). Upstream is left untouched and no pull requests are sent back; the fork
-keeps upstream's `LICENSE` and Louis Lam's copyright and adds its own.
+KoreMonitor (formerly Flatline; the rename is display-only, so the
+repository, packages, images, services, environment prefixes and the Kore ID
+app key keep the `flatline` name) is a personal fork of
+[Uptime Kuma](https://github.com/louislam/uptime-kuma) (MIT). Upstream is left
+untouched and no pull requests are sent back; the fork keeps upstream's
+`LICENSE` and Louis Lam's copyright and adds its own.
 
 The runtime stack as of 2026-10-18:
 
@@ -37,7 +40,7 @@ funding config were all deleted; a fork-specific `AGENTS.md`, imported by
 `CLAUDE.md`, was added on 2026-10-25). The underlying advice still applies: run the
 local lint and tests, because nothing enforces them any more.
 
-| Area          | Upstream Uptime Kuma                                   | Flatline                                                                                                                                                                    |
+| Area          | Upstream Uptime Kuma                                   | KoreMonitor                                                                                                                                                                 |
 | ------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Users         | Multi-user with roles; self-signup disabled by default | **Shared instance**: every operator sees and edits the same data. Accounts, invite links and per-user silos existed in the Node era and were removed with the Rust rewrite  |
 | Auth          | Sessions, API keys, token scopes, 2FA/TOTP             | **One token type, full permission**; sign in with the operator token; API keys are SHA-256 at rest (imported keys keep their bcrypt hashes so existing automation survives) |

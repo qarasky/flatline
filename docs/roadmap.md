@@ -1,4 +1,4 @@
-# Flatline — roadmap
+# KoreMonitor — roadmap
 
 What is **not** done, grouped by theme, each item with a one-line rationale.
 This consolidates the open items that were scattered across the planning
@@ -74,14 +74,14 @@ per-container one-shot CPU/memory stats, SMART disk health, agent self-update
 
 ## Explicitly out of scope (deliberately not planned)
 
-| Idea                                     | Why not                                                                                               |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Pull-based scraping                      | Clients are NAT'd; push is the documented, intended transport                                         |
-| Multi-user silos / OAuth / OIDC          | The shared-instance model is deliberate                                                               |
-| Clustering / HA / parent aggregation     | Needless at the documented fleet size (≤ 10–50); a single backend process is a documented limit       |
-| Edge anomaly detection (Netdata-style)   | Too much machinery for a wall board; thresholds cover the need                                        |
-| Log shipping                             | Explicitly out of product scope from day one                                                          |
-| Rebuilding upstream push-retry semantics | Upstream's own tracker shows it is a tarpit; Flatline's silence-based host-down is simpler and honest |
+| Idea                                     | Why not                                                                                                  |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Pull-based scraping                      | Clients are NAT'd; push is the documented, intended transport                                            |
+| Multi-user silos / OAuth / OIDC          | The shared-instance model is deliberate                                                                  |
+| Clustering / HA / parent aggregation     | Needless at the documented fleet size (≤ 10–50); a single backend process is a documented limit          |
+| Edge anomaly detection (Netdata-style)   | Too much machinery for a wall board; thresholds cover the need                                           |
+| Log shipping                             | Explicitly out of product scope from day one                                                             |
+| Rebuilding upstream push-retry semantics | Upstream's own tracker shows it is a tarpit; KoreMonitor's silence-based host-down is simpler and honest |
 
 ## Not open items (noted so they are not mistaken for gaps)
 

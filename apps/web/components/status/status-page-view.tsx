@@ -138,7 +138,7 @@ export function StatusPageView({
     const monitorCount = states.length;
 
     // StatusPage.getIcon() returns "/icon.svg" when no logo is set: the web
-    // app serves the Flatline mark (the cream pulse) there.
+    // app serves the KoreMonitor mark (the cream pulse) there.
     const logoUrl = data.config.icon || "/icon.svg";
 
     // data.incidents holds pinned *active* incidents only; resolved ones come
@@ -222,7 +222,7 @@ export function StatusPageView({
                     showing current state. */}
                 {data.config.showPoweredBy ? (
                     <footer className="mt-11 border-t border-border pt-5.5 text-meta text-muted">
-                        <span>Status by Flatline</span>
+                        <span>Status by KoreMonitor</span>
                     </footer>
                 ) : null}
             </div>

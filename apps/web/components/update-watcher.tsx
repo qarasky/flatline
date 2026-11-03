@@ -60,7 +60,7 @@ export function UpdateWatcher({
             className="bg-raised border-border-strong shadow-overlay animate-kore-pop-in fixed right-4 bottom-4 z-60 flex items-center gap-3 rounded-overlay border py-2 pr-2 pl-4"
             role="status"
         >
-            <span>A new version of Flatline is available.</span>
+            <span>A new version of KoreMonitor is available.</span>
             <Button variant="ghost" size="sm" onClick={() => setDismissed(true)}>
                 Later
             </Button>

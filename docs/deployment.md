@@ -54,7 +54,8 @@ and `:sha-<short>` on every push to `master`, and `:X.Y.Z`, `:X.Y`, `:X` and
 also creates the GitHub release. The root `compose.yaml` pulls these
 (`FLATLINE_VERSION`, `FLATLINE_IMAGE_PREFIX`); the office still builds its own
 `office-live` images below, so shipping to the office is unchanged. The image
-prefix is one variable (`IMAGE_PREFIX` in the workflow) for the KoreMonitor rename.
+prefix is one variable (`IMAGE_PREFIX` in the workflow); image names keep
+`flatline-*` under the display-only rename.
 
 ## Building the images
 

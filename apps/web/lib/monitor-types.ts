@@ -1,5 +1,5 @@
 /**
- * Shapes the Flatline API returns for monitors, metrics, links and backups.
+ * Shapes the KoreMonitor API returns for monitors, metrics, links and backups.
  *
  * Copied from the old dashboard's `src/lib/api.ts` (deleted at the cutover) so the
  * ported board modules keep their types; the old copy goes with the

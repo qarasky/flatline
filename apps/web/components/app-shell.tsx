@@ -51,7 +51,7 @@ function AttentionIcon({ icon, count, collapsed }: { icon: React.ReactNode; coun
 }
 
 /**
- * The signed-in frame: kore-ui's AppShell with the Flatline sections in a
+ * The signed-in frame: kore-ui's AppShell with the KoreMonitor sections in a
  * collapsible sidebar, search in the top bar, then the Kore app switcher and
  * the account menu. The collapsed state lives in the `sidebar_state` cookie
  * (read by the layout, so the first render is right) and ⌘B toggles it.

@@ -3,7 +3,7 @@
 How and when the operator UI (the admin sections of the [web app](dashboard.md))
 animates. Written from published guidance (Atlassian, Carbon, Nielsen Norman
 Group, Emil Kowalski, WCAG 2.2, motion.dev, web.dev); claims tagged _(ours)_
-are Flatline's own calls, not sourced rules. The Superboard keeps its own
+are KoreMonitor's own calls, not sourced rules. The Superboard keeps its own
 behaviour and is not covered here.
 
 ## Principles

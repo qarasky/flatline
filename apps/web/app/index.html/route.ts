@@ -12,10 +12,10 @@ const HTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta http-equiv="refresh" content="0; url=/">
-<title>Flatline</title>
+<title>KoreMonitor</title>
 <script type="module" src="/assets/flatline-next.js"></script>
 </head>
-<body><a href="/">Flatline</a></body>
+<body><a href="/">KoreMonitor</a></body>
 </html>
 `;
 

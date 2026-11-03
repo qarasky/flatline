@@ -7,5 +7,5 @@ export function failureMessage(error: unknown): string {
     if (isApiError(error) && error.status !== 503 && error.message) {
         return error.message;
     }
-    return "Could not reach Flatline. Try again.";
+    return "Could not reach KoreMonitor. Try again.";
 }

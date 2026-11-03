@@ -1,8 +1,8 @@
 # Kore ID single sign-on
 
-**Kore ID is the only way a person signs in to Flatline.** It is the shared
-OpenID Connect provider of Kore, KoreMind, KoreCalendar and Flatline
-(KoreMonitor). There is no email/password login, no operator-token login, no
+**Kore ID is the only way a person signs in to KoreMonitor.** It is the shared
+OpenID Connect provider of Kore, KoreMind, KoreCalendar and KoreMonitor.
+There is no email/password login, no operator-token login, no
 first-account setup, no change-password and no password reset. With
 `KORE_ID_ISSUER` unset the web app still boots, and its sign-in page says that
 no sign-in method is configured. Machine credentials are never routed through
@@ -38,8 +38,8 @@ Every failure redirects to `/sign-in?sso_error=` `state`, `provider`,
 
 ## Who gets an account
 
-Flatline has **one level of access: every account is a full operator**, with
-no roles. Who may use Flatline is therefore decided **in Kore ID's admin**:
+KoreMonitor has **one level of access: every account is a full operator**, with
+no roles. Who may use KoreMonitor is therefore decided **in Kore ID's admin**:
 Kore ID enforces per-user app access (app key `flatline`) and never hands a
 code to someone without it, and its accounts are created by an admin, so
 every token carries `email_verified: true`.
@@ -62,9 +62,9 @@ every token carries `email_verified: true`.
 - An email that belongs to an account already tied to a different `sub`
   is refused.
 
-To give someone Flatline, grant them the `flatline` app in Kore ID. To take
+To give someone KoreMonitor, grant them the `flatline` app in Kore ID. To take
 it away, remove the app (or disable the user) in Kore ID, which also ends
-their Flatline sessions by back-channel logout, and remove them from
+their KoreMonitor sessions by back-channel logout, and remove them from
 **Members** so the account is gone.
 
 SSO accounts have no password (`password_hash` is the sentinel `!sso`) and
@@ -105,7 +105,7 @@ ID returns to `/sign-in`. Register the post-logout address with Kore ID.
 When a Kore ID session ends anywhere (sign-out in another Kore app, an admin
 disabling the user, "sign out everywhere", a password reset), Kore ID POSTs a
 logout token to every app that got tokens in that session (OIDC Back-Channel
-Logout 1.0). Flatline's endpoint is
+Logout 1.0). KoreMonitor's endpoint is
 
     POST /api/v1/auth/sso/backchannel-logout     (form field logout_token)
 
@@ -114,7 +114,7 @@ Register it as the client's `backchannelLogoutUri` in Kore ID's
 Caddy already sends `/api/*` to the backend, and the route is public (Kore
 ID calls it server to server, with no cookie).
 
-Each Flatline session made by a Kore ID sign-in stores the id token's `sid`
+Each KoreMonitor session made by a Kore ID sign-in stores the id token's `sid`
 (`sessions.sso_sid`). The logout token is verified exactly as the spec says:
 EdDSA signature against the JWKS, `iss`, `aud` = `KORE_ID_CLIENT_ID`, `iat`,
 `exp`, header `typ: logout+jwt`, an `events` claim with
@@ -132,7 +132,7 @@ missing or invalid token, `503` when the provider's keys cannot be fetched
 
 Pending sign-ins (`state`, nonce, PKCE verifier; 10 minutes), the logout
 `jti` replay cache and the recently ended `sid`s are kept in the backend's
-memory, not the database. Flatline runs as a single backend process, so this
+memory, not the database. KoreMonitor runs as a single backend process, so this
 is enough; a restart only fails sign-ins that were in flight (the person
 clicks **Continue with Kore ID** again) and forgets replay entries that would
 have expired within two minutes anyway.
@@ -142,7 +142,7 @@ have expired within two minutes anyway.
 | Variable                           | Default                                          | Meaning                                                                                                                                                                                     |
 | ---------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `KORE_ID_ISSUER`                   | unset (no browser sign-in)                       | Provider base URL, e.g. `https://id.kore.example`. `https` required except for localhost.                                                                                                   |
-| `KORE_ID_CLIENT_ID`                | `flatline`                                       | This app's client id (`koremonitor` after the rename).                                                                                                                                      |
+| `KORE_ID_CLIENT_ID`                | `flatline`                                       | This app's client id (unchanged by the display rename).                                                                                                                                     |
 | `KORE_ID_CLIENT_SECRET`            | unset                                            | Confidential client secret. Unset means a public client (only if Kore ID registers one without a secret).                                                                                   |
 | `KORE_ID_CLIENT_AUTH`              | `basic`                                          | `basic` or `post`: how the secret reaches the token endpoint.                                                                                                                               |
 | `KORE_ID_REDIRECT_URI`             | `<FLATLINE_PUBLIC_URL>/api/v1/auth/sso/callback` | Must be registered with Kore ID exactly. Required if `FLATLINE_PUBLIC_URL` is unset.                                                                                                        |
@@ -164,7 +164,7 @@ stops the backend at startup with the variable named.
    `https://<your host>/sign-in`, `backchannelLogoutUri`
    `https://<your host>/api/v1/auth/sso/backchannel-logout`. Keep the secret.
 2. In Kore ID's admin, grant the `flatline` app to the people who should
-   operate Flatline (admins always have it).
+   operate KoreMonitor (admins always have it).
 3. Set `FLATLINE_PUBLIC_URL`, `KORE_ID_ISSUER` and `KORE_ID_CLIENT_SECRET` in
    `.env` (see `.env.example`), then `docker compose up -d`.
 4. Open `/sign-in` and choose **Continue with Kore ID**. The first person to

@@ -5,7 +5,7 @@ import type { Metadata } from "next";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-    title: "Flatline",
+    title: "KoreMonitor",
     robots: { index: false, follow: false },
 };
 

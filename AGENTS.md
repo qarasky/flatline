@@ -1,6 +1,6 @@
-# Agent instructions for Flatline
+# Agent instructions for KoreMonitor
 
-Flatline is a self-hosted uptime monitor and fleet-telemetry system: a fork of
+KoreMonitor is a self-hosted uptime monitor and fleet-telemetry system: a fork of
 Uptime Kuma with its own Rust backend, a Go host agent, a Go backup agent and a
 Next.js web app, deployed as one origin behind Caddy. The Node/Express backend,
 the Vue frontend, the standalone Next.js status app and the Vite dashboard
@@ -91,7 +91,7 @@ record: [docs/deployment.md](docs/deployment.md).
   self-update daily to the image's telemetry agent (`/agent/*`) and backup agent
   (`/api/backup/v1/release/*`). Ship agent bumps deliberately.
 - **Backups on office:** client backup bundles live on the RAID1 mirror at
-  `/mnt/mirror/flatline-backups` (`/app/backups` in the container). Flatline's
+  `/mnt/mirror/flatline-backups` (`/app/backups` in the container). KoreMonitor's
   own database is backed up nightly by `flatline-backup.timer` to
   `/mnt/mirror/flatline-nightly`. On office, `/usr/local/sbin/flatline-backup`
   is that nightly script, not the backup agent.
