@@ -7,8 +7,8 @@
 //! account.
 
 use axum::extract::{Path, State};
-use axum::{Extension, Json};
 use axum::http::StatusCode;
+use axum::{Extension, Json};
 use serde_json::{Value, json};
 
 use crate::AppState;

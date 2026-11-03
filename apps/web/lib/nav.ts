@@ -11,14 +11,7 @@ import {
 } from "lucide-react";
 
 export type NavId =
-    | "attention"
-    | "monitors"
-    | "servers"
-    | "backups"
-    | "notifications"
-    | "tokens"
-    | "members"
-    | "superboard";
+    "attention" | "monitors" | "servers" | "backups" | "notifications" | "tokens" | "members" | "superboard";
 
 export interface NavSection {
     id: NavId;

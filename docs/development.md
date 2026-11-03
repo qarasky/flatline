@@ -22,7 +22,7 @@
 
 | Process        | Port | Notes                                                                                                                      |
 | -------------- | ---- | -------------------------------------------------------------------------------------------------------------------------- |
-| Backend        | 3001 | Binds `0.0.0.0`, runs migrations, writes the operator token on first boot.                                                 |
+| Backend        | 3001 | Binds `0.0.0.0` and runs migrations; the first Kore ID sign-in provisions the first operator.                              |
 | Web app (Next) | 3003 | `next dev`. Rewrites `/api` and `/agent` to the backend (`next.config.ts`), so the browser is same-origin as behind Caddy. |
 | Mock fleet     | —    | `superboard/mockagent`: creates a demo fleet through the public API and pushes telemetry.                                  |
 
@@ -30,8 +30,9 @@ There is no Caddy in development: open the web app on `:3003`. The backend's
 other paths (`/healthz`, `/add-push-server.md`, `/llms.txt`) are on `:3001`.
 
 It also builds the agent binary into `.dev-data/agent/` so the download endpoints
-work locally. The first run prints the operator token (also in
-`.dev-data/initial-token.txt`).
+work locally. Sign in with Kore ID; the mock fleet needs an operator API token
+in `FLATLINE_TOKEN` (mint one in **Tokens**) because it creates its demo hosts
+through the API.
 
 The mock fleet is the reason the board is never empty during development: it
 creates hosts across every card state, a few demo websites linked to the servers
@@ -40,7 +41,7 @@ warnings" action and the website picker have something to show.
 
 Local state (`.dev-data/`, `.dev-logs/`) is disposable and Git-ignored. Delete it
 to get a cold start — that is also the cheapest way to exercise migrations from
-scratch, including the operator-token bootstrap.
+scratch.
 
 ### Running the pieces by hand
 
@@ -110,13 +111,11 @@ forward the `fl_session` session cookie from the server to the backend at
 origin, which Caddy routes to the backend in production and `next.config.ts`
 rewrites to it in development.
 
-People sign in with an email and password; "Use a token instead" signs in with
-an operator token. On a fresh database no account exists yet, so the sign-in
-page offers "Create the first account", which asks for an operator token (the
-dev stack prints where its token is) besides the new account's details. An
-account with a starting password is held on `/account/password` until it
-chooses its own. Accounts are added, reset and removed on **Members**
-(`/members`); removing someone can also revoke the tokens they made.
+People sign in **only with Kore ID**; with `KORE_ID_ISSUER` unset the page says
+no sign-in method is configured. The first sign-in on a fresh database
+provisions a full operator. **Members** (`/members`) lists those accounts and
+removes them, optionally revoking the tokens they made; there is no add-with-
+password and no password reset.
 
 **Monitors** (`/monitors`) lists the group tree with live status, 24 h strips
 and uptime, rendered on the server and kept live by one shared stream per tab
@@ -131,7 +130,7 @@ right-click menu, a checkbox for bulk Pause, Resume and Delete, and the old
 board's keys (`/`, `j`/`k`, `Enter`, `x`, `Esc`; `apps/web/lib/board-keys.ts`). **Attention**
 (`/attention`) lists what needs a look, muted items last; its count sits on
 the sidebar. `⌘K` / `Ctrl+K` (or Search in the sidebar) jumps to any section,
-monitor or server, or runs New monitor, Superboard, Change password or Sign out. **Servers**
+monitor or server, or runs New monitor, Superboard or Sign out. **Servers**
 (`/servers`) lists every push monitor with live CPU, RAM and fullest-disk use and
 how fresh the numbers are. `/servers/<id>` adds the agent's report (with Clear warnings),
 load history, containers, linked websites, thresholds and the server's backups. **Backups**
@@ -141,16 +140,15 @@ runs with downloads and recorded checks, and rotates or revokes its token
 rows; backup problems open their agent. **Notifications** (`/notifications`)
 lists the Telegram configs with the monitors using each; editing one leaves
 the bot-token field empty, and an empty field keeps the stored token.
-**Tokens** (`/tokens`) lists operator tokens (device sign-ins from the kiosk's
-QR included) with who made each and when it was last used; a new token is
-shown once, and disabling or deleting the one this browser signed in with
-signs it out.
+**Tokens** (`/tokens`) lists operator API tokens with who made each and when it
+was last used; a new token is shown once. They authenticate scripts and
+machines, not browsers.
 
-The **Superboard** (`/superboard`, `/superboard/<scope>`, `/superboard/kiosk…`),
-the phone's approve page (`/device`) and public **status pages**
+The **Superboard** (`/superboard`, `/superboard/<scope>`, `/superboard/kiosk…`)
+and public **status pages**
 (`/status/<slug>`, and `/` on a mapped client domain) have their own full-screen
 layouts on kore-ui components and tokens. Status pages render on the server and load no admin code; a signed-out
-kiosk shows its QR sign-in. Open tabs notice a deploy through `GET /build`
+kiosk shows the Kore ID sign-in. Open tabs notice a deploy through `GET /build`
 (the build id): the kiosk and status pages reload, admin pages offer Reload.
 For local status pages, add rows to `status_pages` (there is no API to create
 one).

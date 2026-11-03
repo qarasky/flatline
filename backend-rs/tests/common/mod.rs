@@ -51,8 +51,6 @@ async fn harness_inner(
     storage: Option<(Arc<dyn FreeSpace>, Arc<dyn FaultInjector>)>,
     kore_id: Option<flatline_backend::config::KoreIdConfig>,
 ) -> Harness {
-    // The cheapest bcrypt cost: tests hash many passwords.
-    flatline_backend::accounts::set_password_cost(4);
     let dir = tempfile::tempdir().unwrap();
     let (backup_dir, backup_root, free, faults) = match storage {
         Some((free, faults)) => {
@@ -83,14 +81,9 @@ async fn harness_inner(
         backup_dir,
         heartbeat_retention_days: 0,
         kore_id: kore_id.clone(),
-        local_login: true,
-        token_login: true,
     };
     let pool = db::connect(&config.data_dir).await.unwrap();
-    let token = auth::ensure_initial_token(&pool, &config.data_dir)
-        .await
-        .unwrap()
-        .expect("a fresh database mints a token");
+    let token = auth::mint_admin_token(&pool).await.unwrap();
 
     let events = Events::new();
     // The test seam skips the push watcher's boot delay; engine tests call
@@ -120,10 +113,7 @@ async fn harness_inner(
         backups,
         status_page_secret: std::sync::Arc::new(status_page_secret),
         strips: std::sync::Arc::new(flatline_backend::api::strips::StripCache::new()),
-        devices: std::sync::Arc::new(flatline_backend::device::DeviceRequests::new()),
-        sign_ins: std::sync::Arc::new(flatline_backend::accounts::SignInLimiter::new()),
-        sso: kore_id
-            .map(|kore| std::sync::Arc::new(flatline_backend::sso::Sso::new(kore))),
+        sso: kore_id.map(|kore| std::sync::Arc::new(flatline_backend::sso::Sso::new(kore))),
     };
 
     Harness {
@@ -197,7 +187,10 @@ pub async fn next_sse_data(body: &mut axum::body::Body) -> Value {
 }
 
 /// Send a request and return status, Set-Cookie (if any) and the JSON body.
-pub async fn send_full(app: &Router, request: Request<Body>) -> (StatusCode, Option<String>, Value) {
+pub async fn send_full(
+    app: &Router,
+    request: Request<Body>,
+) -> (StatusCode, Option<String>, Value) {
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let cookie = response
@@ -205,7 +198,11 @@ pub async fn send_full(app: &Router, request: Request<Body>) -> (StatusCode, Opt
         .get("set-cookie")
         .map(|v| v.to_str().unwrap().to_string());
     let body = response.into_body().collect().await.unwrap().to_bytes();
-    (status, cookie, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    (
+        status,
+        cookie,
+        serde_json::from_slice(&body).unwrap_or(Value::Null),
+    )
 }
 
 /// The `fl_session` value from a Set-Cookie header.
@@ -229,34 +226,38 @@ pub fn with_cookie(method: &str, uri: &str, session: &str, body: Option<Value>) 
 }
 
 /// A cookie-authenticated request without the CSRF header.
-pub fn with_bare_cookie(method: &str, uri: &str, session: &str, body: Option<Value>) -> Request<Body> {
+pub fn with_bare_cookie(
+    method: &str,
+    uri: &str,
+    session: &str,
+    body: Option<Value>,
+) -> Request<Body> {
     let mut req = request(method, uri, None, body);
     req.headers_mut()
         .insert("cookie", format!("fl_session={session}").parse().unwrap());
     req
 }
 
-/// Sign in with a body (`{token}` or `{email, password}`) and return the
-/// session id the cookie carries.
-pub async fn sign_in(app: &Router, body: Value) -> String {
-    let (status, cookie, body) =
-        send_full(app, request("POST", "/api/v1/auth/session", None, Some(body))).await;
-    assert_eq!(status, StatusCode::OK, "sign-in failed: {body}");
-    cookie_value(&cookie.expect("a session cookie"))
+/// Insert a member account directly. Accounts normally come from a Kore ID
+/// sign-in; tests that need one before the provider flow use this.
+pub async fn add_account(h: &Harness, email: &str, name: &str) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO users (email, email_key, name, password_hash, must_change_password, password_set_at)
+         VALUES (?, ?, ?, '!sso', 0, strftime('%Y-%m-%d %H:%M:%S', 'now'))
+         RETURNING id",
+    )
+    .bind(email)
+    .bind(email.to_lowercase())
+    .bind(name)
+    .fetch_one(&h.pool)
+    .await
+    .unwrap()
 }
 
-/// Add a member with the bearer token; returns their id.
-pub async fn add_member(h: &Harness, email: &str, name: &str, password: &str) -> i64 {
-    let (status, body) = send(
-        &h.app,
-        request(
-            "POST",
-            "/api/v1/users",
-            Some(&h.token),
-            Some(serde_json::json!({ "email": email, "name": name, "password": password })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    body["user"]["id"].as_i64().unwrap()
+/// Create a normal account session for `user_id` (as the SSO callback does)
+/// and return the session id the cookie carries.
+pub async fn session_for(h: &Harness, user_id: i64) -> String {
+    flatline_backend::sessions::create(&h.pool, user_id)
+        .await
+        .unwrap()
 }

@@ -6,16 +6,18 @@
 //
 // Writes superboard.png, dashboard.png and history.png (1920x1080, device
 // scale factor 1) next to this file. The data is the mock fleet, not a real
-// installation, and the token is the local dev token from .dev-data/, traded
-// for a session cookie before the first page loads.
+// installation. Sign in to the dev web app through Kore ID in a browser and
+// pass that browser's fl_session cookie as FLATLINE_SESSION before running.
 //
 // Updated for the Next.js web app (port, routes, the history dialog) but not
 // rerun since the cutover; check the images after regenerating.
 import { chromium } from "playwright";
-import { readFileSync } from "node:fs";
 
-const token = readFileSync(".dev-data/initial-token.txt", "utf8").trim();
+const session = process.env.FLATLINE_SESSION;
 const base = "http://127.0.0.1:3003";
+if (!session) {
+    throw new Error("set FLATLINE_SESSION to the fl_session cookie from a Kore ID sign-in");
+}
 
 const browser = await chromium.launch();
 const context = await browser.newContext({
@@ -23,14 +25,8 @@ const context = await browser.newContext({
     deviceScaleFactor: 1,
     colorScheme: "dark",
 });
-// Sign in: the session cookie lands in the context's cookie jar.
-const signIn = await context.request.post(`${base}/api/v1/auth/session`, {
-    data: { token },
-    headers: { "X-Flatline-CSRF": "1" },
-});
-if (!signIn.ok()) {
-    throw new Error(`sign-in failed: ${signIn.status()}`);
-}
+// The cookie comes from a real Kore ID sign-in; there is no token sign-in.
+await context.addCookies([{ name: "fl_session", value: session, url: base }]);
 const page = await context.newPage();
 page.on("pageerror", (error) => console.error("page error:", error.message));
 

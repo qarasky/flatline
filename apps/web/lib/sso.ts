@@ -5,9 +5,8 @@ import { api } from "@/lib/api";
  * the account menu the Kore ID account page and the other Kore apps.
  */
 export interface SignInMethods {
+    /** Kore ID sign-in is configured. */
     sso: boolean;
-    localLogin: boolean;
-    tokenLogin: boolean;
     /** Kore ID's account page (with Kore ID on). */
     accountUrl: string | null;
     /** The other Kore apps' URLs for the app switcher, by app id. */
@@ -18,8 +17,8 @@ export interface SignInMethods {
 export type KoreAppId = "kore" | "koremind" | "korecalendar" | "flatline";
 const APP_IDS: readonly KoreAppId[] = ["kore", "koremind", "korecalendar", "flatline"];
 
-/** Local sign-in only, for a backend that does not answer. */
-export const LOCAL_ONLY: SignInMethods = { sso: false, localLogin: true, tokenLogin: true, accountUrl: null, apps: {} };
+/** No sign-in method: the backend did not answer, or Kore ID is not configured. */
+export const NO_SIGN_IN: SignInMethods = { sso: false, accountUrl: null, apps: {} };
 
 export function toMethods(body: Record<string, unknown>): SignInMethods {
     const apps: SignInMethods["apps"] = {};
@@ -34,8 +33,6 @@ export function toMethods(body: Record<string, unknown>): SignInMethods {
         typeof body.accountUrl === "string" && /^https?:\/\//.test(body.accountUrl) ? body.accountUrl : null;
     return {
         sso: body.sso === true,
-        localLogin: body.localLogin !== false,
-        tokenLogin: body.tokenLogin !== false,
         accountUrl,
         apps,
     };

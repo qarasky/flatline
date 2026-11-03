@@ -3,16 +3,7 @@ import type { MonitorSummary } from "@/lib/monitor-types";
 import { isCovered } from "@/lib/mute";
 
 export type RowMenuId =
-    | "open"
-    | "edit"
-    | "rename"
-    | "move"
-    | "mute"
-    | "unmute"
-    | "pause"
-    | "resume"
-    | "newSubgroup"
-    | "delete";
+    "open" | "edit" | "rename" | "move" | "mute" | "unmute" | "pause" | "resume" | "newSubgroup" | "delete";
 
 /** Mute while down, Unmute while a mute covers it, neither otherwise. */
 function muteItem(subject: MonitorSummary, down: boolean): RowMenuId[] {

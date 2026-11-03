@@ -517,7 +517,10 @@ pub async fn agent_checkin(
 
 /// GET /api/backup/v1/release/{file} (agent-scoped). One backup-agent build;
 /// any other name in the directory (VERSION-BACKUP, checksums) is a 404.
-pub async fn agent_release_file(State(state): State<AppState>, Path(file): Path<String>) -> Response {
+pub async fn agent_release_file(
+    State(state): State<AppState>,
+    Path(file): Path<String>,
+) -> Response {
     if !crate::api::provisioning::is_build_file(&file, BACKUP_AGENT_PREFIX) {
         return (
             StatusCode::NOT_FOUND,

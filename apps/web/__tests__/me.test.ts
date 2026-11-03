@@ -7,7 +7,7 @@ describe("displayName", () => {
         expect(
             displayName({
                 principal: "account",
-                account: { id: 1, email: "a@x.kz", name: "Ana Bek", mustChangePassword: false, sso: false },
+                account: { id: 1, email: "a@x.kz", name: "Ana Bek", sso: true },
             })
         ).toBe("Ana Bek");
     });
@@ -27,12 +27,12 @@ describe("toMe", () => {
             toMe({
                 ok: true,
                 principal: "account",
-                account: { id: 1, email: "a@x.kz", name: "Ana", mustChangePassword: true },
+                account: { id: 1, email: "a@x.kz", name: "Ana", sso: true },
                 capabilities: ["gui"],
             })
         ).toEqual({
             principal: "account",
-            account: { id: 1, email: "a@x.kz", name: "Ana", mustChangePassword: true, sso: false },
+            account: { id: 1, email: "a@x.kz", name: "Ana", sso: true },
         });
         expect(toMe({ ok: true, principal: "token", token: { id: 2, name: "admin" } })).toEqual({
             principal: "token",

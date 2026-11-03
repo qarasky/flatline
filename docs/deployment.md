@@ -12,11 +12,11 @@ things live, how a release goes out, and how to get back.
 | Tunnel target      | `http://localhost:3001` on the office host (Caddy)                                                      |
 | Compose files      | `/home/office/flatline/compose.rust.yaml` + `/home/office/flatline-src/docker/compose.backups.yaml`     |
 | Environment        | `/home/office/flatline/.env` — `FLATLINE_PORT=3001`, `FLATLINE_PUBLIC_URL=https://uptime.mediaboost.kz` |
-| Data               | `/home/office/flatline/data-rust/flatline.db` (plus `initial-token.txt`, `status-page-secret`)          |
+| Data               | `/home/office/flatline/data-rust/flatline.db` (plus `status-page-secret`)                               |
 | Database backups   | Pre-release: `/home/office/flatline/backups/`. Nightly: `/mnt/mirror/flatline-nightly/` (RAID1)         |
 | Backup storage     | `/mnt/mirror/flatline-backups` (RAID1 `md0`) → `/app/backups`; client bundles from backup agents        |
 | Source tree        | `/home/office/flatline-src` — the tree the images are built from                                        |
-| Provisioning token | `/home/office/flatline/provisioning-token.txt` (0600, root)                                             |
+| Operator API token | `/home/office/flatline/provisioning-token.txt` (0600, root; for scripts, not a browser login)           |
 | Stack name         | `flatline-rust`: containers `-caddy-1`, `-flatline-1` (the backend) and `-web-1`                        |
 | Docker networks    | `edge` `172.31.254.0/24` (Caddy; Kore's stack on this host has `172.31.255.0/24`), `internal`, `egress` |
 
@@ -99,7 +99,7 @@ execs the backend (still PID 1, still handling SIGTERM itself).
   starts find nothing to do. The manual equivalent, if ever wanted, is
   `sudo chown -R 10001:10001 /home/office/flatline/data-rust`.
 - Host-side tools still work: root reads the 10001-owned files (backups,
-  `initial-token.txt`), and a file root restores is handed back on the next
+  `status-page-secret`), and a file root restores is handed back on the next
   start.
 - ICMP monitors run `ping` without root. The image gives the binary
   `cap_net_raw` (permitted only), and the compose files set
@@ -187,7 +187,7 @@ the backend and the web app are up.
 ```bash
 cd /home/office/flatline
 sudo docker compose -f compose.rust.yaml ps     # three services healthy, restarts 0
-TOKEN=$(sudo cat /home/office/flatline/data-rust/initial-token.txt)
+TOKEN=$(sudo cat /home/office/flatline/provisioning-token.txt)
 curl -fsS localhost:3001/healthz
 curl -fsS -H "Authorization: Bearer $TOKEN" localhost:3001/api/v1/health
 curl -fsS "localhost:3001/agent/version?token=$TOKEN"
@@ -207,7 +207,7 @@ Check by hand, in order:
 5. The runbook renders the right origin and agent version.
 6. `/build` answers the commit the web image was built from.
 7. The public origin answers through the tunnel:
-   - `/sign-in`, `/status/<slug>`, `/superboard/kiosk` and `/api/v1/auth/setup` return 200;
+   - `/sign-in`, `/status/<slug>`, `/superboard/kiosk` and `/healthz` return 200;
    - `/api/v1/monitors` returns 401 unauthenticated;
    - signing in sets a `Secure` cookie.
 8. Every agent resumed pushing: newest telemetry per push monitor is seconds old.

@@ -25,7 +25,7 @@ import {
     fetchLatestMetricsBulk,
 } from "@/lib/monitors-api";
 import { HIGHLIGHT_MS, LIVE_BATCH_MS, planCues } from "@/lib/motion";
-import { PASSWORD_PATH, SIGN_IN_PATH } from "@/lib/session";
+import { SIGN_IN_PATH } from "@/lib/session";
 
 /** Which rows get a highlight after the latest batch, or the one group cue. */
 export interface Cue {
@@ -62,13 +62,9 @@ export interface BoardData {
 
 /**
  * The ended session's way out: a page whose live stream or roster read was
- * refused goes to sign-in (or to the password page), once.
+ * refused goes to sign-in, once.
  */
-function leave(error: ApiError): void {
-    if (error.code === "password_change_required") {
-        window.location.assign(PASSWORD_PATH);
-        return;
-    }
+function leave(_error: ApiError): void {
     const here = window.location.pathname + window.location.search;
     window.location.assign(`${SIGN_IN_PATH}?expired=1&next=${encodeURIComponent(here)}`);
 }

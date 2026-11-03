@@ -8,7 +8,6 @@ import {
     Menu,
     MenuContent,
     MenuItem,
-    MenuSeparator,
     MenuTrigger,
     Table,
     TableBody,
@@ -18,33 +17,23 @@ import {
     TableRow,
     TableRowHeader,
 } from "@qarasky/kore-ui";
-import { KeyRound, MoreHorizontal, UserMinus, Users } from "lucide-react";
+import { MoreHorizontal, UserMinus, Users } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
 import { RemoveMemberDialog } from "@/components/members/remove-member-dialog";
-import { ResetPasswordDialog } from "@/components/members/reset-password-dialog";
-import { type Member, type MemberStatus, memberStatus } from "@/lib/members";
-import { PASSWORD_PATH } from "@/lib/session";
+import { type Member } from "@/lib/members";
 
-const STATUS: Record<MemberStatus, { label: string; tone: "warning" | "danger" } | null> = {
-    active: null,
-    "awaiting-first-sign-in": { label: "Awaiting first sign-in", tone: "warning" },
-    "needs-reset": { label: "Needs a password reset", tone: "danger" },
-};
-
-type Action = { kind: "reset" | "remove"; member: Member } | null;
-
-/** One row per member, with reset and remove behind the row's menu (change password on your own). */
+/** One row per member, with remove behind the row's menu for someone else. */
 export function MembersList({ members, meId }: { members: Member[]; meId: number | null }) {
-    const [action, setAction] = useState<Action>(null);
+    const [removing, setRemoving] = useState<Member | null>(null);
 
     if (members.length === 0) {
         return (
             <EmptyState
                 icon={<Users />}
                 title="No members yet"
-                description="Add the people who use Flatline. Until then, signing in needs a token."
+                description="People appear here after their first Kore ID sign-in. To give someone access, grant them the flatline app in Kore ID."
             />
         );
     }
@@ -52,14 +41,15 @@ export function MembersList({ members, meId }: { members: Member[]; meId: number
     return (
         <>
             <p className="text-meta text-muted mb-4">
-                Every member is a full operator. Members who sign in with Kore ID are marked Kore ID.
+                Every member is a full operator. Access comes from Kore ID: grant the flatline app there, and remove the
+                account here when someone leaves.
             </p>
             <Table caption="Members">
                 <TableHeader>
                     <TableRow>
                         <TableHead>Name</TableHead>
                         <TableHead className="max-sm:hidden">Email</TableHead>
-                        <TableHead>Status</TableHead>
+                        <TableHead>Sign-in</TableHead>
                         <TableHead align="right">Tokens</TableHead>
                         <TableHead className="w-12">
                             <span className="sr-only">Actions</span>
@@ -68,7 +58,6 @@ export function MembersList({ members, meId }: { members: Member[]; meId: number
                 </TableHeader>
                 <TableBody>
                     {members.map((member) => {
-                        const status = STATUS[memberStatus(member)];
                         const own = member.id === meId;
                         return (
                             <TableRow key={member.id} data-member-id={member.id}>
@@ -77,17 +66,16 @@ export function MembersList({ members, meId }: { members: Member[]; meId: number
                                         <Avatar name={member.name} email={member.email} size="sm" />
                                         <span className="min-w-0 truncate font-medium">{member.name}</span>
                                         {own ? <Badge tone="accent">You</Badge> : null}
-                                        {member.sso ? <Badge tone="outline">Kore ID</Badge> : null}
                                     </div>
                                 </TableRowHeader>
                                 <TableCell muted className="max-w-72 truncate max-sm:hidden">
                                     {member.email}
                                 </TableCell>
                                 <TableCell>
-                                    {status ? (
-                                        <Badge tone={status.tone}>{status.label}</Badge>
+                                    {member.sso ? (
+                                        <Badge tone="outline">Kore ID</Badge>
                                     ) : (
-                                        <span className="text-muted">Active</span>
+                                        <span className="text-muted">Linked on next sign-in</span>
                                     )}
                                 </TableCell>
                                 <TableCell align="right" muted>
@@ -100,43 +88,26 @@ export function MembersList({ members, meId }: { members: Member[]; meId: number
                                     )}
                                 </TableCell>
                                 <TableCell align="right">
-                                    <Menu>
-                                        <MenuTrigger asChild>
-                                            <IconButton label={`${member.name}: actions`} icon={<MoreHorizontal />} />
-                                        </MenuTrigger>
-                                        <MenuContent align="end">
-                                            {/* A reset would sign you out and hand you a starting password:
-                                                your own row changes it instead. */}
-                                            {own ? (
-                                                <MenuItem asChild>
-                                                    <Link href={PASSWORD_PATH}>
-                                                        <KeyRound className="text-muted" />
-                                                        Change password
-                                                    </Link>
-                                                </MenuItem>
-                                            ) : (
+                                    {/* Nobody removes their own account: someone else does it. */}
+                                    {!own ? (
+                                        <Menu>
+                                            <MenuTrigger asChild>
+                                                <IconButton
+                                                    label={`${member.name}: actions`}
+                                                    icon={<MoreHorizontal />}
+                                                />
+                                            </MenuTrigger>
+                                            <MenuContent align="end">
                                                 <MenuItem
-                                                    icon={<KeyRound />}
-                                                    onSelect={() => setAction({ kind: "reset", member })}
+                                                    danger
+                                                    icon={<UserMinus />}
+                                                    onSelect={() => setRemoving(member)}
                                                 >
-                                                    Reset password…
+                                                    Remove…
                                                 </MenuItem>
-                                            )}
-                                            {/* Nobody removes their own account: someone else does it. */}
-                                            {!own && (
-                                                <>
-                                                    <MenuSeparator />
-                                                    <MenuItem
-                                                        danger
-                                                        icon={<UserMinus />}
-                                                        onSelect={() => setAction({ kind: "remove", member })}
-                                                    >
-                                                        Remove…
-                                                    </MenuItem>
-                                                </>
-                                            )}
-                                        </MenuContent>
-                                    </Menu>
+                                            </MenuContent>
+                                        </Menu>
+                                    ) : null}
                                 </TableCell>
                             </TableRow>
                         );
@@ -144,10 +115,7 @@ export function MembersList({ members, meId }: { members: Member[]; meId: number
                 </TableBody>
             </Table>
 
-            {action?.kind === "reset" && <ResetPasswordDialog member={action.member} onClose={() => setAction(null)} />}
-            {action?.kind === "remove" && (
-                <RemoveMemberDialog member={action.member} members={members} onClose={() => setAction(null)} />
-            )}
+            {removing && <RemoveMemberDialog member={removing} members={members} onClose={() => setRemoving(null)} />}
         </>
     );
 }

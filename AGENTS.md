@@ -34,7 +34,7 @@ Run the ones that cover what you touched before calling work done.
 | Backup agent | `cd backup-agent && go vet ./... && go test -race ./...`              |
 | Local stack  | `./dev.sh` (backend `:3001`, web `:3003`, mock fleet), `status`       |
 
-Do not run `cargo fmt` across the tree: it is not uniformly `rustfmt`-formatted.
+`backend-rs/` is rustfmt-formatted: run `cargo fmt` there (or `cargo fmt --check`) before committing.
 
 ## Rules
 
@@ -54,10 +54,15 @@ Do not run `cargo fmt` across the tree: it is not uniformly `rustfmt`-formatted.
   in `docs/agent.md`.
 - **API routes** are registered in `backend-rs/src/api/mod.rs` and documented
   in `backend-rs/src/api/openapi.json`, the served contract.
-- **One level of operator access.** Member accounts (email and password) and
-  `flatline_op_` tokens are both full-permission operator credentials; push
-  tokens only affect their own monitor; backup-agent tokens are separate again.
-  Kore ID sign-in (`docs/sso.md`) creates the same full-permission accounts for everyone Kore ID admits to the `flatline` app (access is managed in Kore ID's admin; `KORE_ID_ALLOWED_*` are an optional extra filter). Never describe roles, scoped or read-only tokens or accounts.
+- **One level of operator access.** Member accounts (created only by Kore ID)
+  and `flatline_op_` operator API tokens are both full-permission operator
+  credentials; push tokens only affect their own monitor; backup-agent tokens
+  are separate again. Kore ID sign-in (`docs/sso.md`) is the **only** browser
+  sign-in: it creates the same full-permission accounts for everyone Kore ID
+  admits to the `flatline` app (access is managed in Kore ID's admin;
+  `KORE_ID_ALLOWED_*` are an optional extra filter). There is no password,
+  first-account or operator-token login. Never describe roles, scoped or
+  read-only tokens or accounts.
 - **The agents are push-only.** Neither agent listens on a port and the backend
   never connects to a client host.
 - Commit subjects follow `type(scope): summary` (`feat(agent): ...`,
@@ -106,4 +111,4 @@ record: [docs/deployment.md](docs/deployment.md).
 - **Never ask for, print or store secrets in chat.** If a launcher reports
   `CREDENTIAL_SETUP_REQUIRED`, ask the user to run it once in a terminal.
 - Redact tokens when printing configs (`push_token`, `tokenFile` contents,
-  `initial-token.txt`, `provisioning-token.txt`).
+  `provisioning-token.txt`).

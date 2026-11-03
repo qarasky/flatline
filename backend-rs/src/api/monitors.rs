@@ -9,11 +9,11 @@ use sqlx::SqlitePool;
 use crate::AppState;
 use crate::api::ApiError;
 use crate::heartbeats::Beat;
-use crate::mutes;
 use crate::monitors::{
     Monitor, TYPES, apply_interval_defaults, apply_payload, generate_push_token, monitor_json,
     validate_parent,
 };
+use crate::mutes;
 
 /// Query parameters shared by list.
 #[derive(Debug, Default, serde::Deserialize)]
@@ -333,7 +333,14 @@ pub async fn mute(
             .await
             .map(|(_, sample)| sample),
     };
-    let mute = match mutes::mute(&state.pool, id, sample.as_ref(), monitor.metric_disk_threshold).await {
+    let mute = match mutes::mute(
+        &state.pool,
+        id,
+        sample.as_ref(),
+        monitor.metric_disk_threshold,
+    )
+    .await
+    {
         Ok(mute) => mute,
         Err(mutes::MuteError::NotFound) => {
             return Err(ApiError::not_found(format!("No monitor with id {id}.")));
@@ -346,7 +353,9 @@ pub async fn mute(
         Err(mutes::MuteError::Db(error)) => return Err(internal(error)),
     };
     state.events.invalidate();
-    Ok(Json(json!({ "ok": true, "id": id, "mute": mute.to_json() })))
+    Ok(Json(
+        json!({ "ok": true, "id": id, "mute": mute.to_json() }),
+    ))
 }
 
 /// DELETE /api/v1/monitors/{id}/mute

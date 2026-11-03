@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { expiresAt, tokenRow, type TokenKey } from "@/lib/token-row";
-import type { Me } from "@/lib/me";
 
 const now = Date.parse("2026-10-31T12:00:00Z");
 const key = (over: Partial<TokenKey> = {}): TokenKey => ({
@@ -14,49 +13,36 @@ const key = (over: Partial<TokenKey> = {}): TokenKey => ({
     maker: { id: 2, name: "Ana", removed: false },
     ...over,
 });
-const asToken = (id: number): Me => ({ principal: "token", token: { id, name: "x" } });
-const asAccount: Me = {
-    principal: "account",
-    account: { id: 2, email: "a@x", name: "Ana", mustChangePassword: false, sso: false },
-};
-
 describe("tokenRow", () => {
     it("is active, never used and made by its maker", () => {
-        expect(tokenRow(key(), asAccount, now)).toEqual({
+        expect(tokenRow(key(), now)).toEqual({
             status: "active",
             lastUsed: "never",
             maker: "Ana",
             expires: "never",
-            isCurrent: false,
         });
     });
 
     it("says disabled for an inactive token and expired once past its expiry", () => {
-        expect(tokenRow(key({ active: false }), asAccount, now).status).toBe("disabled");
-        expect(tokenRow(key({ expires: "2026-10-30T00:00:00Z" }), asAccount, now).status).toBe("expired");
+        expect(tokenRow(key({ active: false }), now).status).toBe("disabled");
+        expect(tokenRow(key({ expires: "2026-10-30T00:00:00Z" }), now).status).toBe("expired");
         // Expired wins over disabled: re-enabling would not bring it back.
-        expect(tokenRow(key({ active: false, expires: "2026-10-30 00:00:00" }), asAccount, now).status).toBe("expired");
+        expect(tokenRow(key({ active: false, expires: "2026-10-30 00:00:00" }), now).status).toBe("expired");
     });
 
     it("shows how long ago it was used", () => {
-        expect(tokenRow(key({ lastUsedAt: "2026-10-31 11:57:00" }), asAccount, now).lastUsed).toBe("3m ago");
+        expect(tokenRow(key({ lastUsedAt: "2026-10-31 11:57:00" }), now).lastUsed).toBe("3m ago");
     });
 
     it("names a removed maker, and no maker for tokens from before accounts", () => {
-        expect(tokenRow(key({ maker: { id: null, name: "Ana", removed: true } }), asAccount, now).maker).toBe(
+        expect(tokenRow(key({ maker: { id: null, name: "Ana", removed: true } }), now).maker).toBe(
             "removed member Ana"
         );
-        expect(tokenRow(key({ maker: null }), asAccount, now).maker).toBe("—");
-    });
-
-    it("is current only for the token this browser signed in with", () => {
-        expect(tokenRow(key(), asToken(4), now).isCurrent).toBe(true);
-        expect(tokenRow(key(), asToken(5), now).isCurrent).toBe(false);
-        expect(tokenRow(key(), asAccount, now).isCurrent).toBe(false);
+        expect(tokenRow(key({ maker: null }), now).maker).toBe("—");
     });
 
     it("shows the expiry date", () => {
-        expect(tokenRow(key({ expires: "2026-12-01T00:00:00Z" }), asAccount, now).expires).toBe("2026-12-01");
+        expect(tokenRow(key({ expires: "2026-12-01T00:00:00Z" }), now).expires).toBe("2026-12-01");
     });
 });
 

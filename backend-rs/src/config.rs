@@ -32,14 +32,9 @@ pub struct Config {
     /// windows are at most 30 days, badges and status pages use 24h, and the
     /// heartbeat list is capped by its `limit`.
     pub heartbeat_retention_days: i64,
-    /// Kore ID single sign-on; `None` when `KORE_ID_ISSUER` is unset.
+    /// Kore ID single sign-on; `None` when `KORE_ID_ISSUER` is unset. It is
+    /// the only browser sign-in; without it the sign-in page says so.
     pub kore_id: Option<KoreIdConfig>,
-    /// Email and password sign-in (and first-account setup). Default on.
-    /// Turning it off needs Kore ID configured, or nobody could sign in.
-    pub local_login: bool,
-    /// Signing in with an operator token (wall TV, recovery). Bearer use of
-    /// tokens on the API is never affected. Default on.
-    pub token_login: bool,
 }
 
 /// Kore ID (OpenID Connect) relying-party settings. See docs/sso.md.
@@ -87,7 +82,10 @@ fn flag(
     name: &str,
     default: bool,
 ) -> anyhow::Result<bool> {
-    match lookup(name).map(|v| v.trim().to_ascii_lowercase()).filter(|v| !v.is_empty()) {
+    match lookup(name)
+        .map(|v| v.trim().to_ascii_lowercase())
+        .filter(|v| !v.is_empty())
+    {
         None => Ok(default),
         Some(v) if ["1", "true", "yes", "on"].contains(&v.as_str()) => Ok(true),
         Some(v) if ["0", "false", "no", "off"].contains(&v.as_str()) => Ok(false),
@@ -114,7 +112,9 @@ fn app_urls(lookup: &impl Fn(&str) -> Option<String>) -> anyhow::Result<Vec<(Str
         };
         let (app, url) = (app.trim().to_ascii_lowercase(), url.trim().to_string());
         if !APPS.contains(&app.as_str()) {
-            anyhow::bail!("KORE_APP_URLS: unknown app {app:?} (kore, koremind, korecalendar, flatline)");
+            anyhow::bail!(
+                "KORE_APP_URLS: unknown app {app:?} (kore, koremind, korecalendar, flatline)"
+            );
         }
         let parsed = reqwest::Url::parse(&url)
             .map_err(|e| anyhow::anyhow!("KORE_APP_URLS: {app} is not a URL ({url:?}): {e}"))?;
@@ -142,9 +142,14 @@ impl KoreIdConfig {
         let issuer = issuer.trim_end_matches('/').to_string();
         let parsed = reqwest::Url::parse(&issuer)
             .map_err(|e| anyhow::anyhow!("KORE_ID_ISSUER is not a URL ({issuer:?}): {e}"))?;
-        let local = matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "::1" | "[::1]"));
+        let local = matches!(
+            parsed.host_str(),
+            Some("localhost" | "127.0.0.1" | "::1" | "[::1]")
+        );
         if parsed.scheme() != "https" && !(parsed.scheme() == "http" && local) {
-            anyhow::bail!("KORE_ID_ISSUER must be https (http is allowed only for localhost), got {issuer:?}");
+            anyhow::bail!(
+                "KORE_ID_ISSUER must be https (http is allowed only for localhost), got {issuer:?}"
+            );
         }
         let redirect_uri = match set("KORE_ID_REDIRECT_URI") {
             Some(uri) => uri,
@@ -155,14 +160,17 @@ impl KoreIdConfig {
                 ),
             },
         };
-        let redirect = reqwest::Url::parse(&redirect_uri)
-            .map_err(|e| anyhow::anyhow!("KORE_ID_REDIRECT_URI is not a URL ({redirect_uri:?}): {e}"))?;
+        let redirect = reqwest::Url::parse(&redirect_uri).map_err(|e| {
+            anyhow::anyhow!("KORE_ID_REDIRECT_URI is not a URL ({redirect_uri:?}): {e}")
+        })?;
         let post_logout_redirect_uri = set("KORE_ID_POST_LOGOUT_REDIRECT_URI")
             .unwrap_or_else(|| format!("{}/sign-in", redirect.origin().ascii_serialization()));
         let client_auth_post = match set("KORE_ID_CLIENT_AUTH").as_deref() {
             None | Some("basic") => false,
             Some("post") => true,
-            Some(other) => anyhow::bail!("KORE_ID_CLIENT_AUTH must be basic or post, got {other:?}"),
+            Some(other) => {
+                anyhow::bail!("KORE_ID_CLIENT_AUTH must be basic or post, got {other:?}")
+            }
         };
         Ok(Some(Self {
             client_id: set("KORE_ID_CLIENT_ID").unwrap_or_else(|| "flatline".to_string()),
@@ -220,7 +228,6 @@ impl Config {
 
         let host = set("UPTIME_KUMA_HOST").unwrap_or_else(|| "0.0.0.0".to_string());
 
-
         let public_url = set("FLATLINE_PUBLIC_URL");
 
         let agent_dir = set("FLATLINE_AGENT_DIR")
@@ -248,13 +255,6 @@ impl Config {
         };
 
         let kore_id = KoreIdConfig::from_lookup(&lookup, public_url.as_deref())?;
-        let local_login = flag(&lookup, "FLATLINE_LOCAL_LOGIN", true)?;
-        let token_login = flag(&lookup, "FLATLINE_TOKEN_LOGIN", true)?;
-        if kore_id.is_none() && !local_login {
-            anyhow::bail!(
-                "FLATLINE_LOCAL_LOGIN=false needs Kore ID (KORE_ID_ISSUER); otherwise nobody could sign in"
-            );
-        }
 
         Ok(Self {
             data_dir,
@@ -266,8 +266,6 @@ impl Config {
             backup_dir,
             heartbeat_retention_days,
             kore_id,
-            local_login,
-            token_login,
         })
     }
 }
@@ -313,7 +311,7 @@ mod tests {
     #[test]
     fn kore_id_is_off_by_default_and_parsed_when_set() {
         let off = config(&[]).unwrap();
-        assert!(off.kore_id.is_none() && off.local_login && off.token_login);
+        assert!(off.kore_id.is_none());
 
         let on = config(&[
             ("KORE_ID_ISSUER", "https://id.kore.example/"),
@@ -321,18 +319,26 @@ mod tests {
             ("KORE_ID_ALLOWED_EMAILS", "A@x.kz, b@x.kz"),
             ("KORE_ID_ALLOWED_SUBS", "sub-1"),
             ("KORE_ID_CLIENT_AUTH", "post"),
-            ("FLATLINE_LOCAL_LOGIN", "false"),
         ])
         .unwrap();
         let kore = on.kore_id.unwrap();
         assert_eq!(kore.issuer, "https://id.kore.example");
         assert_eq!(kore.client_id, "flatline");
-        assert_eq!(kore.redirect_uri, "https://uptime.example/api/v1/auth/sso/callback");
-        assert_eq!(kore.post_logout_redirect_uri, "https://uptime.example/sign-in");
+        assert_eq!(
+            kore.redirect_uri,
+            "https://uptime.example/api/v1/auth/sso/callback"
+        );
+        assert_eq!(
+            kore.post_logout_redirect_uri,
+            "https://uptime.example/sign-in"
+        );
         assert_eq!(kore.allowed_emails, ["a@x.kz", "b@x.kz"]);
         assert_eq!(kore.allowed_subs, ["sub-1"]);
-        assert!(kore.client_auth_post && !on.local_login);
-        assert!(kore.auto_provision, "Kore ID decides app access, so provisioning is on by default");
+        assert!(kore.client_auth_post);
+        assert!(
+            kore.auto_provision,
+            "Kore ID decides app access, so provisioning is on by default"
+        );
         let off = config(&[
             ("KORE_ID_ISSUER", "https://id.kore.example"),
             ("FLATLINE_PUBLIC_URL", "https://uptime.example"),
@@ -344,7 +350,10 @@ mod tests {
         let apps = config(&[
             ("KORE_ID_ISSUER", "https://id.kore.example"),
             ("FLATLINE_PUBLIC_URL", "https://uptime.example"),
-            ("KORE_APP_URLS", "kore=https://files.example, koremind=https://mind.example"),
+            (
+                "KORE_APP_URLS",
+                "kore=https://files.example, koremind=https://mind.example",
+            ),
         ])
         .unwrap()
         .kore_id
@@ -357,27 +366,48 @@ mod tests {
                 ("koremind".to_string(), "https://mind.example".to_string())
             ]
         );
-        assert!(config(&[
-            ("KORE_ID_ISSUER", "https://id.kore.example"),
-            ("FLATLINE_PUBLIC_URL", "https://uptime.example"),
-            ("KORE_APP_URLS", "files=https://files.example"),
+        assert!(
+            config(&[
+                ("KORE_ID_ISSUER", "https://id.kore.example"),
+                ("FLATLINE_PUBLIC_URL", "https://uptime.example"),
+                ("KORE_APP_URLS", "files=https://files.example"),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_missing_kore_id_config_is_not_a_startup_error() {
+        // No SSO means the sign-in page explains that no method is configured;
+        // the process still boots so machine credentials keep working.
+        let config = config(&[
+            ("FLATLINE_LOCAL_LOGIN", "false"),
+            ("FLATLINE_TOKEN_LOGIN", "true"),
         ])
-        .is_err());
+        .unwrap();
+        assert!(config.kore_id.is_none());
     }
 
     #[test]
     fn kore_id_misconfiguration_is_refused() {
-        // Local login off without SSO is a lockout.
-        assert!(config(&[("FLATLINE_LOCAL_LOGIN", "false")]).is_err());
         // No callback address.
         assert!(config(&[("KORE_ID_ISSUER", "https://id.kore.example")]).is_err());
         // Plain http to a remote provider.
-        assert!(config(&[
-            ("KORE_ID_ISSUER", "http://id.kore.example"),
-            ("KORE_ID_REDIRECT_URI", "https://a.example/cb"),
-        ])
-        .is_err());
-        assert!(config(&[("FLATLINE_TOKEN_LOGIN", "maybe")]).is_err());
+        assert!(
+            config(&[
+                ("KORE_ID_ISSUER", "http://id.kore.example"),
+                ("KORE_ID_REDIRECT_URI", "https://a.example/cb"),
+            ])
+            .is_err()
+        );
+        assert!(
+            config(&[
+                ("KORE_ID_ISSUER", "https://id.kore.example"),
+                ("FLATLINE_PUBLIC_URL", "https://uptime.example"),
+                ("KORE_ID_AUTO_PROVISION", "maybe"),
+            ])
+            .is_err()
+        );
     }
 
     #[test]

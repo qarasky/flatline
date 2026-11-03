@@ -50,7 +50,7 @@ function decodeSegment(segment: string): string {
 /**
  * Pull a status page slug out of `/status/:slug`.
  *
- * Public route: no operator token is involved, and the API decides what the
+ * Public route: no session is involved, and the API decides what the
  * caller may see (password-gated pages show the unlock form).
  * @param path Current path
  * @returns Decoded slug, or null when this is not a status route
@@ -66,15 +66,4 @@ export function statusSlugFromPath(path: string): string | null {
     } catch {
         return match[1];
     }
-}
-
-/**
- * Whether a path is the phone's "approve this screen" page.
- *
- * The request code travels in the URL fragment, not the path, so it never
- * reaches server logs and survives the phone's own sign-in step.
- * @param path Current path
- */
-export function isDeviceApprovePath(path: string): boolean {
-    return (path.replace(/\/+$/, "") || "/") === "/device";
 }

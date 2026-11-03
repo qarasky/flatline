@@ -61,7 +61,9 @@ impl Mock {
 
     fn sign_typed(&self, typ: &str, claims: Value, wrong_key: bool) -> String {
         let key = if wrong_key { &self.other } else { &self.key };
-        let head = b64(json!({"alg": "EdDSA", "typ": typ, "kid": "k1"}).to_string().as_bytes());
+        let head = b64(json!({"alg": "EdDSA", "typ": typ, "kid": "k1"})
+            .to_string()
+            .as_bytes());
         let body = b64(claims.to_string().as_bytes());
         let signed = format!("{head}.{body}");
         let signature = key.sign(signed.as_bytes());
@@ -109,7 +111,11 @@ impl Mock {
 fn rand_suffix() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
-    format!("{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 async fn discovery(State(m): State<Mock>) -> Json<Value> {
@@ -135,20 +141,31 @@ async fn token(
     body: String,
 ) -> (StatusCode, Json<Value>) {
     *m.last.lock().unwrap() = (
-        headers.get("authorization").map(|v| v.to_str().unwrap().to_string()),
+        headers
+            .get("authorization")
+            .map(|v| v.to_str().unwrap().to_string()),
         body.clone(),
     );
     let form: std::collections::HashMap<String, String> =
-        url::form_urlencoded::parse(body.as_bytes()).into_owned().collect();
+        url::form_urlencoded::parse(body.as_bytes())
+            .into_owned()
+            .collect();
     let next = m.next.lock().unwrap().clone();
     let verifier_ok = form
         .get("code_verifier")
         .is_some_and(|v| b64(&Sha256::digest(v.as_bytes())) == next.code_challenge);
     if form.get("code").map(String::as_str) != Some("good-code") || !verifier_ok {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_grant"})));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invalid_grant"})),
+        );
     }
     let now = chrono::Utc::now().timestamp();
-    let sid = if next.sid.is_empty() { "sid-1".to_string() } else { next.sid.clone() };
+    let sid = if next.sid.is_empty() {
+        "sid-1".to_string()
+    } else {
+        next.sid.clone()
+    };
     let id_token = m.sign(
         json!({
             "iss": m.issuer, "aud": next.aud.clone().unwrap_or_else(|| CLIENT_ID.into()),
@@ -210,13 +227,20 @@ fn header(response: &axum::http::Response<axum::body::Body>, name: &str) -> Vec<
         .collect()
 }
 
-async fn get_raw(app: &Router, uri: &str, cookie: Option<&str>) -> axum::http::Response<axum::body::Body> {
+async fn get_raw(
+    app: &Router,
+    uri: &str,
+    cookie: Option<&str>,
+) -> axum::http::Response<axum::body::Body> {
     use tower::ServiceExt;
     let mut builder = axum::http::Request::builder().method("GET").uri(uri);
     if let Some(cookie) = cookie {
         builder = builder.header("cookie", cookie);
     }
-    app.clone().oneshot(builder.body(axum::body::Body::empty()).unwrap()).await.unwrap()
+    app.clone()
+        .oneshot(builder.body(axum::body::Body::empty()).unwrap())
+        .await
+        .unwrap()
 }
 
 /// What `/sso/start` told the browser.
@@ -238,9 +262,15 @@ async fn start(h: &Harness, next: &str) -> Started {
     assert_eq!(q["client_id"], CLIENT_ID);
     assert_eq!(q["code_challenge_method"], "S256");
     assert_eq!(q["scope"], "openid profile email");
-    assert_eq!(q["redirect_uri"], "https://uptime.example/api/v1/auth/sso/callback");
+    assert_eq!(
+        q["redirect_uri"],
+        "https://uptime.example/api/v1/auth/sso/callback"
+    );
     let cookie = header(&response, "set-cookie").remove(0);
-    assert!(cookie.starts_with("fl_sso=") && cookie.contains("HttpOnly"), "{cookie}");
+    assert!(
+        cookie.starts_with("fl_sso=") && cookie.contains("HttpOnly"),
+        "{cookie}"
+    );
     Started {
         state: q["state"].clone(),
         nonce: q["nonce"].clone(),
@@ -261,7 +291,12 @@ fn identity(mock: &Mock, s: &Started, email: &str) {
 }
 
 /// Drive the callback; returns (location, session cookie if any).
-async fn callback(h: &Harness, s: &Started, code: &str, cookie: Option<&str>) -> (String, Option<String>) {
+async fn callback(
+    h: &Harness,
+    s: &Started,
+    code: &str,
+    cookie: Option<&str>,
+) -> (String, Option<String>) {
     let uri = format!("/api/v1/auth/sso/callback?code={code}&state={}", s.state);
     let response = get_raw(&h.app, &uri, cookie).await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
@@ -269,7 +304,13 @@ async fn callback(h: &Harness, s: &Started, code: &str, cookie: Option<&str>) ->
     let session = header(&response, "set-cookie")
         .into_iter()
         .find(|c| c.starts_with("fl_session=") && !c.starts_with("fl_session=;"))
-        .map(|c| c.split(';').next().unwrap().trim_start_matches("fl_session=").to_string());
+        .map(|c| {
+            c.split(';')
+                .next()
+                .unwrap()
+                .trim_start_matches("fl_session=")
+                .to_string()
+        });
     (location, session)
 }
 
@@ -278,7 +319,12 @@ async fn sign_in_via_sso(h: &Harness, mock: &Mock, email: &str) -> String {
 }
 
 /// Sign in, adjusting what the provider returns first (another `sid`, say).
-async fn sign_in_via_sso_with(h: &Harness, mock: &Mock, email: &str, tweak: impl FnOnce(&mut Next)) -> String {
+async fn sign_in_via_sso_with(
+    h: &Harness,
+    mock: &Mock,
+    email: &str,
+    tweak: impl FnOnce(&mut Next),
+) -> String {
     let s = start(h, "/monitors").await;
     identity(mock, &s, email);
     tweak(&mut mock.next.lock().unwrap());
@@ -293,35 +339,48 @@ async fn allowlisted_email_signs_in_and_is_provisioned_once() {
     let h = harness_with_sso(kore(&mock, &["ana@office.kz"], &[])).await;
 
     let session = sign_in_via_sso(&h, &mock, "Ana@Office.kz").await;
-    let (status, body) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
+    let (status, body) = send(
+        &h.app,
+        with_cookie("GET", "/api/v1/auth/me", &session, None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["principal"], "account");
     assert_eq!(body["account"]["email"], "Ana@Office.kz");
     assert_eq!(body["account"]["name"], "Ana Kore");
-    assert_eq!(body["account"]["mustChangePassword"], false);
+    assert!(body["account"].get("mustChangePassword").is_none());
     let id = body["account"]["id"].as_i64().unwrap();
 
     // The same subject again is the same account.
     let again = sign_in_via_sso(&h, &mock, "Ana@Office.kz").await;
     let (_, body) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &again, None)).await;
     assert_eq!(body["account"]["id"].as_i64().unwrap(), id);
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(&h.pool).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
     assert_eq!(count, 1);
 
     // The token request authenticated as a confidential client (Basic) with PKCE.
     let (auth, body) = mock.last.lock().unwrap().clone();
-    assert_eq!(auth.unwrap(), format!("Basic {}", STANDARD.encode(format!("{CLIENT_ID}:{SECRET}"))));
+    assert_eq!(
+        auth.unwrap(),
+        format!("Basic {}", STANDARD.encode(format!("{CLIENT_ID}:{SECRET}")))
+    );
     assert!(body.contains("code_verifier=") && !body.contains("client_secret"));
 
-    // An SSO account has no password: nothing signs in with the sentinel.
-    for password in ["!sso", "", "anything at all"] {
-        let (status, _) = send(
-            &h.app,
-            request("POST", "/api/v1/auth/session", None, Some(json!({"email": "ana@office.kz", "password": password}))),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-    }
+    // No password form exists any more: the session route is sign-out only.
+    let (status, _) = send(
+        &h.app,
+        request(
+            "POST",
+            "/api/v1/auth/session",
+            None,
+            Some(json!({"email": "ana@office.kz", "password": "anything at all"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
 }
 
 #[tokio::test]
@@ -333,7 +392,10 @@ async fn an_unlisted_identity_gets_no_account_and_no_session() {
     let (location, session) = callback(&h, &s, "good-code", Some(&s.binding_cookie)).await;
     assert_eq!(location, "/sign-in?sso_error=denied");
     assert!(session.is_none());
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(&h.pool).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
     assert_eq!(count, 0);
 }
 
@@ -341,13 +403,32 @@ async fn an_unlisted_identity_gets_no_account_and_no_session() {
 async fn subject_allowlist_and_linking_an_existing_local_account() {
     let mock = provider().await;
     let h = harness_with_sso(kore(&mock, &[], &[SUB])).await;
-    let local = common::add_member(&h, "ana@office.kz", "Ana", "correct horse").await;
+    let local = common::add_account(&h, "ana@office.kz", "Ana").await;
+    // A pre-Kore ID account may still carry a password hash; linking retires it.
+    sqlx::query("UPDATE users SET password_hash = 'legacy-bcrypt' WHERE id = ?")
+        .bind(local)
+        .execute(&h.pool)
+        .await
+        .unwrap();
     let session = sign_in_via_sso(&h, &mock, "ana@office.kz").await;
-    let (_, body) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
-    assert_eq!(body["account"]["id"].as_i64().unwrap(), local, "linked, not duplicated");
-    let sub: String = sqlx::query_scalar("SELECT kore_sub FROM users WHERE id = ?")
-        .bind(local).fetch_one(&h.pool).await.unwrap();
+    let (_, body) = send(
+        &h.app,
+        with_cookie("GET", "/api/v1/auth/me", &session, None),
+    )
+    .await;
+    assert_eq!(
+        body["account"]["id"].as_i64().unwrap(),
+        local,
+        "linked, not duplicated"
+    );
+    let (sub, hash): (String, String) =
+        sqlx::query_as("SELECT kore_sub, password_hash FROM users WHERE id = ?")
+            .bind(local)
+            .fetch_one(&h.pool)
+            .await
+            .unwrap();
     assert_eq!(sub, SUB);
+    assert_eq!(hash, "!sso", "the old password hash stops being used");
 }
 
 #[tokio::test]
@@ -371,14 +452,30 @@ async fn the_callback_is_bound_to_the_browser_and_single_use() {
     identity(&mock, &s, "ana@office.kz");
     let (location, _) = callback(&h, &s, "good-code", Some("fl_sso=forged")).await;
     assert_eq!(location, "/sign-in?sso_error=state");
-    let response = get_raw(&h.app, "/api/v1/auth/sso/callback?code=good-code&state=nope", None).await;
+    let response = get_raw(
+        &h.app,
+        "/api/v1/auth/sso/callback?code=good-code&state=nope",
+        None,
+    )
+    .await;
     assert_eq!(header(&response, "location")[0], "/sign-in?sso_error=state");
 
     // A provider error and a foreign issuer are refused.
-    let response = get_raw(&h.app, "/api/v1/auth/sso/callback?error=access_denied", None).await;
-    assert_eq!(header(&response, "location")[0], "/sign-in?sso_error=provider");
+    let response = get_raw(
+        &h.app,
+        "/api/v1/auth/sso/callback?error=access_denied",
+        None,
+    )
+    .await;
+    assert_eq!(
+        header(&response, "location")[0],
+        "/sign-in?sso_error=provider"
+    );
     let s = start(&h, "/").await;
-    let uri = format!("/api/v1/auth/sso/callback?code=good-code&state={}&iss=https://evil.example", s.state);
+    let uri = format!(
+        "/api/v1/auth/sso/callback?code=good-code&state={}&iss=https://evil.example",
+        s.state
+    );
     let response = get_raw(&h.app, &uri, Some(&s.binding_cookie)).await;
     assert_eq!(header(&response, "location")[0], "/sign-in?sso_error=state");
 }
@@ -401,8 +498,16 @@ async fn bad_id_tokens_are_refused() {
             }
         }
         let (location, session) = callback(&h, &s, code, Some(&s.binding_cookie)).await;
-        let expected = if tamper == "code" { "provider" } else { "token" };
-        assert_eq!(location, format!("/sign-in?sso_error={expected}"), "{tamper}");
+        let expected = if tamper == "code" {
+            "provider"
+        } else {
+            "token"
+        };
+        assert_eq!(
+            location,
+            format!("/sign-in?sso_error={expected}"),
+            "{tamper}"
+        );
         assert!(session.is_none(), "{tamper}");
     }
 }
@@ -425,11 +530,19 @@ async fn kore_access_tokens_work_as_bearers_for_signed_in_accounts_only() {
 
     // Valid token, but the person never signed in here: refused.
     let token = mock.access_token(SUB, CLIENT_ID, 600);
-    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&token), None)).await;
+    let (status, _) = send(
+        &h.app,
+        request("GET", "/api/v1/auth/me", Some(&token), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     sign_in_via_sso(&h, &mock, "ana@office.kz").await;
-    let (status, body) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&token), None)).await;
+    let (status, body) = send(
+        &h.app,
+        request("GET", "/api/v1/auth/me", Some(&token), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["account"]["email"], "ana@office.kz");
     // `application/at+jwt` is the same media type.
@@ -439,14 +552,21 @@ async fn kore_access_tokens_work_as_bearers_for_signed_in_accounts_only() {
                "exp": chrono::Utc::now().timestamp() + 600}),
         false,
     );
-    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&long_typ), None)).await;
+    let (status, _) = send(
+        &h.app,
+        request("GET", "/api/v1/auth/me", Some(&long_typ), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // Wrong audience (a KoreMind token), expired, other subject, an id
     // token (typ JWT, even one carrying a scope), a logout token, a foreign
     // client_id, wrong key, and a mangled token.
     let exp = chrono::Utc::now().timestamp() + 600;
-    let id_like = mock.sign(json!({"iss": mock.issuer, "aud": CLIENT_ID, "sub": SUB, "exp": exp}), false);
+    let id_like = mock.sign(
+        json!({"iss": mock.issuer, "aud": CLIENT_ID, "sub": SUB, "exp": exp}),
+        false,
+    );
     let id_with_scope = mock.sign(
         json!({"iss": mock.issuer, "aud": CLIENT_ID, "sub": SUB, "scope": "openid", "exp": exp}),
         false,
@@ -484,7 +604,11 @@ async fn kore_access_tokens_work_as_bearers_for_signed_in_accounts_only() {
     }
 
     // Machine credentials are untouched by all of this.
-    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&h.token), None)).await;
+    let (status, _) = send(
+        &h.app,
+        request("GET", "/api/v1/auth/me", Some(&h.token), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 }
 
@@ -493,13 +617,24 @@ async fn jwt_bearers_are_refused_when_sso_is_off() {
     let mock = provider().await;
     let h = harness().await;
     let token = mock.access_token(SUB, CLIENT_ID, 600);
-    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&token), None)).await;
+    let (status, _) = send(
+        &h.app,
+        request("GET", "/api/v1/auth/me", Some(&token), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let (status, body) = send(&h.app, request("GET", "/api/v1/auth/sso/config", None, None)).await;
+    let (status, body) = send(
+        &h.app,
+        request("GET", "/api/v1/auth/sso/config", None, None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["sso"], false);
     let response = get_raw(&h.app, "/api/v1/auth/sso/start", None).await;
-    assert_eq!(header(&response, "location")[0], "/sign-in?sso_error=disabled");
+    assert_eq!(
+        header(&response, "location")[0],
+        "/sign-in?sso_error=disabled"
+    );
 }
 
 #[tokio::test]
@@ -508,58 +643,82 @@ async fn signing_out_returns_the_provider_logout_url() {
     let h = harness_with_sso(kore(&mock, &["ana@office.kz"], &[])).await;
     let session = sign_in_via_sso(&h, &mock, "ana@office.kz").await;
 
-    let (status, _, body) = send_full(&h.app, with_cookie("DELETE", "/api/v1/auth/session", &session, None)).await;
+    let (status, _, body) = send_full(
+        &h.app,
+        with_cookie("DELETE", "/api/v1/auth/session", &session, None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let url = reqwest::Url::parse(body["ssoLogoutUrl"].as_str().expect("a logout url")).unwrap();
     assert_eq!(url.path(), "/logout");
     let q: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
-    assert_eq!(q["post_logout_redirect_uri"], "https://uptime.example/sign-in");
+    assert_eq!(
+        q["post_logout_redirect_uri"],
+        "https://uptime.example/sign-in"
+    );
     assert_eq!(q["id_token_hint"].split('.').count(), 3);
 
     // The local session is gone.
-    let (status, _) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
+    let (status, _) = send(
+        &h.app,
+        with_cookie("GET", "/api/v1/auth/me", &session, None),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    // A password session has no provider session to end.
-    common::add_member(&h, "bo@office.kz", "Bo", "correct horse").await;
-    let local = common::sign_in(&h.app, json!({"email": "bo@office.kz", "password": "correct horse"})).await;
-    let (_, _, body) = send_full(&h.app, with_cookie("DELETE", "/api/v1/auth/session", &local, None)).await;
+    // A session that did not come from Kore ID has no provider URL to end.
+    let other = common::add_account(&h, "bo@office.kz", "Bo").await;
+    let local = common::session_for(&h, other).await;
+    let (_, _, body) = send_full(
+        &h.app,
+        with_cookie("DELETE", "/api/v1/auth/session", &local, None),
+    )
+    .await;
     assert!(body.get("ssoLogoutUrl").is_none());
 }
 
 #[tokio::test]
-async fn local_login_can_be_switched_off_without_touching_bearer_tokens() {
+async fn sso_is_the_only_browser_sign_in_and_bearer_tokens_stay_api_only() {
     let mock = provider().await;
     let h = harness_with_sso(kore(&mock, &["ana@office.kz"], &[])).await;
-    common::add_member(&h, "bo@office.kz", "Bo", "correct horse").await;
+    let app = h.app.clone();
 
-    let mut state = h.state.clone();
-    let mut config = (*state.config).clone();
-    config.local_login = false;
-    config.token_login = false;
-    state.config = Arc::new(config);
-    let app = flatline_backend::api::router(state);
-
+    // Every password/token sign-in route is gone.
+    for (method, uri) in [
+        ("POST", "/api/v1/auth/login"),
+        ("POST", "/api/v1/auth/setup"),
+        ("GET", "/api/v1/auth/setup"),
+        ("POST", "/api/v1/auth/password"),
+    ] {
+        let (status, _) = send(&app, request(method, uri, None, Some(json!({})))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}");
+    }
     for body in [
-        json!({"email": "bo@office.kz", "password": "correct horse"}),
+        json!({"email": "ana@office.kz", "password": "correct horse"}),
         json!({"token": h.token}),
     ] {
-        let (status, cookie, answer) = send_full(&app, request("POST", "/api/v1/auth/session", None, Some(body))).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+        let (status, cookie, answer) = send_full(
+            &app,
+            request("POST", "/api/v1/auth/session", None, Some(body)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{answer}");
         assert!(cookie.is_none());
     }
-    let (status, _) = send(&app, request("POST", "/api/v1/auth/login", None, Some(json!({"password": h.token})))).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, _) = send(&app, request("POST", "/api/v1/auth/setup", None, Some(json!({})))).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
 
     let (_, body) = send(&app, request("GET", "/api/v1/auth/sso/config", None, None)).await;
-    assert_eq!((body["sso"].clone(), body["localLogin"].clone(), body["tokenLogin"].clone()), (json!(true), json!(false), json!(false)));
+    assert_eq!(body["sso"], true);
+    assert!(body.get("localLogin").is_none(), "{body}");
+    assert!(body.get("tokenLogin").is_none(), "{body}");
     assert_eq!(body["accountUrl"], format!("{}/account", mock.issuer));
     assert_eq!(body["apps"], json!({"kore": "https://files.example"}));
 
     // The operator token as a bearer, for scripts and AI agents, still works.
-    let (status, _) = send(&app, request("GET", "/api/v1/monitors", Some(&h.token), None)).await;
+    let (status, _) = send(
+        &app,
+        request("GET", "/api/v1/monitors", Some(&h.token), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 }
 
@@ -568,11 +727,29 @@ async fn anyone_kore_id_admits_gets_an_account_by_default() {
     let mock = provider().await;
     let h = harness_with_sso(kore(&mock, &[], &[])).await;
     let session = sign_in_via_sso(&h, &mock, "new.person@office.kz").await;
-    let (status, body) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
+    let (status, body) = send(
+        &h.app,
+        with_cookie("GET", "/api/v1/auth/me", &session, None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["account"]["email"], "new.person@office.kz");
     assert_eq!(body["account"]["sso"], true);
-    let sub: Option<String> = sqlx::query_scalar("SELECT kore_sub FROM users").fetch_one(&h.pool).await.unwrap();
+    // A fresh install with only Kore ID: this first sign-in is a full operator.
+    let (status, _) = send(
+        &h.app,
+        with_cookie("GET", "/api/v1/monitors", &session, None),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the first SSO account operates the instance"
+    );
+    let sub: Option<String> = sqlx::query_scalar("SELECT kore_sub FROM users")
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
     assert_eq!(sub.as_deref(), Some(SUB));
 
     // KORE_ID_AUTO_PROVISION=false: a new identity is refused...
@@ -606,7 +783,7 @@ async fn an_email_allowlist_filters_and_needs_a_verified_email() {
 async fn linking_by_email_needs_email_verified() {
     let mock = provider().await;
     let h = harness_with_sso(kore(&mock, &[], &[])).await;
-    let local = common::add_member(&h, "ana@office.kz", "Ana", "correct horse").await;
+    let local = common::add_account(&h, "ana@office.kz", "Ana").await;
 
     // Unverified: the local account is not taken over, and no duplicate is made.
     let s = start(&h, "/").await;
@@ -616,14 +793,24 @@ async fn linking_by_email_needs_email_verified() {
     assert_eq!(location, "/sign-in?sso_error=denied");
     assert!(session.is_none());
     let tied: Option<String> = sqlx::query_scalar("SELECT kore_sub FROM users WHERE id = ?")
-        .bind(local).fetch_one(&h.pool).await.unwrap();
+        .bind(local)
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
     assert!(tied.is_none());
 
     // Verified (what Kore ID sends): linked.
     let session = sign_in_via_sso(&h, &mock, "ana@office.kz").await;
-    let (_, body) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
+    let (_, body) = send(
+        &h.app,
+        with_cookie("GET", "/api/v1/auth/me", &session, None),
+    )
+    .await;
     assert_eq!(body["account"]["id"].as_i64().unwrap(), local);
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(&h.pool).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
     assert_eq!(count, 1);
 }
 
@@ -638,16 +825,26 @@ async fn post_logout(h: &Harness, body: &str) -> (StatusCode, Value) {
     let response = h.app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     assert_eq!(response.headers()["cache-control"], "no-store");
-    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 fn form(token: &str) -> String {
-    format!("logout_token={}", url::form_urlencoded::byte_serialize(token.as_bytes()).collect::<String>())
+    format!(
+        "logout_token={}",
+        url::form_urlencoded::byte_serialize(token.as_bytes()).collect::<String>()
+    )
 }
 
 async fn me(h: &Harness, session: &str) -> StatusCode {
-    send(&h.app, with_cookie("GET", "/api/v1/auth/me", session, None)).await.0
+    send(&h.app, with_cookie("GET", "/api/v1/auth/me", session, None))
+        .await
+        .0
 }
 
 #[tokio::test]
@@ -656,7 +853,9 @@ async fn sign_in_keeps_the_kore_id_sid() {
     let h = harness_with_sso(kore(&mock, &[], &[])).await;
     sign_in_via_sso_with(&h, &mock, "ana@office.kz", |n| n.sid = "sid-abc".into()).await;
     let sids: Vec<Option<String>> = sqlx::query_scalar("SELECT sso_sid FROM sessions")
-        .fetch_all(&h.pool).await.unwrap();
+        .fetch_all(&h.pool)
+        .await
+        .unwrap();
     assert_eq!(sids, [Some("sid-abc".to_string())]);
 }
 
@@ -664,25 +863,48 @@ async fn sign_in_keeps_the_kore_id_sid() {
 async fn back_channel_logout_ends_the_sessions_of_that_sid() {
     let mock = provider().await;
     let h = harness_with_sso(kore(&mock, &[], &[])).await;
-    let laptop = sign_in_via_sso_with(&h, &mock, "ana@office.kz", |n| n.sid = "sid-laptop".into()).await;
-    let phone = sign_in_via_sso_with(&h, &mock, "ana@office.kz", |n| n.sid = "sid-phone".into()).await;
-    common::add_member(&h, "bo@office.kz", "Bo", "correct horse").await;
-    let local = common::sign_in(&h.app, json!({"email": "bo@office.kz", "password": "correct horse"})).await;
+    let laptop =
+        sign_in_via_sso_with(&h, &mock, "ana@office.kz", |n| n.sid = "sid-laptop".into()).await;
+    let phone =
+        sign_in_via_sso_with(&h, &mock, "ana@office.kz", |n| n.sid = "sid-phone".into()).await;
+    // A session that never went through Kore ID is left alone.
+    let other = common::add_account(&h, "bo@office.kz", "Bo").await;
+    let local = common::session_for(&h, other).await;
     let laptop_bearer = mock.access_token_in(SUB, CLIENT_ID, 600, "sid-laptop");
-    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&laptop_bearer), None)).await;
+    let (status, _) = send(
+        &h.app,
+        request("GET", "/api/v1/auth/me", Some(&laptop_bearer), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     let token = mock.logout_token(mock.logout_claims(Some("sid-laptop"), Some(SUB)));
     let (status, body) = post_logout(&h, &form(&token)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(me(&h, &laptop).await, StatusCode::UNAUTHORIZED);
-    assert_eq!(me(&h, &phone).await, StatusCode::OK, "another Kore ID session stays");
-    assert_eq!(me(&h, &local).await, StatusCode::OK, "password sessions are untouched");
+    assert_eq!(
+        me(&h, &phone).await,
+        StatusCode::OK,
+        "another Kore ID session stays"
+    );
+    assert_eq!(
+        me(&h, &local).await,
+        StatusCode::OK,
+        "sessions from outside Kore ID are untouched"
+    );
     // The ended Kore ID session's access tokens stop working too.
-    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&laptop_bearer), None)).await;
+    let (status, _) = send(
+        &h.app,
+        request("GET", "/api/v1/auth/me", Some(&laptop_bearer), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let phone_bearer = mock.access_token_in(SUB, CLIENT_ID, 600, "sid-phone");
-    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&phone_bearer), None)).await;
+    let (status, _) = send(
+        &h.app,
+        request("GET", "/api/v1/auth/me", Some(&phone_bearer), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // The same token again is a replay.
@@ -719,24 +941,58 @@ async fn invalid_logout_tokens_are_refused() {
         mock.logout_token(claims)
     };
     cases.push(("other audience", tamper(&|c| c["aud"] = json!("koremind"))));
-    cases.push(("other issuer", tamper(&|c| c["iss"] = json!("https://evil.example"))));
-    cases.push(("expired", tamper(&|c| c["exp"] = json!(chrono::Utc::now().timestamp() - 3600))));
-    cases.push(("no events", tamper(&|c| { c.as_object_mut().unwrap().remove("events"); })));
-    cases.push(("other event", tamper(&|c| c["events"] = json!({"urn:other": {}}))));
+    cases.push((
+        "other issuer",
+        tamper(&|c| c["iss"] = json!("https://evil.example")),
+    ));
+    cases.push((
+        "expired",
+        tamper(&|c| c["exp"] = json!(chrono::Utc::now().timestamp() - 3600)),
+    ));
+    cases.push((
+        "no events",
+        tamper(&|c| {
+            c.as_object_mut().unwrap().remove("events");
+        }),
+    ));
+    cases.push((
+        "other event",
+        tamper(&|c| c["events"] = json!({"urn:other": {}})),
+    ));
     cases.push(("nonce", tamper(&|c| c["nonce"] = json!("n"))));
-    cases.push(("no jti", tamper(&|c| { c.as_object_mut().unwrap().remove("jti"); })));
-    cases.push(("no iat", tamper(&|c| { c.as_object_mut().unwrap().remove("iat"); })));
-    cases.push(("no sid or sub", mock.logout_token(mock.logout_claims(None, None))));
+    cases.push((
+        "no jti",
+        tamper(&|c| {
+            c.as_object_mut().unwrap().remove("jti");
+        }),
+    ));
+    cases.push((
+        "no iat",
+        tamper(&|c| {
+            c.as_object_mut().unwrap().remove("iat");
+        }),
+    ));
+    cases.push((
+        "no sid or sub",
+        mock.logout_token(mock.logout_claims(None, None)),
+    ));
     cases.push(("not a jwt", "garbage".into()));
     for (what, token) in cases {
         let (status, _) = post_logout(&h, &form(&token)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{what}");
     }
-    assert_eq!(post_logout(&h, "").await.0, StatusCode::BAD_REQUEST, "no logout_token");
+    assert_eq!(
+        post_logout(&h, "").await.0,
+        StatusCode::BAD_REQUEST,
+        "no logout_token"
+    );
     assert_eq!(me(&h, &session).await, StatusCode::OK, "nothing ended");
 
     // With SSO off the endpoint refuses everything.
     let off = harness().await;
     let token = mock.logout_token(base());
-    assert_eq!(post_logout(&off, &form(&token)).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        post_logout(&off, &form(&token)).await.0,
+        StatusCode::BAD_REQUEST
+    );
 }

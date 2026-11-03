@@ -287,42 +287,16 @@ async fn monitor_types_lists_the_supported_surface() {
 }
 
 #[tokio::test]
-async fn auth_compat_accepts_the_token_as_password() {
+async fn auth_compat_bearer_token_reports_the_operator() {
     let h = harness().await;
 
-    // No account exists yet: the web app offers "Create the first account".
-    let (status, body) = send(&h.app, request("GET", "/api/v1/auth/setup", None, None)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["setupNeeded"], true);
-
-    let (status, body) = send(
-        &h.app,
-        request(
-            "POST",
-            "/api/v1/auth/login",
-            None,
-            Some(json!({ "username": "operator", "password": h.token })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["token"], h.token);
-    assert_eq!(body["user"]["name"], "Operator");
-
-    let (status, _) = send(
-        &h.app,
-        request(
-            "POST",
-            "/api/v1/auth/login",
-            None,
-            Some(json!({ "username": "operator", "password": "wrong" })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // Browser sign-in is Kore ID only; the token is an API credential.
+    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/setup", None, None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     let (status, body) = get_json(&h.app, "/api/v1/auth/me", &h.token).await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["principal"], "token");
     assert_eq!(body["user"]["name"], "Operator");
     assert_eq!(body["scopes"], json!(["read", "write"]));
 }
@@ -561,11 +535,20 @@ async fn a_monitor_read_lists_its_notification_ids() {
     let (_, body) = get_json(&h.app, &format!("/api/v1/monitors/{id}"), &h.token).await;
     assert_eq!(body["monitor"]["notificationIds"], json!([n1, n2]));
 
-    patch(&h, id, json!({ "notificationIDList": { n1.to_string(): false } })).await;
+    patch(
+        &h,
+        id,
+        json!({ "notificationIDList": { n1.to_string(): false } }),
+    )
+    .await;
     let (_, body) = get_json(&h.app, &format!("/api/v1/monitors/{id}"), &h.token).await;
     assert_eq!(body["monitor"]["notificationIds"], json!([n2]));
 
-    let (_, body) = create(&h, json!({ "name": "bare", "type": "http", "url": "https://example.org" })).await;
+    let (_, body) = create(
+        &h,
+        json!({ "name": "bare", "type": "http", "url": "https://example.org" }),
+    )
+    .await;
     let bare = body["monitor"]["id"].as_i64().unwrap();
     let (_, body) = get_json(&h.app, &format!("/api/v1/monitors/{bare}"), &h.token).await;
     assert_eq!(body["monitor"]["notificationIds"], json!([]));

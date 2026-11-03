@@ -39,7 +39,11 @@ pub const FINAL_ENCRYPTED: &str = "bundle.age";
 
 /// The published name for a bundle, from the run's `encrypted` flag.
 pub fn final_name(encrypted: bool) -> &'static str {
-    if encrypted { FINAL_ENCRYPTED } else { FINAL_PLAIN }
+    if encrypted {
+        FINAL_ENCRYPTED
+    } else {
+        FINAL_PLAIN
+    }
 }
 
 /// The published bundle in a run directory, under whichever name it has.

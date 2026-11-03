@@ -2,7 +2,6 @@ import { groupPath } from "@/lib/groups";
 import type { Me } from "@/lib/me";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { NAV_SECTIONS } from "@/lib/nav";
-import { PASSWORD_PATH } from "@/lib/session";
 
 export interface Command {
     id: string;
@@ -37,9 +36,6 @@ export function buildCommands(monitors: MonitorSummary[], me: Me): CommandGroup[
         { id: "new-monitor", label: "New monitor", href: "/monitors?new=1", keywords: ["create", "add"] },
         { id: "superboard", label: "Open Superboard", href: "/superboard", keywords: ["wall", "kiosk"] },
     ];
-    if (me.principal === "account") {
-        actions.push({ id: "change-password", label: "Change password", href: PASSWORD_PATH, keywords: ["account"] });
-    }
     actions.push({ id: "sign-out", label: "Sign out", href: "", keywords: ["log out"] });
 
     return [

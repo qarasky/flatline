@@ -325,11 +325,16 @@ impl Sso {
             .header("accept", "application/json");
         match (&self.config.client_secret, self.config.client_auth_post) {
             (Some(secret), false) => {
-                let enc = |v: &str| url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>();
+                let enc = |v: &str| {
+                    url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>()
+                };
                 let pair = format!("{}:{}", enc(&self.config.client_id), enc(secret));
                 request = request.header(
                     "authorization",
-                    format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(pair)),
+                    format!(
+                        "Basic {}",
+                        base64::engine::general_purpose::STANDARD.encode(pair)
+                    ),
                 );
             }
             (Some(secret), true) => {
@@ -368,7 +373,9 @@ impl Sso {
         // An id token is a plain JWT; one typed as an access or logout token
         // is not an id token.
         if typ_is(&header, "at+jwt") || typ_is(&header, "logout+jwt") {
-            return Err(SsoError::Token("the id_token is typed as another kind of token".into()));
+            return Err(SsoError::Token(
+                "the id_token is typed as another kind of token".into(),
+            ));
         }
         let claims = check_claims(
             &claims,
@@ -391,7 +398,9 @@ impl Sso {
     pub async fn verify_access_token(&self, token: &str) -> Result<Claims, SsoError> {
         let (header, raw) = self.verify_signature(token).await?;
         if !typ_is(&header, "at+jwt") {
-            return Err(SsoError::Token("not an access token (typ is not at+jwt)".into()));
+            return Err(SsoError::Token(
+                "not an access token (typ is not at+jwt)".into(),
+            ));
         }
         if let Some(client_id) = raw.get("client_id")
             && client_id.as_str() != Some(self.config.client_id.as_str())
@@ -400,7 +409,9 @@ impl Sso {
         }
         let claims = check_claims(&raw, &self.config.issuer, &self.config.client_id, None)?;
         if claims.scope.is_none() {
-            return Err(SsoError::Token("not an access token (no scope claim)".into()));
+            return Err(SsoError::Token(
+                "not an access token (no scope claim)".into(),
+            ));
         }
         if let Some(sid) = &claims.sid
             && self.sid_ended(sid)
@@ -425,7 +436,10 @@ impl Sso {
         if claims.get("iat").and_then(Value::as_i64).is_none() {
             return Err(bad("no iat"));
         }
-        let exp = claims.get("exp").and_then(Value::as_i64).ok_or_else(|| bad("no exp"))?;
+        let exp = claims
+            .get("exp")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| bad("no exp"))?;
         let event_ok = claims
             .get("events")
             .and_then(Value::as_object)
@@ -458,7 +472,10 @@ impl Sso {
                 return Err(bad("replayed jti"));
             }
             if seen.len() >= LOGOUT_CACHE_CAP
-                && let Some(oldest) = seen.iter().min_by_key(|(_, until)| **until).map(|(k, _)| k.clone())
+                && let Some(oldest) = seen
+                    .iter()
+                    .min_by_key(|(_, until)| **until)
+                    .map(|(k, _)| k.clone())
             {
                 seen.remove(&oldest);
             }
@@ -468,7 +485,10 @@ impl Sso {
             let mut ended = self.ended_sids.lock().unwrap();
             ended.retain(|_, at| at.elapsed() < ENDED_SID_TTL);
             if ended.len() >= LOGOUT_CACHE_CAP
-                && let Some(oldest) = ended.iter().min_by_key(|(_, at)| **at).map(|(k, _)| k.clone())
+                && let Some(oldest) = ended
+                    .iter()
+                    .min_by_key(|(_, at)| **at)
+                    .map(|(k, _)| k.clone())
             {
                 ended.remove(&oldest);
             }
@@ -544,8 +564,13 @@ impl Sso {
         else {
             return Err(bad("not a JWT"));
         };
-        let decode = |part: &str| URL_SAFE_NO_PAD.decode(part).map_err(|_| bad("bad base64url"));
-        let header: Value = serde_json::from_slice(&decode(head)?).map_err(|_| bad("bad header"))?;
+        let decode = |part: &str| {
+            URL_SAFE_NO_PAD
+                .decode(part)
+                .map_err(|_| bad("bad base64url"))
+        };
+        let header: Value =
+            serde_json::from_slice(&decode(head)?).map_err(|_| bad("bad header"))?;
         if header.get("alg").and_then(Value::as_str) != Some("EdDSA") {
             return Err(bad("alg must be EdDSA"));
         }
@@ -559,7 +584,8 @@ impl Sso {
         key.verify_strict(signed.as_bytes(), &signature)
             .map_err(|_| bad("signature does not verify"))?;
 
-        let claims: Value = serde_json::from_slice(&decode(body)?).map_err(|_| bad("bad claims"))?;
+        let claims: Value =
+            serde_json::from_slice(&decode(body)?).map_err(|_| bad("bad claims"))?;
         if !claims.is_object() {
             return Err(bad("claims are not an object"));
         }
@@ -575,7 +601,12 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 /// Ed25519 keys of a JWKS by `kid`; other key types are ignored.
 fn parse_jwks(set: &Value) -> HashMap<String, VerifyingKey> {
     let mut keys = HashMap::new();
-    for jwk in set.get("keys").and_then(Value::as_array).into_iter().flatten() {
+    for jwk in set
+        .get("keys")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let text = |name: &str| jwk.get(name).and_then(Value::as_str);
         if text("kty") != Some("OKP") || text("crv") != Some("Ed25519") {
             continue;
@@ -599,10 +630,13 @@ fn parse_jwks(set: &Value) -> HashMap<String, VerifyingKey> {
 /// Whether a JWT header's `typ` is `want`, compared as RFC 8725 and RFC
 /// 9068 say: case-insensitive, with or without the `application/` prefix.
 fn typ_is(header: &Value, want: &str) -> bool {
-    header.get("typ").and_then(Value::as_str).is_some_and(|typ| {
-        let typ = typ.to_ascii_lowercase();
-        typ.strip_prefix("application/").unwrap_or(&typ) == want
-    })
+    header
+        .get("typ")
+        .and_then(Value::as_str)
+        .is_some_and(|typ| {
+            let typ = typ.to_ascii_lowercase();
+            typ.strip_prefix("application/").unwrap_or(&typ) == want
+        })
 }
 
 /// Issuer, audience, `exp` and `nbf` of a token whose signature verified.
@@ -621,7 +655,10 @@ fn check_common(claims: &Value, issuer: &str, client_id: &str) -> Result<(), Sso
         return Err(bad("wrong audience"));
     }
     let now = chrono::Utc::now().timestamp();
-    let exp = claims.get("exp").and_then(Value::as_i64).ok_or_else(|| bad("no exp"))?;
+    let exp = claims
+        .get("exp")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| bad("no exp"))?;
     if exp + LEEWAY_SECONDS < now {
         return Err(bad("expired"));
     }
@@ -648,14 +685,18 @@ fn check_claims(
     {
         return Err(bad("nonce mismatch"));
     }
-    let sub = text("sub").filter(|sub| !sub.is_empty()).ok_or_else(|| bad("no sub"))?;
+    let sub = text("sub")
+        .filter(|sub| !sub.is_empty())
+        .ok_or_else(|| bad("no sub"))?;
     Ok(Claims {
         sub: sub.to_string(),
         email: text("email").map(str::to_string),
         email_verified: claims.get("email_verified").and_then(Value::as_bool),
         name: text("name").map(str::to_string),
         scope: text("scope").map(str::to_string),
-        sid: text("sid").filter(|sid| !sid.is_empty()).map(str::to_string),
+        sid: text("sid")
+            .filter(|sid| !sid.is_empty())
+            .map(str::to_string),
     })
 }
 
@@ -688,7 +729,14 @@ mod tests {
     #[test]
     fn next_must_be_a_local_path() {
         assert_eq!(safe_next(Some("/monitors?x=1")), "/monitors?x=1");
-        for bad in ["//evil.example", "https://evil.example", "/\\evil", "/a\nb", "/sign-in", "monitors"] {
+        for bad in [
+            "//evil.example",
+            "https://evil.example",
+            "/\\evil",
+            "/a\nb",
+            "/sign-in",
+            "monitors",
+        ] {
             assert_eq!(safe_next(Some(bad)), "/", "{bad}");
         }
         assert_eq!(safe_next(None), "/");

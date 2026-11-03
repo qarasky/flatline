@@ -18,11 +18,11 @@
 
 The credential in this link is one of two families:
 
-| Prefix                   | Kind              | Can do                                                       | Cannot do                           |
-| ------------------------ | ----------------- | ------------------------------------------------------------ | ----------------------------------- |
-| `flatline_op_`           | Operator          | GUI sign-in, every `/api/v1` call, mint more operator tokens | Send telemetry; act as a host agent |
-| `flatline_agent_push_`   | Push (host) agent | `/api/push/{token}`, `/agent/*`, this runbook                | Call `/api/v1`, sign in to the GUI  |
-| `flatline_agent_backup_` | Backup agent      | `/api/backup/v1` only                                        | Anything in this runbook            |
+| Prefix                   | Kind              | Can do                                          | Cannot do                           |
+| ------------------------ | ----------------- | ----------------------------------------------- | ----------------------------------- |
+| `flatline_op_`           | Operator API      | Every `/api/v1` call, mint more operator tokens | Send telemetry; act as a host agent |
+| `flatline_agent_push_`   | Push (host) agent | `/api/push/{token}`, `/agent/*`, this runbook   | Call `/api/v1`                      |
+| `flatline_agent_backup_` | Backup agent      | `/api/backup/v1` only                           | Anything in this runbook            |
 
 Legacy `flatline_...` tokens minted before the split still work and are
 resolved by the store that holds them. Do not create new ones.

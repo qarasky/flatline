@@ -377,7 +377,11 @@ pub async fn coverage(pool: &SqlitePool) -> sqlx::Result<Coverage> {
             .map(|group| (*group, leaves(&tree, *group)))
             .collect();
         let mut ids: Vec<i64> = groups.clone();
-        ids.extend(by_group.iter().flat_map(|(_, leaves)| leaves.iter().copied()));
+        ids.extend(
+            by_group
+                .iter()
+                .flat_map(|(_, leaves)| leaves.iter().copied()),
+        );
         ids.sort_unstable();
         ids.dedup();
         let status = statuses(pool, &ids).await?;
@@ -418,7 +422,9 @@ pub async fn is_covered(pool: &SqlitePool, monitor_id: i64) -> sqlx::Result<bool
 
 /// Whether the subject's own mute includes the subject (its host is down).
 pub async fn host_muted(pool: &SqlitePool, subject: i64) -> sqlx::Result<bool> {
-    Ok(get(pool, subject).await?.is_some_and(|mute| mute.host_muted()))
+    Ok(get(pool, subject)
+        .await?
+        .is_some_and(|mute| mute.host_muted()))
 }
 
 /// A monitor's status changed. Down and not in a snapshot on whose card it
@@ -514,7 +520,8 @@ pub async fn on_sample(
         return Ok(SampleChange::Ended(reasons.join(", ")));
     }
     let before = mute.full_mounts.len();
-    mute.full_mounts.retain(|mount| !mount_below(sample, mount, level));
+    mute.full_mounts
+        .retain(|mount| !mount_below(sample, mount, level));
     if mute.full_mounts.len() == before {
         return Ok(SampleChange::None);
     }

@@ -136,7 +136,9 @@ pub fn validate_agent_version(version: &str) -> Result<(), Error> {
 pub fn validate_update_status(status: &str) -> Result<(), Error> {
     if status.is_empty()
         || status.len() > 40
-        || !status.bytes().all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        || !status
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
     {
         return Err(Error::BadRequest(
             "updateStatus must be 1-40 lowercase letters or underscores".to_string(),

@@ -10,7 +10,7 @@
  * message and hint.
  */
 
-import { CSRF_HEADER, HOME_PATH, PASSWORD_PATH, PATH_HEADER, SESSION_COOKIE, SIGN_IN_PATH } from "@/lib/session";
+import { CSRF_HEADER, HOME_PATH, PATH_HEADER, SESSION_COOKIE, SIGN_IN_PATH } from "@/lib/session";
 
 export const DEFAULT_API_URL = "http://127.0.0.1:3001";
 
@@ -138,13 +138,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
         if (server && response.status === 401) {
             await toSignIn();
         }
-        const error = await toError(response);
-        if (server && error.code === "password_change_required") {
-            // A starting password: nothing else works until it is changed.
-            const { redirect } = await import("next/navigation");
-            redirect(PASSWORD_PATH);
-        }
-        throw error;
+        throw await toError(response);
     }
     if (response.status === 204) {
         return undefined as T;

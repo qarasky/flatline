@@ -11,8 +11,8 @@ export const metadata: Metadata = { title: "Superboard · Flatline" };
 
 /**
  * `/superboard`, `/superboard/<scope>`, `/superboard/kiosk` and
- * `/superboard/kiosk/<groups>`. A signed-out kiosk shows its QR sign-in in
- * place; the gate sends a signed-out desk board to the sign-in page.
+ * `/superboard/kiosk/<groups>`. A signed-out kiosk shows the Kore ID sign-in
+ * in place; the gate sends a signed-out desk board to the sign-in page.
  */
 export default async function SuperboardPage({ params }: { params: Promise<{ path?: string[] }> }) {
     const { path = [] } = await params;

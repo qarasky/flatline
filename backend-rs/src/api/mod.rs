@@ -4,7 +4,6 @@ pub mod api_keys;
 pub mod auth;
 pub mod backups;
 pub mod badges;
-pub mod device;
 pub mod limits;
 pub mod links;
 pub mod metrics;
@@ -23,7 +22,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router, middleware};
 use serde_json::{Value, json};
 
@@ -143,15 +142,7 @@ impl IntoResponse for ApiError {
 pub fn router(state: AppState) -> Router {
     let public = Router::new()
         .route("/healthz", get(healthz))
-        .route(
-            "/api/v1/auth/setup",
-            get(auth::setup_status).post(auth::setup),
-        )
-        .route("/api/v1/auth/login", post(auth::login))
-        .route(
-            "/api/v1/auth/session",
-            post(auth::create_session).delete(auth::delete_session),
-        )
+        .route("/api/v1/auth/session", delete(auth::delete_session))
         .route("/api/v1/auth/sso/config", get(auth::sso_config))
         .route("/api/v1/auth/sso/start", get(auth::sso_start))
         .route("/api/v1/auth/sso/callback", get(auth::sso_callback))
@@ -159,8 +150,6 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/auth/sso/backchannel-logout",
             post(auth::sso_backchannel_logout),
         )
-        .route("/api/v1/auth/device/start", post(device::start))
-        .route("/api/v1/auth/device/poll", post(device::poll))
         .route("/api/v1/openapi.json", get(openapi::document))
         .route("/robots.txt", get(status_pages::robots))
         .route("/add-push-server.md", get(provisioning::runbook))
@@ -236,10 +225,6 @@ pub fn router(state: AppState) -> Router {
     let authed = Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/auth/me", get(auth::me))
-        .route("/api/v1/auth/password", post(auth::change_password))
-        .route("/api/v1/auth/device/lookup", post(device::lookup))
-        .route("/api/v1/auth/device/approve", post(device::approve))
-        .route("/api/v1/auth/device/deny", post(device::deny))
         .route(
             "/api/v1/monitors",
             get(monitors::list).post(monitors::create),
@@ -298,16 +283,12 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/api-keys/{id}",
             patch(api_keys::patch).delete(api_keys::delete),
         )
-        .route("/api/v1/users", get(users::list).post(users::create))
+        .route("/api/v1/users", get(users::list))
         .route(
             "/api/v1/users/{id}",
             get(users::get_one)
                 .patch(users::patch)
                 .delete(users::delete),
-        )
-        .route(
-            "/api/v1/users/{id}/reset-password",
-            post(users::reset_password),
         )
         .route("/api/v1/monitor-types", get(monitor_types))
         .route(

@@ -12,7 +12,6 @@ their offline restore procedure live in [backup-agent](backup-agent.md).
 | Containers    | `sudo docker compose -f /home/office/flatline/compose.rust.yaml ps` | `caddy`, `flatline` and `web` all `healthy`, low restart counts.                                                                      |
 | Backend alive | `GET /healthz` (no token; Caddy routes it to the backend)           | 200 `{"status":"ok"}`: database answers within 2 s and the check engine's watchdog ticked within 30 s. 503 with a `reason` otherwise. |
 | Web app alive | `GET /build` (no token)                                             | 200 `{"build":"<id>"}`: the Next.js server answers; the id is the deployed build.                                                     |
-| Backend up    | `GET /api/v1/auth/setup` (no token)                                 | 200 with `setupNeeded` (proves the process and the database answer, nothing more).                                                    |
 | Fleet summary | `GET /api/v1/health` (token)                                        | `total` matches the expected count, `down` matches reality; 503 when the database fails.                                              |
 | Public origin | `curl -o /dev/null -w '%{http_code}' https://<origin>/`             | 200 through the tunnel.                                                                                                               |
 | Agents        | newest telemetry per push monitor                                   | seconds old, not minutes.                                                                                                             |
@@ -158,35 +157,38 @@ container's entrypoint hands anything in the data directory back to its
 
 ## Accounts
 
-People sign in to the web app with an email and password on **Members**
-(`/members`); every account has full operator access. Anyone signed in adds a
-person with a starting password, which they must change at first sign-in and
-which expires after 7 days unchanged.
+People sign in to the web app **only through Kore ID**; every account has full
+operator access. **Members** (`/members`) lists the accounts Kore ID
+provisioned, and lets someone signed in remove one. There is no add-with-
+password, no password reset and no change-password page.
 
-- **Forgotten password:** anyone signed in resets it from Members (the person
-  is signed out everywhere and gets a new starting password).
-- **Someone leaves:** remove them on Members and keep their tokens ticked, so
-  the tokens they made are disabled with them.
-- **No account left, or everyone locked out:** sign in with an operator token
-  ("Use a token instead", for example the one in `data-rust/initial-token.txt`)
-  and add or reset accounts from there. With no account at all the sign-in page
-  also offers "Create the first account".
-- Five failed sign-ins for one email (twenty per address) lock it for 15
-  minutes; a token sign-in is not affected.
+- **Give someone access:** grant them the `flatline` app in Kore ID's admin.
+  Their first sign-in provisions a full operator account.
+- **Someone leaves:** remove the app (or disable the user) in Kore ID, then
+  remove them on **Members** and keep their tokens ticked, so the tokens they
+  made are disabled with them.
+- **Nobody can sign in:** check `KORE_ID_ISSUER`, the client secret and the
+  redirect URI in `.env`, then sign in through Kore ID again. There is no
+  operator-token or first-account fallback. The backend still boots without
+  Kore ID, but its sign-in page says no sign-in method is configured.
+- **A fresh install:** the first Kore ID sign-in becomes the first operator;
+  there is no seed script or initial token file.
+- **An old password account:** it links to Kore ID by verified email on its
+  first SSO sign-in; its password hash is overwritten.
 
 ## Tokens
 
-There are three credential families, told apart by prefix. Operator tokens
-(`flatline_op_`) are full-permission bearers; push-agent tokens
-(`flatline_agent_push_`) and backup-agent tokens (`flatline_agent_backup_`) are
-agent-scoped and rejected by the operator API and GUI. Nothing is scoped beyond
-that family boundary, so an operator token is only as narrow as the person
-holding it. Legacy `flatline_...` tokens keep working until rotated.
+There are three credential families, told apart by prefix. Operator API
+tokens (`flatline_op_`) are full-permission bearers for `/api/v1`; they never
+sign in a browser. Push-agent tokens (`flatline_agent_push_`) and backup-agent
+tokens (`flatline_agent_backup_`) are agent-scoped and rejected by the operator
+API. Nothing is scoped beyond that family boundary, so an operator token is only
+as narrow as the person holding it. Legacy `flatline_...` tokens keep working
+until rotated.
 
 | Credential         | Where it lives                                 | Rotating it                                                                                                                       |
 | ------------------ | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Operator token     | `data-rust/initial-token.txt` (0600, root)     | Mint a replacement on **Tokens**, save it to that file, disable the old row.                                                      |
-| Integration tokens | `tokens` table, hashes only                    | Mint a named token on **Tokens**; disable or delete it to revoke. Plaintext is shown once.                                        |
+| Operator API token | `tokens` table, hashes only                    | Mint a named token on **Tokens**; disable or delete it to revoke. Plaintext is shown once.                                        |
 | Provisioning token | `/home/office/flatline/provisioning-token.txt` | Disable the key on **Tokens**, mint a replacement, update that file and any shared URL.                                           |
 | Push tokens        | `monitors.push_token`, one per agent host      | Rotate in the monitor form (or `PATCH` the monitor), then update `/etc/superboard/config.json` on the host and restart the agent. |
 | Backup credentials | `backup_agents.token_hash`, one per agent name | Rotate through `POST /api/v1/backup-agents/{id}/rotate-token`, then update the agent's token file.                                |
@@ -204,8 +206,8 @@ Rules that keep this manageable:
   immediate, including on open SSE streams.
 - Push tokens are the exception worth distributing: an agent host holding only a
   push token can report its own monitor and download releases, nothing else. A
-  push token used for GUI sign-in or `/api/v1` answers
-  `agent_token_on_operator_api`, not a bare 401.
+  push token used on `/api/v1` answers `agent_token_on_operator_api`, not a
+  bare 401.
 - Keep the two agent families apart: a backup-agent token only opens
   `/api/backup/v1`, a push-agent token only opens its push route and
   `/agent/*`.

@@ -28,15 +28,6 @@ describe("api on the server", () => {
         expect(redirect).toHaveBeenCalledWith("/sign-in?expired=1&next=%2Fservers%3Fx%3D1");
     });
 
-    it("sends a starting password to the change-password page", async () => {
-        vi.stubGlobal(
-            "fetch",
-            answer(403, { ok: false, error: "password_change_required", message: "Choose your own password." })
-        );
-        await expect(api("/api/v1/monitors")).rejects.toThrow("NEXT_REDIRECT");
-        expect(redirect).toHaveBeenCalledWith("/account/password");
-    });
-
     it("forwards the session cookie, not a bearer header", async () => {
         const fetch = answer(200, { ok: true });
         vi.stubGlobal("fetch", fetch);

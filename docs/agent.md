@@ -14,9 +14,9 @@ and the web app, and [superboard](superboard.md) for the card it feeds.
   works behind NAT, on a laptop, on a home router.
 - **Per-monitor push token.** Each host carries its own monitor's push token
   (`flatline_agent_push_...`), a bearer secret that routes the samples and gates
-  self-update downloads. It is an agent credential: the operator API and the GUI
-  reject it with `agent_token_on_operator_api`. There is no fleet-wide agent
-  credential, and backup-agent tokens are a separate family.
+  self-update downloads. It is an agent credential: `/api/v1` rejects it with
+  `agent_token_on_operator_api`. There is no fleet-wide agent credential, and
+  backup-agent tokens are a separate family.
 - **Silence is the alert.** The agent has no "host down" concept; if pushes
   stop, the server's push-timeout path on that monitor goes down.
 - **Telemetry must not kill telemetry.** Collectors degrade to an explicit

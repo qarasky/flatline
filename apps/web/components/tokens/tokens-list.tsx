@@ -23,7 +23,6 @@ import { KeyRound, MoreHorizontal, Power, PowerOff, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useState } from "react";
 
 import { useClock } from "@/hooks/use-clock";
-import type { Me } from "@/lib/me";
 import { tokenRow, type TokenKey } from "@/lib/token-row";
 import { deleteToken, fetchTokens, setTokenActive } from "@/lib/tokens-api";
 
@@ -41,10 +40,11 @@ const STATUS = {
 const day = (value: string) => value.slice(0, 10);
 
 /**
- * Operator tokens: who made each, when it was last used, and the actions on
- * it. Device sign-ins (the kiosk's QR) are tokens too, named after the screen.
+ * Operator API tokens: who made each, when it was last used, and the actions
+ * on it. They authenticate /api/v1 as machine credentials; people sign in to
+ * the web app with Kore ID.
  */
-export function TokensList({ me }: { me: Me }) {
+export function TokensList() {
     const now = useClock(30_000);
     const [keys, setKeys] = useState<TokenKey[] | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -68,27 +68,22 @@ export function TokensList({ me }: { me: Me }) {
         void load();
     }, [load]);
 
-    async function run(action: () => Promise<unknown>, signsOut: boolean) {
+    async function run(action: () => Promise<unknown>) {
         try {
             await action();
-            if (signsOut) {
-                // This browser's session stopped with its token: reloading lands on sign-in.
-                window.location.reload();
-                return;
-            }
             await load();
         } catch (e) {
             setError(e instanceof Error ? e.message : "The change didn't go through. Try again.");
         }
     }
 
-    const pendingCurrent = pending !== null && tokenRow(pending.key, me, now).isCurrent;
     const verb = pending?.kind === "disable" ? "Disable" : "Delete";
     return (
         <section aria-label="Tokens" className="flex flex-col gap-4">
             <div className="flex items-center gap-3">
                 <p className="text-meta text-muted min-w-0 flex-1">
-                    Operator tokens can do everything a member can. Agents use their own tokens.
+                    Operator API tokens authenticate /api/v1 for scripts and machines. People sign in with Kore ID;
+                    agents use their own tokens.
                 </p>
                 <MintTokenDialog onMinted={() => void load()} />
             </div>
@@ -123,23 +118,19 @@ export function TokensList({ me }: { me: Me }) {
                             <TableEmpty colSpan={7}>Loading…</TableEmpty>
                         ) : (
                             keys.map((key) => {
-                                const row = tokenRow(key, me, now);
+                                const row = tokenRow(key, now);
                                 const status = STATUS[row.status];
                                 const toggle = key.active ? (
                                     <MenuItem
                                         icon={<PowerOff />}
-                                        onSelect={() =>
-                                            row.isCurrent
-                                                ? ask({ kind: "disable", key })
-                                                : void run(() => setTokenActive(key.id, false), false)
-                                        }
+                                        onSelect={() => void run(() => setTokenActive(key.id, false))}
                                     >
-                                        {row.isCurrent ? "Disable…" : "Disable"}
+                                        Disable
                                     </MenuItem>
                                 ) : row.status === "expired" ? null : (
                                     <MenuItem
                                         icon={<Power />}
-                                        onSelect={() => void run(() => setTokenActive(key.id, true), false)}
+                                        onSelect={() => void run(() => setTokenActive(key.id, true))}
                                     >
                                         Enable
                                     </MenuItem>
@@ -149,7 +140,6 @@ export function TokensList({ me }: { me: Me }) {
                                         <TableRowHeader>
                                             <div className="flex min-w-0 items-center gap-2">
                                                 <span className="max-w-72 truncate font-medium">{key.name}</span>
-                                                {row.isCurrent ? <Badge tone="accent">This browser</Badge> : null}
                                             </div>
                                         </TableRowHeader>
                                         <TableCell>
@@ -201,9 +191,7 @@ export function TokensList({ me }: { me: Me }) {
                 danger
                 title={`${verb} “${pending?.key.name ?? ""}”?`}
                 description={
-                    (pendingCurrent
-                        ? "This browser signed in with it, so it signs this browser out."
-                        : "Anything using it stops working at its next request.") +
+                    "Anything using it stops working at its next request." +
                     (pending?.kind === "delete" ? " Deleting can't be undone." : "")
                 }
                 confirmLabel={verb}
@@ -212,10 +200,7 @@ export function TokensList({ me }: { me: Me }) {
                         return;
                     }
                     const { kind, key } = pending;
-                    await run(
-                        () => (kind === "delete" ? deleteToken(key.id) : setTokenActive(key.id, false)),
-                        pendingCurrent
-                    );
+                    await run(() => (kind === "delete" ? deleteToken(key.id) : setTokenActive(key.id, false)));
                 }}
             />
         </section>

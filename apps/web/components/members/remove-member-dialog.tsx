@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Checkbox, ConfirmDialog } from "@qarasky/kore-ui";
 import { api } from "@/lib/api";
-import { signInMessage as failureMessage } from "@/lib/legacy-token";
+import { failureMessage } from "@/lib/failure";
 import { type Member, type MemberToken, removalWarning } from "@/lib/members";
 
 /**

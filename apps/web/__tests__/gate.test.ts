@@ -57,15 +57,15 @@ describe("gate", () => {
         expect(gate("/", "?m=99999999999999999999", true)).toEqual({ kind: "redirect", to: "/monitors" });
     });
 
-    it("lets a signed-out wall screen reach the kiosk, which shows its QR", () => {
+    it("lets a signed-out wall screen reach the kiosk, which shows the Kore ID sign-in", () => {
         expect(gate("/superboard/kiosk", "", false)).toEqual({ kind: "next" });
         expect(gate("/superboard/kiosk/work,home", "?rotate=30", false)).toEqual({ kind: "next" });
     });
 
-    it("keeps status pages, the approve page and the build id public", () => {
+    it("keeps status pages and the build id public", () => {
         expect(gate("/status/acme", "", false)).toEqual({ kind: "next" });
-        expect(gate("/device", "", false)).toEqual({ kind: "next" });
         expect(gate("/build", "", false)).toEqual({ kind: "next" });
+        expect(gate("/device", "", false).kind).toBe("redirect");
     });
 
     it("lets the old dashboard's build check reach /index.html signed out", () => {

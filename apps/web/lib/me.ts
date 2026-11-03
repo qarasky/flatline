@@ -2,8 +2,8 @@
 export type Me =
     | {
           principal: "account";
-          /** `sso`: the account signs in with Kore ID (it has no password of its own). */
-          account: { id: number; email: string; name: string; mustChangePassword: boolean; sso: boolean };
+          /** `sso`: the account is tied to Kore ID. */
+          account: { id: number; email: string; name: string; sso: boolean };
       }
     | { principal: "token"; token: { id: number; name: string } };
 
@@ -17,7 +17,6 @@ export function toMe(body: Record<string, unknown>): Me {
                 id: account.id,
                 email: account.email,
                 name: account.name,
-                mustChangePassword: account.mustChangePassword,
                 sso: account.sso === true,
             },
         };

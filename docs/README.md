@@ -15,7 +15,7 @@ for the shape of the system, then go to whichever document matches your task.
 | [superboard.md](superboard.md)                 | Changing or explaining the wall board: card anatomy, scopes, history, links.                                 |
 | [dashboard.md](dashboard.md)                   | Working on the web app (`apps/web/`): routes, sections, sign-in, live updates, adding a section.             |
 | [dashboard-motion.md](dashboard-motion.md)     | Adding or changing animation in the operator UI.                                                             |
-| [sso.md](sso.md)                               | Signing in with Kore ID: flow, who gets an account, bearer tokens, turning local login off, env keys.        |
+| [sso.md](sso.md)                               | Signing in with Kore ID: flow, who gets an account, bearer tokens, env keys.                                 |
 | [status-pages.md](status-pages.md)             | Publishing, theming or password-gating a public status page.                                                 |
 | [deployment.md](deployment.md)                 | Shipping a release: the office host, the image, rollout, the fleet inventory.                                |
 | [operations.md](operations.md)                 | Backing up, restore-testing backup agents, rolling back, rotating tokens, diagnosing a broken instance.      |

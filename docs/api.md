@@ -29,7 +29,7 @@ Credentials come in three families, told apart by prefix:
 
 | Prefix                   | Kind                | Accepted by                                      |
 | ------------------------ | ------------------- | ------------------------------------------------ |
-| `flatline_op_`           | Operator            | GUI sign-in and every `/api/v1` route            |
+| `flatline_op_`           | Operator API token  | Every `/api/v1` route                            |
 | `flatline_agent_push_`   | Host (metric) agent | `/api/push/{pushToken}`, `/agent/*`, the runbook |
 | `flatline_agent_backup_` | Backup agent        | `/api/backup/v1` only                            |
 
@@ -37,70 +37,59 @@ Legacy `flatline_<hex>` tokens minted before the split are still accepted;
 they are resolved by the store that holds them (operator table, monitor push
 token, backup-agent hash). New tokens are always minted with a family prefix.
 
-**Operator bearer token.** Every `/api/v1` route except `auth/setup`, `auth/session`,
-`auth/login` and `openapi.json` requires
+**Operator bearer token.** Every `/api/v1` route except `auth/session`
+(sign-out), `auth/sso/*` and `openapi.json` requires
 `Authorization: Bearer flatline_op_<hex>`. Tokens come from the web app's
-**Tokens** section, backed by `POST /api/v1/api-keys`, or from the bootstrapped
-admin token printed on first boot and written to `data/initial-token.txt`
-(`0600`). `POST /api/v1/auth/login` accepts the token in the `password` field and echoes
-it back together with `tokenKind:"operator"`, `GET /api/v1/auth/me` reports the
-credential kind and capabilities, and `GET /api/v1/api-keys` lists operator
-tokens only. The `username` field is ignored — `auth/login` is the old
-dashboard's token sign-in; the web app uses `POST /api/v1/auth/session`
-instead.
+**Tokens** section, backed by `POST /api/v1/api-keys`. They are machine
+credentials: they never create a browser session. `GET /api/v1/auth/me` reports
+the credential kind and capabilities, and `GET /api/v1/api-keys` lists operator
+tokens only.
 
 **Kore ID bearer token.** When Kore ID sign-in is configured, a Kore ID access
 token (audience: this app's client id) is also accepted as
 `Authorization: Bearer <jwt>` for an account that has signed in through SSO. See
 [sso.md](sso.md). Operator and agent tokens are unchanged.
 
-**Browser session cookie.** The web app signs a browser in with
-`POST /api/v1/auth/session`: body `{"email": ..., "password": ...}` signs a
-member in (see [Accounts](#accounts)) and answers
-`{ok:true, principal:"account", mustChangePassword}`; body
-`{"token": "flatline_op_..."}` signs in with an operator token (the wall TV,
-recovery) and answers `{ok:true, principal:"token"}`. A wrong email and a wrong
-password answer the same `401 unauthorized`, so the form does not reveal which
-emails exist; a token failure answers as `auth/login` does. On success the
-answer sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/;
+**Browser session cookie.** Kore ID is the only sign-in. `GET
+/api/v1/auth/sso/start` sends the browser to the provider and the callback
+sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/;
 Max-Age=34560000`, plus `Secure` when the request arrived over HTTPS) holding a
-random session id (`fls_...`), never the token or password; the server stores
-only its SHA-256. A session ends when:
+random session id (`fls_...`), never a token; the server stores only its
+SHA-256. A session belongs to an account. A session ends when:
 
 - it is signed out (`DELETE /api/v1/auth/session`, which works with a missing
   or already-ended session too);
-- it goes unused for 30 days (an account) or 400 days (a token);
+- it goes unused for 30 days;
 - its account is removed;
-- its token is disabled, expires or is deleted.
+- Kore ID ends that session by back-channel logout.
 
 Every `/api/v1` route (the SSE stream included) accepts the cookie when no
 `Authorization` header is sent, and `GET /api/v1/auth/me` reports the
-`principal`: `account: {id, email, name, mustChangePassword}` or
-`token: {id, name}` (a bearer token reports its token too). The live stream
+`principal`: `account: {id, email, name, sso}` or
+`token: {id, name}` (a bearer API token reports its token too). The live stream
 rechecks its credential every 15 seconds and sends `{"type":"unauthorized"}`
 once the session has ended. A cookie-authenticated request other than GET, HEAD
 or OPTIONS must also send `X-Flatline-CSRF: 1`, or it is refused with
 `403 csrf_required`; bearer requests need no such header.
 
-An agent token used for sign-in or on `/api/v1` is not a generic 401: the API
+An agent token used on `/api/v1` is not a generic 401: the API
 answers `401` with `error:"agent_token_on_operator_api"`, the presented
 `tokenKind`, `expectedPrefix:"flatline_op_"` and a `hint`. Operator tokens on
 agent endpoints are rejected symmetrically with
 `operator_token_on_agent_api`.
 
 **There is exactly one scope: full.** Every token is a full-permission operator
-credential — the admin token and keys minted from the Tokens section or
+API credential — keys minted from the Tokens section or
 `POST /api/v1/api-keys` are identical in authority, and so is a member account. There is no read-only key
 and no way to restrict a token. `GET /api/v1/api-keys` reports
 `availableScopes: ["full"]` and each key reports `scopes: ["full"]`. Tokens are
 stored as SHA-256 hashes and plaintext is shown once at mint time; keys imported
 from the previous deployment's bcrypt hashes keep verifying.
 
-**Tokens remember their maker.** A key minted by a member's session, or the
-token a screen gets when a member approves its QR sign-in, records that member;
-`GET /api/v1/api-keys` reports it as `maker: {id, name, removed}`. Keys minted
-with a bearer token or a token session, and every key from before accounts,
-report `maker: null`. Removing a member can disable the keys they made in the
+**Tokens remember their maker.** A key minted by a member's browser session
+records that member; `GET /api/v1/api-keys` reports it as
+`maker: {id, name, removed}`. Keys minted with a bearer token, and every key
+from before accounts, report `maker: null`. Removing a member can disable the keys they made in the
 same step (`DELETE /api/v1/users/{id}` with `revokeTokenIds`); a kept key keeps
 working and reports `removed: true` with the member's last name.
 
@@ -176,86 +165,52 @@ The SSE stream and agent binary downloads have no timeout.
 
 ### Auth
 
-| Method | Path                                  | Purpose                                                                                                                              |
-| ------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| GET    | `/api/v1/auth/setup`                  | Public; `setupNeeded` is true while no account exists                                                                                |
-| POST   | `/api/v1/auth/setup`                  | Public; body `{token, email, name, password}`; creates the first account (needs an operator token; `409 setup_done` once any exists) |
-| POST   | `/api/v1/auth/password`               | Body `{currentPassword, newPassword}`; a member changes their own password                                                           |
-| POST   | `/api/v1/auth/login`                  | Public; token in `password`, echoed back                                                                                             |
-| POST   | `/api/v1/auth/session`                | Public; body `{email, password}` or `{token}`; sets the session cookie                                                               |
-| DELETE | `/api/v1/auth/session`                | Public; ends the session and clears the cookie (`ssoLogoutUrl` for a Kore ID session)                                                |
-| GET    | `/api/v1/auth/sso/config`             | Public; `{sso, localLogin, tokenLogin}`: which sign-in methods are on                                                                |
-| GET    | `/api/v1/auth/sso/start`              | Public; redirects to Kore ID (`?next=/path`). See [sso.md](sso.md)                                                                   |
-| GET    | `/api/v1/auth/sso/callback`           | Public; Kore ID returns here; sets the session cookie and redirects, or redirects to `/sign-in?sso_error=`                           |
-| POST   | `/api/v1/auth/sso/backchannel-logout` | Public; Kore ID back-channel logout (`logout_token` form field); ends the sessions of that Kore ID `sid`. See [sso.md](sso.md)       |
-| GET    | `/api/v1/auth/me`                     | Who is signed in: `principal` `account` or `token`                                                                                   |
-| POST   | `/api/v1/auth/device/start`           | Public; a screen asks to sign in with a QR code. Returns `code`, `pollSecret`, `expiresIn`, `publicUrl`                              |
-| POST   | `/api/v1/auth/device/poll`            | Public; body `{code, pollSecret}`. `pending`, `denied`, `expired`, or `approved` with a new never-expiring operator `token`          |
-| POST   | `/api/v1/auth/device/lookup`          | Describe a waiting screen (user agent, age, suggested name)                                                                          |
-| POST   | `/api/v1/auth/device/approve`         | Body `{code, name}`; the screen gets its own operator token                                                                          |
-| POST   | `/api/v1/auth/device/deny`            | Body `{code}`                                                                                                                        |
+| Method | Path                                  | Purpose                                                                                                                        |
+| ------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| POST   | `/api/v1/auth/session`                | Public; body `{token}` or `{email, password}` is not accepted. Sign-in is Kore ID only.                                        |
+| DELETE | `/api/v1/auth/session`                | Public; ends the session and clears the cookie (`ssoLogoutUrl` for a Kore ID session)                                          |
+| GET    | `/api/v1/auth/sso/config`             | Public; `{sso, provider, accountUrl, apps}`: whether Kore ID is configured and the account/app URLs                            |
+| GET    | `/api/v1/auth/sso/start`              | Public; redirects to Kore ID (`?next=/path`). See [sso.md](sso.md)                                                             |
+| GET    | `/api/v1/auth/sso/callback`           | Public; Kore ID returns here; sets the session cookie and redirects, or redirects to `/sign-in?sso_error=`                     |
+| POST   | `/api/v1/auth/sso/backchannel-logout` | Public; Kore ID back-channel logout (`logout_token` form field); ends the sessions of that Kore ID `sid`. See [sso.md](sso.md) |
+| GET    | `/api/v1/auth/me`                     | Who is signed in: `principal` `account` or `token`                                                                             |
 
-A screen approved by a member who is removed before the screen's next poll gets `denied`, not a token. Device codes travel in JSON bodies, never in paths. The QR code encodes
-`<base>/device#<code>` only; the poll secret never leaves the waiting screen.
-At most 64 requests wait at once per instance (429 `busy` beyond that), each
-for 5 minutes.
+There are no password, first-account or operator-token sign-in routes. A
+`POST /api/v1/auth/session` answers `405 Method Not Allowed`, and `/auth/setup`,
+`/auth/login`, `/auth/password` and `/auth/device/*` answer `404`.
 
 ### Accounts
 
-People sign in to the web app with their own email and password. Every account
-has full permission, the same as an operator token: accounts give each person
-their own credentials, not different rights. Anyone signed in, and any operator
-bearer token, may manage them.
+People sign in to the web app only through Kore ID. Every account has full
+permission, the same as an operator API token: accounts give each person their
+own identity, not different rights. Accounts are created by the first Kore ID
+sign-in; anyone signed in, and any operator bearer token, may list, edit and
+remove them.
 
-| Method | Path                                | Purpose                                                                             |
-| ------ | ----------------------------------- | ----------------------------------------------------------------------------------- |
-| GET    | `/api/v1/users`                     | List members by name, each with `tokenCount`                                        |
-| POST   | `/api/v1/users`                     | Body `{email, name, password}`; adds a member with a starting password              |
-| GET    | `/api/v1/users/{id}`                | One member and the operator tokens they minted (`tokens: [{id, name, active}]`)     |
-| PATCH  | `/api/v1/users/{id}`                | Body `{name?, email?}`                                                              |
-| POST   | `/api/v1/users/{id}/reset-password` | Body `{password}`; a new starting password                                          |
-| DELETE | `/api/v1/users/{id}`                | Body `{revokeTokenIds?}`; removes a member and disables the listed tokens they made |
+| Method | Path                 | Purpose                                                                             |
+| ------ | -------------------- | ----------------------------------------------------------------------------------- |
+| GET    | `/api/v1/users`      | List members by name, each with `tokenCount`                                        |
+| GET    | `/api/v1/users/{id}` | One member and the operator tokens they minted (`tokens: [{id, name, active}]`)     |
+| PATCH  | `/api/v1/users/{id}` | Body `{name?, email?}`                                                              |
+| DELETE | `/api/v1/users/{id}` | Body `{revokeTokenIds?}`; removes a member and disables the listed tokens they made |
 
-A member is `{id, email, name, mustChangePassword, startingPasswordExpired,
-createdAt}`; no response carries a password or its hash. Emails are stored as
-entered and unique ignoring case (`409 email_taken`); names are 1 to 100
-characters. Passwords need at least 10 characters and nothing else
-(`400 weak_password`), and are stored as bcrypt hashes (cost 12, or
-`FLATLINE_PASSWORD_COST`). A password set by someone else, on add or reset, is a
-starting password: `mustChangePassword` is true until its owner chooses their
-own, and one left unchanged for 7 days expires (`startingPasswordExpired`):
-sign-in then answers `401 starting_password_expired` ("Ask someone to reset your
-password."), and only after the password matched.
+A member is `{id, email, name, createdAt, sso}`; no response carries a password
+or its hash. Emails are stored as entered and unique ignoring case (`409
+email_taken`); names are 1 to 100 characters. `POST /api/v1/users` is gone
+(`405`): there is no invite-with-password.
 
-- **Must change.** A member signed in with a starting password can reach only
-  `GET /api/v1/auth/me`, `POST /api/v1/auth/password` and sign-out; everything
-  else, the live stream included, answers `403 password_change_required`.
-- **Changing your password** (`POST /api/v1/auth/password`) needs the current
-  one (`400 wrong_password` otherwise) and a different new one
-  (`400 same_password`), clears "must change" and signs out the member's other
-  browsers. An expired starting password cannot be changed even from a browser
-  still signed in with it (`401 starting_password_expired`). A bearer token or token session has no password to
-  change (`400 not_an_account`).
-- **Resetting** a member's password gives them a new starting password and signs
-  them out everywhere at once.
+- **First sign-in and linking.** `KORE_ID_AUTO_PROVISION` (default on) creates
+  an account for anyone Kore ID admits; on a fresh install that is how the first
+  operator appears. An existing account with the same verified email is linked
+  to the `sub`, and its old password hash is replaced with the no-password
+  sentinel.
 - **Removing** a member signs them out everywhere at once and, for each token
-  they made, either disables it (listed in `revokeTokenIds`) or keeps it. Nobody
-  removes their own account (`409 cannot_remove_self`); removing the last
-  account is allowed, since token sign-in always remains.
-- **Sign-in limits.** Failed email/password sign-ins are limited to 5 per email
-  and 20 per client address in 15 minutes; past that, even the right password
-  answers `429 rate_limited` with `retryAfterSeconds` and a `Retry-After`
-  header. Each attempt is counted before its password is checked, so parallel
-  guesses get no more than sequential ones; a successful sign-in clears the
-  email's count and gives the address its attempt back. The client address is
-  Cloudflare's `CF-Connecting-IP`, else the first `X-Forwarded-For` hop; the
-  proxy in front must strip both from anyone but Cloudflare.
-- **The first account.** While no account exists, `GET /api/v1/auth/setup`
-  answers `setupNeeded: true` and `POST /api/v1/auth/setup` with any valid
-  operator token (for example the first-boot one in `data/initial-token.txt`)
-  creates an account and signs it in. Once one exists it answers
-  `409 setup_done` (also to the loser of two setups racing); add people from Members instead. An existing install gets no
-  accounts on upgrade: sign in with a token once and add yourself.
+  they made, either disables it (listed in `revokeTokenIds`) or keeps it.
+  Nobody removes their own account (`409 cannot_remove_self`); removing the
+  last account is allowed, and the next Kore ID sign-in provisions a fresh one.
+- **No password endpoints.** `/api/v1/auth/password` and
+  `/api/v1/users/{id}/reset-password` are gone; profile and access are managed
+  in Kore ID.
 
 ### Monitors, heartbeats and links
 

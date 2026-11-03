@@ -22,10 +22,10 @@ npx playwright install chromium
 node docs/screenshots/capture.mjs
 ```
 
-`capture.mjs` trades the local dev token from `.dev-data/initial-token.txt` for
-a session cookie, waits for the mock fleet to be painted, and writes the three
-PNGs at 1920×1080 with device scale factor 1. It touches nothing but those
-files.
+`capture.mjs` uses a session cookie from a real Kore ID sign-in: set
+`FLATLINE_SESSION` to the `fl_session` value from the dev app's browser. It waits
+for the mock fleet to be painted, and writes the three PNGs at 1920×1080 with
+device scale factor 1. It touches nothing but those files.
 
 The images were taken before the switch from the Vite dashboard to the Next.js
 web app. The Superboard kept its look; `dashboard.png` still shows the old

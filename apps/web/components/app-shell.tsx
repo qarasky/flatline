@@ -5,15 +5,13 @@ import {
     AppShell,
     AppSwitcher,
     Kbd,
-    MenuItem,
     Sidebar,
     SidebarItem,
     SidebarNav,
     TopBar,
     Wordmark,
 } from "@qarasky/kore-ui";
-import { KeyRound, Search } from "lucide-react";
-import Link from "next/link";
+import { Search } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -22,7 +20,7 @@ import { openCommandPalette } from "@/components/command-palette";
 import { KORE_APP, KORE_NAMES, SIDEBAR_COOKIE } from "@/lib/kore";
 import { type Me, displayName } from "@/lib/me";
 import { NAV_SECTIONS, activeSection } from "@/lib/nav";
-import { PASSWORD_PATH, SIGN_IN_PATH } from "@/lib/session";
+import { SIGN_IN_PATH } from "@/lib/session";
 import { type SignInMethods, endSession } from "@/lib/sso";
 
 /** The search field in the top bar: a button that opens the command palette (⌘K). */
@@ -111,13 +109,7 @@ export function AdminShell({
     }
 
     const name = displayName(me);
-    const user =
-        me.principal === "account"
-            ? { name, email: me.account.email }
-            : { name, email: "Signed in with an operator token" };
-    // The menu shows the Kore ID account entry only while Kore ID is on; without it,
-    // a local account changes its password through the child item below.
-    const canChangePassword = me.principal === "account" && !me.account.sso && methods.localLogin;
+    const user = me.principal === "account" ? { name, email: me.account.email } : { name, email: "Operator API token" };
     const hasApps = Object.keys(methods.apps).length > 0;
 
     return (
@@ -144,13 +136,7 @@ export function AdminShell({
                                 accountUrl={methods.accountUrl ?? undefined}
                                 apps={{ urls: methods.apps, current: KORE_APP, names: KORE_NAMES }}
                                 onSignOut={signOut}
-                            >
-                                {canChangePassword ? (
-                                    <MenuItem icon={<KeyRound />} asChild>
-                                        <Link href={PASSWORD_PATH}>Change password</Link>
-                                    </MenuItem>
-                                ) : null}
-                            </AccountMenu>
+                            />
                         </>
                     }
                 >

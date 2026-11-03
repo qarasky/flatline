@@ -10,14 +10,14 @@ import { requireOperator } from "@/lib/auth-server";
 import { SIDEBAR_COOKIE } from "@/lib/kore";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { fetchAllMonitors } from "@/lib/monitors-api";
-import { LOCAL_ONLY, type SignInMethods, toMethods } from "@/lib/sso";
+import { NO_SIGN_IN, type SignInMethods, toMethods } from "@/lib/sso";
 
 /** The roster for the first render, or null to let the browser load it. */
 async function initialRoster(): Promise<MonitorSummary[] | null> {
     try {
         return await fetchAllMonitors();
     } catch (error) {
-        // A redirect (signed out, password change) must still happen.
+        // A redirect (signed out) must still happen.
         unstable_rethrow(error);
         // Any other failure must not take down pages that do not need monitors.
         return null;
@@ -30,7 +30,7 @@ async function signInMethods(): Promise<SignInMethods> {
         return toMethods(await api<Record<string, unknown>>("/api/v1/auth/sso/config"));
     } catch (error) {
         unstable_rethrow(error);
-        return LOCAL_ONLY;
+        return NO_SIGN_IN;
     }
 }
 

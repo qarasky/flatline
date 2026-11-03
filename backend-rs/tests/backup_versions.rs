@@ -118,7 +118,10 @@ async fn full_semver_versions_are_accepted() {
     let (id, token) = register(&h, "meks").await;
     let (status, body) = start(&h, &token, json!({"agentVersion": "1.2.3-rc.1+build.5"})).await;
     assert_eq!(status, 200, "{body}");
-    assert_eq!(agent(&h, &id).await["reportedVersion"], "1.2.3-rc.1+build.5");
+    assert_eq!(
+        agent(&h, &id).await["reportedVersion"],
+        "1.2.3-rc.1+build.5"
+    );
 }
 
 #[tokio::test]
@@ -187,7 +190,11 @@ async fn checkin_records_version_and_returns_release() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["release"]["version"], "0.3.0");
     let assets = body["release"]["assets"].as_array().unwrap();
-    assert_eq!(assets.len(), 1, "only backup-agent builds are assets: {body}");
+    assert_eq!(
+        assets.len(),
+        1,
+        "only backup-agent builds are assets: {body}"
+    );
     assert_eq!(assets[0]["platform"], "linux-amd64");
     assert_eq!(assets[0]["file"], "flatline-backup-linux-amd64");
     assert_eq!(assets[0]["size"], RELEASE_BYTES.len());

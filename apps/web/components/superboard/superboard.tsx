@@ -731,7 +731,7 @@ async function signOut(): Promise<void> {
  * Superboard entry point. The session cookie authenticates the board like
  * every admin page. When the session is refused (signed out elsewhere, a
  * revoked screen token), the desk board goes to sign-in and the kiosk shows
- * its QR sign-in in place, so a wall screen never lands on a password form.
+ * the Kore ID sign-in in place, so a wall screen never lands on a password form.
  * @param props.kiosk Render chrome-free for a wall display
  * @param props.filter Group scope from the URL, or null for the whole fleet
  * @param props.signedOut The server found no session (kiosk only)

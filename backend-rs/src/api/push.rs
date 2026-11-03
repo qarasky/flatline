@@ -206,8 +206,13 @@ pub async fn push(
 /// SMART (and a disk with no threshold) has no alert of its own. Best
 /// effort; never fails the push.
 async fn note_sample(state: &AppState, monitor: &Monitor, sample: &Value) {
-    match crate::mutes::on_sample(&state.pool, monitor.id, sample, monitor.metric_disk_threshold)
-        .await
+    match crate::mutes::on_sample(
+        &state.pool,
+        monitor.id,
+        sample,
+        monitor.metric_disk_threshold,
+    )
+    .await
     {
         Ok(crate::mutes::SampleChange::None) => {}
         Ok(crate::mutes::SampleChange::Shrunk) => state.events.invalidate(),
@@ -219,8 +224,13 @@ async fn note_sample(state: &AppState, monitor: &Monitor, sample: &Value) {
                 group.as_deref().unwrap_or("Ungrouped"),
                 monitor.name
             );
-            crate::notify::dispatch_message(&state.pool, &state.metrics.client, monitor.id, message)
-                .await;
+            crate::notify::dispatch_message(
+                &state.pool,
+                &state.metrics.client,
+                monitor.id,
+                message,
+            )
+            .await;
         }
         Err(error) => tracing::error!("push: mute update for {}: {error}", monitor.name),
     }

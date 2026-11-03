@@ -3,20 +3,16 @@ import { describe, expect, it } from "vitest";
 import { ssoErrorMessage, ssoStartHref, toMethods } from "@/lib/sso";
 
 describe("sign-in methods", () => {
-    it("defaults to the local methods for an old backend", () => {
+    it("defaults to no sign-in for an old or silent backend", () => {
         expect(toMethods({ ok: true })).toEqual({
             sso: false,
-            localLogin: true,
-            tokenLogin: true,
             accountUrl: null,
             apps: {},
         });
     });
-    it("reads the switches", () => {
-        expect(toMethods({ sso: true, localLogin: false, tokenLogin: false })).toEqual({
+    it("reads whether Kore ID is configured", () => {
+        expect(toMethods({ sso: true, localLogin: true, tokenLogin: true })).toEqual({
             sso: true,
-            localLogin: false,
-            tokenLogin: false,
             accountUrl: null,
             apps: {},
         });

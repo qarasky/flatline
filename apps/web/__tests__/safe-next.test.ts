@@ -30,7 +30,7 @@ describe("safeNext", () => {
         });
     }
 
-    it("keeps the approve page's code, which lives in the fragment", () => {
-        expect(safeNext("/device#ABCD-1234")).toBe("/device#ABCD-1234");
+    it("keeps a fragment, which the browser owns", () => {
+        expect(safeNext("/superboard/kiosk#fleet")).toBe("/superboard/kiosk#fleet");
     });
 });

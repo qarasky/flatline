@@ -133,9 +133,10 @@ pub async fn run(old_path: &Path, data_dir: &Path, force: bool) -> anyhow::Resul
         ));
     }
 
-    // Guarantee the operator can sign in even when every imported key's
-    // plaintext is lost.
-    report.admin_token = auth::mint_admin_token(&new, data_dir).await?;
+    // Guarantee automation has a working credential even when every imported
+    // key's plaintext is lost. This is an operator API token, not a browser
+    // sign-in: people sign in with Kore ID.
+    report.admin_token = auth::mint_admin_token(&new).await?;
 
     Ok(report)
 }
@@ -897,10 +898,7 @@ pub async fn run_cli(args: &[String]) -> anyhow::Result<()> {
         println!("warning: {warning}");
     }
 
-    println!(
-        "\nadmin token (also in {}/initial-token.txt):",
-        data_dir.display()
-    );
+    println!("\noperator API token for automation (save it now; it is shown once):");
     println!("  {}", report.admin_token);
 
     Ok(())
