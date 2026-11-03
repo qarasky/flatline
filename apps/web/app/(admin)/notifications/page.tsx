@@ -1,15 +1,17 @@
+import { PageBody, PageHeader } from "@qarasky/kore-ui";
 import type { Metadata } from "next";
 
 import { NotificationsList } from "@/components/notifications/notifications-list";
-import { PageHeader } from "@/components/page-header";
 
-export const metadata: Metadata = { title: "Notifications · Flatline" };
+export const metadata: Metadata = { title: "Notifications · KoreMonitor" };
 
 export default function NotificationsPage() {
     return (
         <>
-            <PageHeader crumbs={[{ label: "Notifications" }]} />
-            <NotificationsList />
+            <PageHeader title="Notifications" />
+            <PageBody>
+                <NotificationsList />
+            </PageBody>
         </>
     );
 }

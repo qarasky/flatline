@@ -1,8 +1,9 @@
-//! Members: the accounts people sign in with.
+//! Members: the accounts people sign in with through Kore ID.
 //!
-//! Anyone signed in (an account, a token session or a bearer token) may add,
-//! edit, reset and remove accounts: every account has full permission.
-//! Passwords never appear in a response.
+//! Anyone signed in (an account or a bearer API token) may list, edit and
+//! remove accounts: every account has full permission. People are not
+//! invited here: a Kore ID sign-in provisions the account. Passwords never
+//! exist in this API.
 
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -17,10 +18,6 @@ use crate::auth::{Authed, Principal};
 
 fn field<'a>(body: &'a Value, name: &str) -> Option<&'a str> {
     body.get(name).and_then(Value::as_str)
-}
-
-fn required<'a>(body: &'a Value, name: &str) -> Result<&'a str, ApiError> {
-    field(body, name).ok_or_else(|| ApiError::bad(format!("`{name}` is required.")))
 }
 
 fn internal(error: sqlx::Error) -> ApiError {
@@ -55,23 +52,8 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, ApiError
         .iter()
         .map(|account| member_json(account, count_for(account.id)))
         .collect();
-    Ok(Json(json!({ "ok": true, "count": users.len(), "users": users })))
-}
-
-/// POST /api/v1/users — `{email, name, password}`; the password is a
-/// starting password the member must change at first sign-in.
-pub async fn create(
-    State(state): State<AppState>,
-    Json(body): Json<Value>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
-    let email = required(&body, "email")?;
-    let name = required(&body, "name")?;
-    let password = required(&body, "password")?;
-    let account = accounts::create(&state.pool, email, name, password, true).await?;
-    tracing::info!("users: added account {}", account.id);
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({ "ok": true, "user": member_json(&account, 0) })),
+    Ok(Json(
+        json!({ "ok": true, "count": users.len(), "users": users }),
     ))
 }
 
@@ -81,13 +63,12 @@ pub async fn get_one(
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
     let account = accounts::get(&state.pool, id).await?;
-    let tokens: Vec<(i64, String, i64)> = sqlx::query_as(
-        "SELECT id, name, active FROM tokens WHERE maker_user_id = ? ORDER BY id",
-    )
-    .bind(id)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(internal)?;
+    let tokens: Vec<(i64, String, i64)> =
+        sqlx::query_as("SELECT id, name, active FROM tokens WHERE maker_user_id = ? ORDER BY id")
+            .bind(id)
+            .fetch_all(&state.pool)
+            .await
+            .map_err(internal)?;
     let tokens: Vec<Value> = tokens
         .iter()
         .map(|(id, name, active)| json!({ "id": id, "name": name, "active": *active != 0 }))
@@ -117,31 +98,13 @@ pub async fn patch(
     Ok(Json(json!({ "ok": true, "user": account.to_json() })))
 }
 
-/// POST /api/v1/users/{id}/reset-password — `{password}`: a new starting
-/// password the member must change at their next sign-in. Ends every
-/// session the account has.
-pub async fn reset_password(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, ApiError> {
-    let password = required(&body, "password")?;
-    let account = accounts::set_password(&state.pool, id, password, true).await?;
-    // Whoever was signed in as them signs in again, with the new password.
-    crate::sessions::end_for_account(&state.pool, id, None)
-        .await
-        .map_err(internal)?;
-    tracing::info!("users: reset the password of account {id}");
-    Ok(Json(json!({ "ok": true, "user": account.to_json() })))
-}
-
 /// DELETE /api/v1/users/{id} — optional body `{revokeTokenIds: [id, ...]}`.
 ///
 /// Removes the account (its sessions go with it) and disables the tokens
 /// listed, each of which must be one this account made; tokens not listed
 /// keep working and keep the maker's name. Nobody removes their own account
-/// (409 `cannot_remove_self`). Removing the last account is allowed: token
-/// sign-in always remains.
+/// (409 `cannot_remove_self`). Removing the last account is allowed: the next
+/// Kore ID sign-in provisions a fresh full operator.
 pub async fn delete(
     State(state): State<AppState>,
     Extension(authed): Extension<Authed>,
@@ -161,7 +124,11 @@ pub async fn delete(
             .map(|id| id.as_i64())
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| ApiError::bad("`revokeTokenIds` must be an array of token ids."))?,
-        Some(_) => return Err(ApiError::bad("`revokeTokenIds` must be an array of token ids.")),
+        Some(_) => {
+            return Err(ApiError::bad(
+                "`revokeTokenIds` must be an array of token ids.",
+            ));
+        }
     };
     revoke.sort_unstable();
     revoke.dedup();
@@ -230,5 +197,7 @@ pub async fn delete(
         "users: removed account {id}, revoked {} of its tokens",
         revoke.len()
     );
-    Ok(Json(json!({ "ok": true, "deleted": id, "revokedTokens": revoke.len() })))
+    Ok(Json(
+        json!({ "ok": true, "deleted": id, "revokedTokens": revoke.len() }),
+    ))
 }

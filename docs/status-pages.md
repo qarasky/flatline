@@ -83,7 +83,7 @@ frameable; embed the `/status/<slug>` URL. Every other page is `frame-ancestors 
 
 ## Branding
 
-Each page carries a title, an icon (defaulting to the Flatline mark at
+Each page carries a title, an icon (defaulting to the KoreMonitor mark at
 `/icon.svg`) and an optional accent colour. The accent is applied as a CSS
 variable scoped to the page, and the status palette stays fixed and semantic —
 up green, degraded amber, outage red — and is never derived from the accent, so

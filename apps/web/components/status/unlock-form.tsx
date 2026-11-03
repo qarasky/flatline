@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { Button, Card, Field, Input } from "@qarasky/kore-ui";
 
 /**
  * Password prompt for a protected status page.
  *
- * Posts to the Flatline API, which sets the page-scoped unlock cookie on
+ * Posts to the KoreMonitor API, which sets the page-scoped unlock cookie on
  * this origin; the parent then re-fetches with `credentials: include`.
  * Kept as a component rather than a page so the cookie lands on the origin
  * that actually serves the page.
@@ -32,7 +33,7 @@ export function UnlockForm({ slug, onUnlocked }: { slug: string; onUnlocked: () 
             });
 
             if (response.status === 401) {
-                setError("That password is not correct.");
+                setError("That password isn't correct. Check it and try again.");
                 setPending(false);
                 return;
             }
@@ -41,39 +42,35 @@ export function UnlockForm({ slug, onUnlocked }: { slug: string; onUnlocked: () 
             // in place rather than reloading the page.
             onUnlocked();
         } catch {
-            setError("Could not reach the status server.");
+            setError("Couldn't reach the status server. Check your connection and try again.");
             setPending(false);
         }
     }
 
     return (
         <div className="status-page">
-            <div className="wrap">
-                {/* A real POST target: before scripts load, Enter must not put the password in a URL.
-                    The API sets the unlock cookie and redirects back here. */}
-                <form
-                    className="unlock"
-                    method="post"
-                    action={`/api/v1/status-pages/unlock/${encodeURIComponent(slug)}`}
-                    onSubmit={onSubmit}
-                >
-                    <h1>This status page is private</h1>
-                    <p className="sub">Enter the password you were given.</p>
-
-                    {error ? <div className="error">{error}</div> : null}
-
-                    <input
-                        type="password"
-                        name="password"
-                        placeholder="Password"
-                        autoComplete="current-password"
-                        autoFocus
-                        required
-                    />
-                    <button type="submit" disabled={pending}>
-                        {pending ? "Checking…" : "Unlock"}
-                    </button>
-                </form>
+            <div className="status-wrap">
+                <Card className="mx-auto mt-[12vh] max-w-[380px] p-6">
+                    {/* A real POST target: before scripts load, Enter must not put the password in a URL.
+                        The API sets the unlock cookie and redirects back here. */}
+                    <form
+                        className="flex flex-col gap-4"
+                        method="post"
+                        action={`/api/v1/status-pages/unlock/${encodeURIComponent(slug)}`}
+                        onSubmit={onSubmit}
+                    >
+                        <div>
+                            <h1 className="text-title font-semibold tracking-[-0.01em]">This status page is private</h1>
+                            <p className="mt-1 text-muted">Enter the password you were given.</p>
+                        </div>
+                        <Field label="Password" error={error}>
+                            <Input type="password" name="password" autoComplete="current-password" autoFocus required />
+                        </Field>
+                        <Button type="submit" variant="primary" fullWidth loading={pending}>
+                            {pending ? "Checking…" : "Unlock"}
+                        </Button>
+                    </form>
+                </Card>
             </div>
         </div>
     );

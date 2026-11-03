@@ -247,7 +247,13 @@ async fn resolve_host_answers_503_on_a_database_error_not_unmapped() {
 #[tokio::test]
 async fn unknown_paths_are_json_404s() {
     let h = common::harness().await;
-    for (method, path) in [("GET", "/"), ("GET", "/monitors"), ("GET", "/index.html"), ("POST", "/nope"), ("GET", "/api/v1/nope")] {
+    for (method, path) in [
+        ("GET", "/"),
+        ("GET", "/monitors"),
+        ("GET", "/index.html"),
+        ("POST", "/nope"),
+        ("GET", "/api/v1/nope"),
+    ] {
         let (status, json) = common::send(&h.app, common::request(method, path, None, None)).await;
         assert_eq!(status, axum::http::StatusCode::NOT_FOUND, "{method} {path}");
         assert_eq!(json["error"], "not_found", "{method} {path}: {json}");

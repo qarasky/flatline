@@ -1,4 +1,9 @@
-import type { Crumb } from "@/components/page-header";
+/** One breadcrumb (kore-ui's `Crumb`, with a text label). */
+export interface Crumb {
+    label: string;
+    href?: string;
+}
+
 import type { MonitorSummary } from "@/lib/monitor-types";
 
 /**
@@ -26,4 +31,14 @@ export function monitorCrumbs(monitors: Pick<MonitorSummary, "id" | "name" | "pa
         parent = group.parent ?? null;
     }
     return [root, ...groups, { label: monitor.name }];
+}
+
+/** PageHeader props for a monitor's page: the groups as breadcrumbs, the monitor as the title. */
+export function monitorHeader(
+    monitors: Pick<MonitorSummary, "id" | "name" | "parent">[],
+    id: number
+): { breadcrumbs: Crumb[]; title: string } {
+    const crumbs = monitorCrumbs(monitors, id);
+    const last = crumbs[crumbs.length - 1]!;
+    return { breadcrumbs: crumbs.slice(0, -1), title: last.href ? "Monitor" : last.label };
 }

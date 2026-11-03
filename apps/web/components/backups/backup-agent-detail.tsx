@@ -1,21 +1,27 @@
 "use client";
 
+import {
+    Button,
+    Card,
+    Checkbox,
+    ConfirmDialog,
+    Field,
+    Input,
+    PageBody,
+    SectionHeader,
+    Select,
+    StatusDot,
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from "@qarasky/kore-ui";
 import { useCallback, useState, type FormEvent } from "react";
 
 import { useBoardData } from "@/components/board/board-data";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { backupStatus } from "@/components/fleet/backup-status";
 import {
     backupDuration,
     backupFileName,
@@ -35,21 +41,19 @@ import {
     updateBackupAgent,
 } from "@/lib/backups-api";
 import type { BackupAgentSummary, BackupRunSummary } from "@/lib/monitor-types";
-import { cn } from "@/lib/utils";
 
+import { NOT_LINKED, serverId, serverOptions } from "./server-options";
 import { TokenDialog } from "./token-dialog";
 import { VerificationDialog } from "./verification-dialog";
 
-const TONE: Record<string, string> = { up: "text-ok", down: "text-bad", degraded: "text-warn", neutral: "text-quiet" };
+const RUN_TONE: Record<string, string> = { completed: "text-status-up", failed: "text-status-down" };
 
+/** One block of the page: a heading, then its content in a Card. */
 function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
     return (
-        <section className="border-b px-4 py-4">
-            <div className="mb-3 flex items-center gap-2">
-                <h2 className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">{title}</h2>
-                {action ? <div className="ml-auto flex gap-2">{action}</div> : null}
-            </div>
-            {children}
+        <section>
+            <SectionHeader title={title} actions={action} className="mb-3" />
+            <Card className="p-4">{children}</Card>
         </section>
     );
 }
@@ -57,9 +61,9 @@ function Section({ title, children, action }: { title: string; children: React.R
 /** Name, server, enabled, schedule and retention; saved with one PATCH. */
 function Settings({ agent, onSaved }: { agent: BackupAgentSummary; onSaved: (agent: BackupAgentSummary) => void }) {
     const { monitors } = useBoardData();
-    const servers = monitors.filter((m) => m.type === "push");
+    const options = serverOptions(monitors);
     const [name, setName] = useState(agent.name);
-    const [server, setServer] = useState(agent.monitorId === null ? "" : String(agent.monitorId));
+    const [server, setServer] = useState(agent.monitorId === null ? NOT_LINKED : String(agent.monitorId));
     const [enabled, setEnabled] = useState(agent.enabled);
     const [interval, setIntervalSeconds] = useState(String(agent.intervalSeconds));
     const [retention, setRetention] = useState(String(agent.retentionCount));
@@ -73,7 +77,7 @@ function Settings({ agent, onSaved }: { agent: BackupAgentSummary; onSaved: (age
         try {
             const answer = await updateBackupAgent(agent.id, {
                 name: name.trim(),
-                monitorId: server ? Number(server) : null,
+                monitorId: serverId(server),
                 enabled,
                 intervalSeconds: Number(interval),
                 retentionCount: Number(retention),
@@ -88,62 +92,35 @@ function Settings({ agent, onSaved }: { agent: BackupAgentSummary; onSaved: (age
     }
 
     return (
-        <form onSubmit={(e) => void save(e)} className="grid max-w-2xl grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
-                <Label htmlFor="agent-name">Name</Label>
-                <Input
-                    id="agent-name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required
-                    maxLength={100}
-                />
-            </div>
-            <div className="grid gap-1.5">
-                <Label htmlFor="agent-server">Server</Label>
-                <NativeSelect
-                    id="agent-server"
-                    className="w-full"
-                    value={server}
-                    onChange={(e) => setServer(e.target.value)}
-                >
-                    <NativeSelectOption value="">— not linked</NativeSelectOption>
-                    {servers.map((s) => (
-                        <NativeSelectOption key={s.id} value={String(s.id)}>
-                            {s.name}
-                        </NativeSelectOption>
-                    ))}
-                </NativeSelect>
-            </div>
-            <div className="grid gap-1.5">
-                <Label htmlFor="agent-interval">Expected every (seconds)</Label>
-                <Input
-                    id="agent-interval"
-                    type="number"
-                    min={60}
-                    value={interval}
-                    onChange={(e) => setIntervalSeconds(e.target.value)}
-                />
-            </div>
-            <div className="grid gap-1.5">
-                <Label htmlFor="agent-retention">Runs kept</Label>
-                <Input
-                    id="agent-retention"
-                    type="number"
-                    min={1}
-                    value={retention}
-                    onChange={(e) => setRetention(e.target.value)}
-                />
-            </div>
-            <label className="col-span-2 flex items-center gap-2">
-                <Checkbox checked={enabled} onCheckedChange={(c) => setEnabled(c === true)} aria-label="Enabled" />
-                Enabled: an enabled agent that misses its schedule shows as overdue.
-            </label>
-            <div className="col-span-2 flex items-center gap-3">
-                <Button type="submit" size="sm" disabled={busy}>
+        <form onSubmit={(e) => void save(e)} className="grid max-w-2xl gap-4 sm:grid-cols-2">
+            <Field label="Name" required>
+                <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} />
+            </Field>
+            <Field label="Server">
+                <Select value={server} onValueChange={setServer} options={options} />
+            </Field>
+            <Field label="Expected every (seconds)">
+                <Input type="number" min={60} value={interval} onChange={(e) => setIntervalSeconds(e.target.value)} />
+            </Field>
+            <Field label="Runs kept">
+                <Input type="number" min={1} value={retention} onChange={(e) => setRetention(e.target.value)} />
+            </Field>
+            <Checkbox
+                className="sm:col-span-2"
+                checked={enabled}
+                onCheckedChange={(c) => setEnabled(c === true)}
+                label="Enabled"
+                description="An enabled agent that misses its schedule shows as overdue."
+            />
+            <div className="flex items-center gap-3 sm:col-span-2">
+                <Button type="submit" variant="primary" loading={busy}>
                     {busy ? "Saving…" : "Save settings"}
                 </Button>
-                {message ? <span className="text-muted-foreground text-xs">{message}</span> : null}
+                {message ? (
+                    <span role="status" className="text-meta text-muted">
+                        {message}
+                    </span>
+                ) : null}
             </div>
         </form>
     );
@@ -167,9 +144,13 @@ export function BackupAgentDetail({
     const [runs, setRuns] = useState(initialRuns);
     const [verifying, setVerifying] = useState<BackupRunSummary | null>(null);
     const [token, setToken] = useState<string | null>(null);
-    const [confirm, setConfirm] = useState<"rotate" | "revoke" | null>(null);
-    // One request per confirm: a double-click must not rotate twice and show a dead token.
+    // What the confirmation asks about; kept while it animates closed.
+    const [asked, setAsked] = useState<"rotate" | "revoke">("rotate");
     const [confirming, setConfirming] = useState(false);
+    function ask(kind: "rotate" | "revoke") {
+        setAsked(kind);
+        setConfirming(true);
+    }
     const [error, setError] = useState<string | null>(null);
     const health = backupHealth(agent);
 
@@ -183,10 +164,8 @@ export function BackupAgentDetail({
     }, [agent.id, reload]);
 
     async function runTokenAction(kind: "rotate" | "revoke") {
-        if (confirming) {
-            return;
-        }
-        setConfirming(true);
+        // ConfirmDialog disables both buttons while this runs: a double-click
+        // must not rotate twice and show a dead token.
         setError(null);
         try {
             if (kind === "rotate") {
@@ -196,32 +175,29 @@ export function BackupAgentDetail({
             } else {
                 setLocal((await revokeBackupToken(agent.id)).agent);
             }
-            setConfirm(null);
+            setConfirming(false);
             await reload();
         } catch (e) {
-            setError(e instanceof Error ? e.message : "That did not work.");
-            setConfirm(null);
-        } finally {
+            setError(e instanceof Error ? e.message : "That didn't work. Try again.");
             setConfirming(false);
         }
     }
 
     return (
-        <div className="flex flex-1 flex-col">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-3">
-                <h1 className="text-base font-semibold">{agent.name}</h1>
-                <span className={cn("text-xs font-medium", TONE[health.tone])}>{health.label}</span>
-                <span className="text-muted-foreground text-xs">
-                    {agent.reportedVersion ? `agent ${agent.reportedVersion}` : "version not reported yet"}
+        <PageBody className="grid gap-6">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                <StatusDot status={backupStatus(health.tone)} label={health.label} />
+                <span className="text-meta text-muted">
+                    {agent.reportedVersion ? `Agent ${agent.reportedVersion}` : "Version not reported yet"}
                     {agent.updateStatus && agent.updateStatus !== "ok" ? ` · update: ${agent.updateStatus}` : ""}
                 </span>
-                <span className="text-muted-foreground text-xs">{restoreLabel(agent)}</span>
+                <span className="text-meta text-muted">{restoreLabel(agent)}</span>
                 {agent.lastErrorCode ? (
-                    <span className="text-bad text-xs">last error: {agent.lastErrorCode}</span>
+                    <span className="text-meta text-status-down">Last error: {agent.lastErrorCode}</span>
                 ) : null}
             </div>
             {error ? (
-                <p role="alert" className="text-bad px-4 pt-3 text-xs">
+                <p role="alert" className="text-meta text-danger">
                     {error}
                 </p>
             ) : null}
@@ -238,25 +214,25 @@ export function BackupAgentDetail({
                 title="Token"
                 action={
                     <>
-                        <Button variant="outline" size="xs" onClick={() => setConfirm("rotate")}>
+                        <Button size="sm" onClick={() => ask("rotate")}>
                             Rotate token
                         </Button>
                         <Button
-                            variant="outline"
-                            size="xs"
+                            variant="danger-outline"
+                            size="sm"
                             disabled={!agent.credentialActive}
-                            onClick={() => setConfirm("revoke")}
+                            onClick={() => ask("revoke")}
                         >
                             Revoke token
                         </Button>
                     </>
                 }
             >
-                <p className="text-sm">
+                <p>
                     {agent.credentialActive ? (
                         "The agent's token is active."
                     ) : (
-                        <span className="text-warn">
+                        <span className="text-status-warn">
                             The token is revoked: the agent cannot upload until it is rotated.
                         </span>
                     )}
@@ -264,89 +240,70 @@ export function BackupAgentDetail({
             </Section>
             <Section title={`Runs · ${runs.length}`}>
                 {runs.length === 0 ? (
-                    <p className="text-muted-foreground">No runs yet.</p>
+                    <p className="text-muted">No runs yet.</p>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full border-collapse text-sm">
-                            <thead>
-                                <tr className="text-muted-foreground border-b text-left text-xs tracking-wide uppercase">
-                                    <th className="py-2 pr-3 font-medium">Started (UTC)</th>
-                                    <th className="py-2 pr-3 font-medium">Status</th>
-                                    <th className="py-2 pr-3 text-right font-medium">Size</th>
-                                    <th className="py-2 pr-3 font-medium">Took</th>
-                                    <th className="py-2 pr-3 font-medium">Sources</th>
-                                    <th className="py-2 pr-3 font-medium">Checked</th>
-                                    <th className="py-2 font-medium" />
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {runs.map((run) => (
-                                    <tr
-                                        key={run.id}
-                                        className="border-border/60 border-b last:border-0"
-                                        data-run-id={run.id}
-                                    >
-                                        <td className="py-1.5 pr-3 whitespace-nowrap tnum">
-                                            {backupTime(run.exportStartedAt)}
-                                        </td>
-                                        <td
-                                            className={cn(
-                                                "py-1.5 pr-3",
-                                                run.status === "completed"
-                                                    ? "text-ok"
-                                                    : run.status === "failed"
-                                                      ? "text-bad"
-                                                      : "text-quiet"
-                                            )}
-                                        >
-                                            {run.status}
-                                            {run.errorCode ? ` · ${run.errorCode}` : ""}
-                                        </td>
-                                        <td className="py-1.5 pr-3 text-right tnum">
-                                            {formatBytes(run.totalBytes ?? run.receivedBytes)}
-                                        </td>
-                                        <td className="py-1.5 pr-3 tnum">{backupDuration(run)}</td>
-                                        <td className="text-muted-foreground py-1.5 pr-3 text-xs">
-                                            {backupSourceSummary(run)}
-                                            {backupIsEncrypted(run) ? " · encrypted" : ""}
-                                        </td>
-                                        <td className="py-1.5 pr-3 text-xs" data-verification>
-                                            {verificationLabel(run)}
-                                        </td>
-                                        <td className="py-1.5 text-right whitespace-nowrap">
-                                            {run.status === "completed" ? (
-                                                <span className="inline-flex gap-1.5">
-                                                    <Button
-                                                        variant="outline"
-                                                        size="xs"
-                                                        onClick={() => setVerifying(run)}
-                                                    >
-                                                        Record check
-                                                    </Button>
-                                                    <Button
-                                                        variant="outline"
-                                                        size="xs"
-                                                        onClick={() =>
-                                                            void downloadBackupRun(run.id, backupFileName(run)).catch(
-                                                                (e) =>
-                                                                    setError(
-                                                                        e instanceof Error
-                                                                            ? `Download failed: ${e.message}`
-                                                                            : "Download failed."
-                                                                    )
+                    <Table framed={false} caption="Runs" containerClassName="-mx-4 -my-4 w-auto">
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Started (UTC)</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead align="right">Size</TableHead>
+                                <TableHead>Took</TableHead>
+                                <TableHead>Sources</TableHead>
+                                <TableHead>Checked</TableHead>
+                                <TableHead>
+                                    <span className="sr-only">Actions</span>
+                                </TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {runs.map((run) => (
+                                <TableRow key={run.id} data-run-id={run.id}>
+                                    <TableCell className="whitespace-nowrap tnum">
+                                        {backupTime(run.exportStartedAt)}
+                                    </TableCell>
+                                    <TableCell className={RUN_TONE[run.status] ?? "text-muted"}>
+                                        {run.status}
+                                        {run.errorCode ? ` · ${run.errorCode}` : ""}
+                                    </TableCell>
+                                    <TableCell align="right">
+                                        {formatBytes(run.totalBytes ?? run.receivedBytes)}
+                                    </TableCell>
+                                    <TableCell className="tnum">{backupDuration(run)}</TableCell>
+                                    <TableCell muted className="text-sub">
+                                        {backupSourceSummary(run)}
+                                        {backupIsEncrypted(run) ? " · encrypted" : ""}
+                                    </TableCell>
+                                    <TableCell className="text-sub" data-verification>
+                                        {verificationLabel(run)}
+                                    </TableCell>
+                                    <TableCell align="right" className="whitespace-nowrap">
+                                        {run.status === "completed" ? (
+                                            <span className="inline-flex gap-2">
+                                                <Button size="sm" onClick={() => setVerifying(run)}>
+                                                    Record check
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    onClick={() =>
+                                                        void downloadBackupRun(run.id, backupFileName(run)).catch((e) =>
+                                                            setError(
+                                                                e instanceof Error
+                                                                    ? `Download failed: ${e.message}`
+                                                                    : "Download failed."
                                                             )
-                                                        }
-                                                    >
-                                                        Download
-                                                    </Button>
-                                                </span>
-                                            ) : null}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                                                        )
+                                                    }
+                                                >
+                                                    Download
+                                                </Button>
+                                            </span>
+                                        ) : null}
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
                 )}
             </Section>
             {verifying ? (
@@ -360,30 +317,19 @@ export function BackupAgentDetail({
                 />
             ) : null}
             {token ? <TokenDialog agentName={agent.name} token={token} onClose={() => setToken(null)} /> : null}
-            <Dialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>{confirm === "rotate" ? "Rotate the token?" : "Revoke the token?"}</DialogTitle>
-                        <DialogDescription>
-                            {confirm === "rotate"
-                                ? "The current token stops working at once. Put the new one in the agent's token file."
-                                : "The agent can no longer upload until the token is rotated."}
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                        <Button variant="ghost" onClick={() => setConfirm(null)}>
-                            Cancel
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            disabled={confirming}
-                            onClick={() => confirm && void runTokenAction(confirm)}
-                        >
-                            {confirm === "rotate" ? "Rotate" : "Revoke"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        </div>
+            <ConfirmDialog
+                open={confirming}
+                onOpenChange={setConfirming}
+                title={asked === "revoke" ? "Revoke the token?" : "Rotate the token?"}
+                description={
+                    asked === "revoke"
+                        ? "The agent can no longer upload until the token is rotated."
+                        : "The current token stops working at once. Put the new one in the agent's token file."
+                }
+                confirmLabel={asked === "revoke" ? "Revoke" : "Rotate"}
+                danger
+                onConfirm={() => runTokenAction(asked)}
+            />
+        </PageBody>
     );
 }

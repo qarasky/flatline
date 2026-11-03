@@ -1,6 +1,6 @@
 <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
   <style>
-    /* The Flatline dashboard is dark-only (html.dark), so pin the light brand
+    /* The KoreMonitor dashboard is dark-only (html.dark), so pin the light brand
        variant rather than following the OS colour scheme: the black variant
        would disappear against the dark cards. */
     .do-favicon { fill: #F4F5F5; }

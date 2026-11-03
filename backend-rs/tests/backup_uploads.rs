@@ -1123,8 +1123,15 @@ async fn non_boolean_encrypted_flag_is_rejected() {
 async fn complete_plain_run(h: &common::Harness, name: &str, data: &[u8]) -> (String, String) {
     let (agent_id, token) = register(h, name).await;
     let summary = json!({"databaseCount": 1, "objectCount": 0, "sourceBytes": data.len(), "encrypted": false});
-    let (status, started) =
-        start_run_with_summary(h, &token, "plain", data.len() as u64, &digest(data), summary).await;
+    let (status, started) = start_run_with_summary(
+        h,
+        &token,
+        "plain",
+        data.len() as u64,
+        &digest(data),
+        summary,
+    )
+    .await;
     assert_eq!(status, 200, "{started}");
     let run_id = started["run"]["id"].as_str().unwrap().to_string();
     let (status, _) = put(h, &token, &run_id, 0, 0, data.to_vec()).await;
@@ -1142,7 +1149,10 @@ async fn plain_bundles_are_stored_as_tar() {
     let data: Vec<u8> = (0..3000u32).map(|i| (i % 251) as u8).collect();
     let (agent_id, run_id) = complete_plain_run(&h, "meks", &data).await;
 
-    assert_eq!(std::fs::read(run_path(&h, &agent_id, &run_id, "bundle.tar")).unwrap(), data);
+    assert_eq!(
+        std::fs::read(run_path(&h, &agent_id, &run_id, "bundle.tar")).unwrap(),
+        data
+    );
     assert!(
         !run_path(&h, &agent_id, &run_id, "bundle.age").exists(),
         "a plain bundle is not named .age"
@@ -1174,7 +1184,8 @@ async fn legacy_plain_bundles_named_age_still_work() {
     assert_eq!(status, 200, "the old name still downloads");
     assert_eq!(body, data);
 
-    let storage = flatline_backend::backups::storage::Storage::open(h.backup_root.as_ref().unwrap()).unwrap();
+    let storage =
+        flatline_backend::backups::storage::Storage::open(h.backup_root.as_ref().unwrap()).unwrap();
     storage.delete_run(&agent_id, &run_id).unwrap();
     assert!(
         !run_path(&h, &agent_id, &run_id, "").exists(),

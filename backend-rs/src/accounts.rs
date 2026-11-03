@@ -1,34 +1,22 @@
-//! Member accounts: people who sign in with an email and a password.
+//! Member accounts: people who sign in with Kore ID.
 //!
 //! Every account has full permission, the same as an operator token; there
-//! are no roles. Passwords are stored only as bcrypt hashes, computed off the
-//! async runtime. A password set by someone else (on add or reset) is a
-//! starting password: the account must choose its own before doing anything
-//! else, and an unchanged starting password expires after
-//! [`STARTING_PASSWORD_DAYS`].
-
-use std::sync::OnceLock;
+//! are no roles. An account has no password: Kore ID is the only browser
+//! sign-in. The `users.password_hash` column stays in the schema for older
+//! databases, but new accounts store [`SSO_PASSWORD_SENTINEL`] there and a
+//! legacy account's hash is overwritten when it links to Kore ID. Nothing
+//! verifies a password any more.
 
 use axum::http::StatusCode;
-use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
 use crate::api::ApiError;
 
-/// The shortest password accepted. No other rule.
-pub const MIN_PASSWORD_CHARS: usize = 10;
-/// How long an unchanged starting password stays usable.
-pub const STARTING_PASSWORD_DAYS: i64 = 7;
 /// Longest name shown in the sidebar and the Members list.
 const MAX_NAME_CHARS: usize = 100;
 /// Longest email accepted (RFC 5321's path limit).
 const MAX_EMAIL_CHARS: usize = 254;
-/// bcrypt cost when `FLATLINE_PASSWORD_COST` is unset.
-const DEFAULT_PASSWORD_COST: u32 = 12;
-
-static PASSWORD_COST: OnceLock<u32> = OnceLock::new();
-static DUMMY_HASH: OnceLock<String> = OnceLock::new();
 
 /// A member account, without its password hash.
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -36,36 +24,19 @@ pub struct Account {
     pub id: i64,
     pub email: String,
     pub name: String,
-    pub must_change_password: bool,
-    pub password_set_at: String,
     pub created_at: String,
+    /// The Kore ID subject, once the account has signed in through SSO.
+    pub kore_sub: Option<String>,
 }
 
 impl Account {
-    /// A starting password (still unchanged) set more than
-    /// [`STARTING_PASSWORD_DAYS`] ago.
-    pub fn starting_password_expired(&self) -> bool {
-        if !self.must_change_password {
-            return false;
-        }
-        match NaiveDateTime::parse_from_str(&self.password_set_at, "%Y-%m-%d %H:%M:%S") {
-            Ok(set_at) => {
-                chrono::Utc::now().naive_utc() - set_at
-                    > chrono::Duration::days(STARTING_PASSWORD_DAYS)
-            }
-            // An unreadable timestamp is treated as expired: a reset fixes it.
-            Err(_) => true,
-        }
-    }
-
     pub fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "email": self.email,
             "name": self.name,
-            "mustChangePassword": self.must_change_password,
-            "startingPasswordExpired": self.starting_password_expired(),
             "createdAt": self.created_at,
+            "sso": self.kore_sub.is_some(),
         })
     }
 }
@@ -74,7 +45,6 @@ impl Account {
 pub enum AccountError {
     BadEmail,
     BadName,
-    WeakPassword,
     EmailTaken,
     NotFound,
     Db(sqlx::Error),
@@ -107,12 +77,6 @@ impl From<AccountError> for ApiError {
                 "bad_request",
                 format!("`name` must be 1 to {MAX_NAME_CHARS} characters."),
             ),
-            AccountError::WeakPassword => ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "weak_password",
-                format!("Use at least {MIN_PASSWORD_CHARS} characters."),
-            )
-            .with_hint("Any characters are allowed; only the length is checked."),
             AccountError::EmailTaken => ApiError::new(
                 StatusCode::CONFLICT,
                 "email_taken",
@@ -126,51 +90,6 @@ impl From<AccountError> for ApiError {
             }
         }
     }
-}
-
-/// bcrypt cost: `FLATLINE_PASSWORD_COST` (clamped to 4..=31), else 12.
-pub fn password_cost() -> u32 {
-    *PASSWORD_COST.get_or_init(|| {
-        std::env::var("FLATLINE_PASSWORD_COST")
-            .ok()
-            .and_then(|value| value.trim().parse::<u32>().ok())
-            .map(|cost| cost.clamp(4, 31))
-            .unwrap_or(DEFAULT_PASSWORD_COST)
-    })
-}
-
-/// Fix the bcrypt cost before first use. Test harnesses call this so they do
-/// not mutate the environment of a multi-threaded process; a later call has
-/// no effect.
-pub fn set_password_cost(cost: u32) {
-    let _ = PASSWORD_COST.set(cost.clamp(4, 31));
-}
-
-/// Hash a password with bcrypt, off the async runtime.
-pub async fn hash_password(password: String) -> String {
-    let cost = password_cost();
-    tokio::task::spawn_blocking(move || bcrypt::hash(password, cost))
-        .await
-        .expect("the bcrypt worker does not panic")
-        .expect("bcrypt hashes any input at a valid cost")
-}
-
-/// Check a password against a hash, off the async runtime. A malformed hash
-/// never matches.
-async fn check_password(password: String, hash: String) -> bool {
-    tokio::task::spawn_blocking(move || bcrypt::verify(password, &hash).unwrap_or(false))
-        .await
-        .unwrap_or(false)
-}
-
-/// A hash to compare against when the email is unknown, so a miss costs the
-/// same as a wrong password. Made once, at the configured cost.
-async fn dummy_hash() -> String {
-    if let Some(hash) = DUMMY_HASH.get() {
-        return hash.clone();
-    }
-    let hash = hash_password("flatline: no such account".to_string()).await;
-    DUMMY_HASH.get_or_init(|| hash).clone()
 }
 
 /// The lowercased form that carries email uniqueness.
@@ -203,75 +122,11 @@ fn clean_name(name: &str) -> Result<String, AccountError> {
     Ok(name.to_string())
 }
 
-fn check_strength(password: &str) -> Result<(), AccountError> {
-    if password.chars().count() < MIN_PASSWORD_CHARS {
-        return Err(AccountError::WeakPassword);
-    }
-    Ok(())
-}
-
 /// The `Account` columns, as a literal so queries stay static strings.
 macro_rules! columns {
     () => {
-        "id, email, name, must_change_password, password_set_at, created_at"
+        "id, email, name, created_at, kore_sub"
     };
-}
-
-/// Add an account. `must_change` marks the password as a starting password.
-pub async fn create(
-    pool: &SqlitePool,
-    email: &str,
-    name: &str,
-    password: &str,
-    must_change: bool,
-) -> Result<Account, AccountError> {
-    let email = clean_email(email)?;
-    let name = clean_name(name)?;
-    check_strength(password)?;
-    let hash = hash_password(password.to_string()).await;
-    let account = sqlx::query_as(concat!(
-        "INSERT INTO users (email, email_key, name, password_hash, must_change_password, password_set_at)
-         VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%S', 'now'))
-         RETURNING ",
-        columns!()
-    ))
-    .bind(&email)
-    .bind(email_key(&email))
-    .bind(&name)
-    .bind(&hash)
-    .bind(i64::from(must_change))
-    .fetch_one(pool)
-    .await?;
-    Ok(account)
-}
-
-/// Create the first account (no starting password), or `None` when an
-/// account already exists. The check and the insert are one statement, so
-/// two setups racing on a fresh install cannot both succeed.
-pub async fn create_first(
-    pool: &SqlitePool,
-    email: &str,
-    name: &str,
-    password: &str,
-) -> Result<Option<Account>, AccountError> {
-    let email = clean_email(email)?;
-    let name = clean_name(name)?;
-    check_strength(password)?;
-    let hash = hash_password(password.to_string()).await;
-    let account = sqlx::query_as(concat!(
-        "INSERT INTO users (email, email_key, name, password_hash, must_change_password, password_set_at)
-         SELECT ?, ?, ?, ?, 0, strftime('%Y-%m-%d %H:%M:%S', 'now')
-         WHERE NOT EXISTS (SELECT 1 FROM users)
-         RETURNING ",
-        columns!()
-    ))
-    .bind(&email)
-    .bind(email_key(&email))
-    .bind(&name)
-    .bind(&hash)
-    .fetch_optional(pool)
-    .await?;
-    Ok(account)
 }
 
 /// Every account, by name.
@@ -291,12 +146,6 @@ pub async fn get(pool: &SqlitePool, id: i64) -> Result<Account, AccountError> {
         .fetch_optional(pool)
         .await?
         .ok_or(AccountError::NotFound)
-}
-
-pub async fn count(pool: &SqlitePool) -> Result<i64, AccountError> {
-    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM users")
-        .fetch_one(pool)
-        .await?)
 }
 
 /// Change an account's name and/or email.
@@ -327,82 +176,14 @@ pub async fn update(
     get(pool, id).await
 }
 
-/// Replace an account's password. `must_change` makes it a starting
-/// password (a reset); the clock for its expiry starts now.
-pub async fn set_password(
-    pool: &SqlitePool,
-    id: i64,
-    password: &str,
-    must_change: bool,
-) -> Result<Account, AccountError> {
-    check_strength(password)?;
-    let hash = hash_password(password.to_string()).await;
-    let result = sqlx::query(
-        "UPDATE users SET password_hash = ?, must_change_password = ?,
-             password_set_at = strftime('%Y-%m-%d %H:%M:%S', 'now')
-         WHERE id = ?",
-    )
-    .bind(&hash)
-    .bind(i64::from(must_change))
-    .bind(id)
-    .execute(pool)
-    .await?;
-    if result.rows_affected() == 0 {
-        return Err(AccountError::NotFound);
-    }
-    get(pool, id).await
-}
-
-/// Remove an account. Its sessions go with it; tokens it made keep working
-/// and keep the maker's name.
-pub async fn delete(pool: &SqlitePool, id: i64) -> Result<(), AccountError> {
-    let result = sqlx::query("DELETE FROM users WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await?;
-    if result.rows_affected() == 0 {
-        return Err(AccountError::NotFound);
-    }
-    Ok(())
-}
-
-/// The account for this email and password, or `None`. An unknown email is
-/// checked against a dummy hash so the answer takes as long as a wrong
-/// password.
-pub async fn verify_password(
-    pool: &SqlitePool,
-    email: &str,
-    password: &str,
-) -> Result<Option<Account>, AccountError> {
-    let row: Option<(i64, String)> =
-        sqlx::query_as("SELECT id, password_hash FROM users WHERE email_key = ?")
-            .bind(email_key(email))
-            .fetch_optional(pool)
-            .await?;
-    let (id, hash) = match row {
-        Some((id, hash)) => (Some(id), hash),
-        None => (None, dummy_hash().await),
-    };
-    let matched = check_password(password.to_string(), hash).await;
-    match (id, matched) {
-        (Some(id), true) => match get(pool, id).await {
-            Ok(account) => Ok(Some(account)),
-            // Removed between the two reads.
-            Err(AccountError::NotFound) => Ok(None),
-            Err(error) => Err(error),
-        },
-        _ => Ok(None),
-    }
-}
-
 /// The account a credential acts for, as a token maker: `(id, name)` for an
-/// account session, `None` for a bearer token or token session.
+/// account session, `None` for a bearer token.
 pub async fn maker(
     pool: &SqlitePool,
     principal: &crate::auth::Principal,
 ) -> Result<Option<(i64, String)>, AccountError> {
     match principal {
-        crate::auth::Principal::Account { user_id, .. } => {
+        crate::auth::Principal::Account { user_id } => {
             let account = get(pool, *user_id).await?;
             Ok(Some((account.id, account.name)))
         }
@@ -410,94 +191,158 @@ pub async fn maker(
     }
 }
 
-/// Whether `password` is this account's current password.
-pub async fn password_matches(
+/// The `password_hash` of an account made by SSO: not a bcrypt hash, so no
+/// password ever matches it. The column is `NOT NULL` in the original
+/// schema; this sentinel keeps it satisfied without using passwords.
+pub const SSO_PASSWORD_SENTINEL: &str = "!sso";
+
+/// Why a Kore ID identity did not get an account.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SsoDenied {
+    /// Provisioning is off, or the identity is not on the optional
+    /// `KORE_ID_ALLOWED_EMAILS` / `KORE_ID_ALLOWED_SUBS` filter.
+    NotAllowed,
+    /// The provider sent no usable email.
+    NoEmail,
+    /// The email belongs to a local account already tied to another subject,
+    /// or to a local account while the provider does not vouch for the
+    /// address (`email_verified` not true), so it cannot be linked.
+    Conflict,
+}
+
+/// The account a verified Kore ID identity signs in as.
+///
+/// An account already tied to this `sub` signs in (its name and email follow
+/// the provider). Otherwise Kore ID has already decided this person may use
+/// the app (per-user app access), so an account is created, or an existing
+/// local one with the same email is linked when the provider marks the email
+/// verified. `KORE_ID_AUTO_PROVISION=false` turns creation off; the
+/// allowlists, when set, are an extra filter on top. Every account is a full
+/// operator: access is managed in Kore ID's admin.
+pub async fn sso_sign_in(
     pool: &SqlitePool,
-    id: i64,
-    password: &str,
-) -> Result<bool, AccountError> {
-    let hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+    kore: &crate::config::KoreIdConfig,
+    claims: &crate::sso::Claims,
+) -> Result<Result<Account, SsoDenied>, AccountError> {
+    let existing: Option<Account> = sqlx::query_as(concat!(
+        "SELECT ",
+        columns!(),
+        " FROM users WHERE kore_sub = ?"
+    ))
+    .bind(&claims.sub)
+    .fetch_optional(pool)
+    .await?;
+    let email = claims
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty());
+    let verified = claims.email_verified == Some(true);
+    let name = claims
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty() && n.chars().count() <= MAX_NAME_CHARS);
+
+    if let Some(account) = existing {
+        // Follow the provider's profile; a clash with another account's email
+        // keeps the old one rather than failing the sign-in.
+        if let Some(name) = name
+            && name != account.name
+        {
+            sqlx::query("UPDATE users SET name = ? WHERE id = ?")
+                .bind(name)
+                .bind(account.id)
+                .execute(pool)
+                .await?;
+        }
+        if let Some(email) = email
+            && verified
+            && clean_email(email).is_ok()
+            && email_key(email) != email_key(&account.email)
+        {
+            let _ = sqlx::query("UPDATE users SET email = ?, email_key = ? WHERE id = ?")
+                .bind(email)
+                .bind(email_key(email))
+                .bind(account.id)
+                .execute(pool)
+                .await;
+        }
+        return Ok(Ok(get(pool, account.id).await?));
+    }
+
+    let Some(email) = email.filter(|e| clean_email(e).is_ok()) else {
+        return Ok(Err(SsoDenied::NoEmail));
+    };
+    let key = email_key(email);
+    let filtered = !kore.allowed_subs.is_empty() || !kore.allowed_emails.is_empty();
+    let allowed = if filtered {
+        kore.allowed_subs.contains(&claims.sub) || (verified && kore.allowed_emails.contains(&key))
+    } else {
+        kore.auto_provision
+    };
+    if !allowed {
+        return Ok(Err(SsoDenied::NotAllowed));
+    }
+
+    let local: Option<(i64, Option<String>)> =
+        sqlx::query_as("SELECT id, kore_sub FROM users WHERE email_key = ?")
+            .bind(&key)
+            .fetch_optional(pool)
+            .await?;
+    if let Some((id, tied)) = local {
+        // Linking takes over a local account by email: only when the
+        // provider vouches for the address. Its old password hash is
+        // overwritten, so the account has no password after linking.
+        if tied.is_some() || !verified {
+            return Ok(Err(SsoDenied::Conflict));
+        }
+        sqlx::query(
+            "UPDATE users SET kore_sub = ?, password_hash = ?, must_change_password = 0
+             WHERE id = ? AND kore_sub IS NULL",
+        )
+        .bind(&claims.sub)
+        .bind(SSO_PASSWORD_SENTINEL)
         .bind(id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or(AccountError::NotFound)?;
-    Ok(check_password(password.to_string(), hash).await)
+        .execute(pool)
+        .await?;
+        return Ok(Ok(get(pool, id).await?));
+    }
+
+    let name = name.map(str::to_string).unwrap_or_else(|| {
+        email
+            .split('@')
+            .next()
+            .unwrap_or(email)
+            .chars()
+            .take(MAX_NAME_CHARS)
+            .collect()
+    });
+    let account = sqlx::query_as(concat!(
+        "INSERT INTO users (email, email_key, name, password_hash, must_change_password,
+                            password_set_at, kore_sub)
+         VALUES (?, ?, ?, ?, 0, strftime('%Y-%m-%d %H:%M:%S', 'now'), ?)
+         RETURNING ",
+        columns!()
+    ))
+    .bind(email)
+    .bind(&key)
+    .bind(&name)
+    .bind(SSO_PASSWORD_SENTINEL)
+    .bind(&claims.sub)
+    .fetch_one(pool)
+    .await?;
+    Ok(Ok(account))
 }
 
-/// Failed password sign-ins allowed per email in one window.
-pub const SIGN_IN_FAILURES_PER_EMAIL: u32 = 5;
-/// Failed password sign-ins allowed per client address in one window.
-pub const SIGN_IN_FAILURES_PER_ADDRESS: u32 = 20;
-/// The window both limits count over.
-pub const SIGN_IN_WINDOW: std::time::Duration = std::time::Duration::from_secs(15 * 60);
-/// Keys kept before expired windows are swept, so junk input cannot grow
-/// the maps without bound.
-const SIGN_IN_SWEEP_AT: usize = 10_000;
-
-/// Fixed-window counters of email/password sign-ins, per email and per
-/// client address. Every attempt is counted before its password is checked
-/// ([`SignInLimiter::reserve`]), so parallel guesses cannot all slip in
-/// before the first failure lands; a success then gives its count back
-/// ([`SignInLimiter::succeeded`]). A limited attempt is refused before the
-/// password is checked, so even the right password waits.
-#[derive(Default)]
-pub struct SignInLimiter {
-    by_email: std::sync::Mutex<Windows>,
-    by_address: std::sync::Mutex<Windows>,
-}
-
-/// Key -> (window start, failures in it).
-type Windows = std::collections::HashMap<String, (std::time::Instant, u32)>;
-
-/// Seconds until `key`'s window reopens, when it has used its budget.
-fn wait_for(windows: &Windows, key: &str, limit: u32, now: std::time::Instant) -> Option<u64> {
-    let (started, count) = windows.get(key)?;
-    let elapsed = now.duration_since(*started);
-    if elapsed >= SIGN_IN_WINDOW || *count < limit {
-        return None;
-    }
-    Some((SIGN_IN_WINDOW - elapsed).as_secs().max(1))
-}
-
-fn bump(windows: &mut Windows, key: &str, now: std::time::Instant) {
-    if windows.len() >= SIGN_IN_SWEEP_AT {
-        windows.retain(|_, (started, _)| now.duration_since(*started) < SIGN_IN_WINDOW);
-    }
-    let entry = windows.entry(key.to_string()).or_insert((now, 0));
-    if now.duration_since(entry.0) >= SIGN_IN_WINDOW {
-        *entry = (now, 0);
-    }
-    entry.1 += 1;
-}
-
-impl SignInLimiter {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Count an attempt for the email and the address, or `Err(seconds to
-    /// wait)` without counting when either has used its budget. Both maps
-    /// are held together, so the check and the count are one step.
-    pub fn reserve(&self, email_key: &str, address: &str) -> Result<(), u64> {
-        let now = std::time::Instant::now();
-        let mut by_email = self.by_email.lock().unwrap();
-        let mut by_address = self.by_address.lock().unwrap();
-        let email = wait_for(&by_email, email_key, SIGN_IN_FAILURES_PER_EMAIL, now);
-        let address_wait = wait_for(&by_address, address, SIGN_IN_FAILURES_PER_ADDRESS, now);
-        if let Some(wait) = email.max(address_wait) {
-            return Err(wait);
-        }
-        bump(&mut by_email, email_key, now);
-        bump(&mut by_address, address, now);
-        Ok(())
-    }
-
-    /// The attempt signed in: the email starts afresh and the address gets
-    /// its count back. A failed attempt keeps what `reserve` counted.
-    pub fn succeeded(&self, email_key: &str, address: &str) {
-        self.by_email.lock().unwrap().remove(email_key);
-        if let Some((_, count)) = self.by_address.lock().unwrap().get_mut(address) {
-            *count = count.saturating_sub(1);
-        }
-    }
+/// The account tied to a Kore ID subject, if it has signed in through SSO.
+pub async fn by_kore_sub(pool: &SqlitePool, sub: &str) -> Result<Option<Account>, AccountError> {
+    Ok(sqlx::query_as(concat!(
+        "SELECT ",
+        columns!(),
+        " FROM users WHERE kore_sub = ?"
+    ))
+    .bind(sub)
+    .fetch_optional(pool)
+    .await?)
 }

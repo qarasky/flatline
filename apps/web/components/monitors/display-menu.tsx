@@ -2,16 +2,17 @@
 
 import { SlidersHorizontal } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuLabel,
-    DropdownMenuRadioGroup,
-    DropdownMenuRadioItem,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+    Button,
+    Menu,
+    MenuContent,
+    MenuLabel,
+    MenuRadioGroup,
+    MenuRadioItem,
+    MenuSeparator,
+    MenuTrigger,
+} from "@qarasky/kore-ui";
+
 import { SORT_KEYS, type SortKey } from "@/lib/board-model";
 import type { Density } from "@/lib/board-url";
 
@@ -28,29 +29,29 @@ export function DisplayMenu({
     onDensity: (density: Density) => void;
 }) {
     return (
-        <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
+        <Menu>
+            <MenuTrigger asChild>
+                <Button size="sm">
                     <SlidersHorizontal />
                     Display
                 </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-48">
-                <DropdownMenuLabel>Sort</DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={sort} onValueChange={(value) => onSort(value as SortKey)}>
+            </MenuTrigger>
+            <MenuContent align="end">
+                <MenuLabel>Sort</MenuLabel>
+                <MenuRadioGroup value={sort} onValueChange={(value) => onSort(value as SortKey)}>
                     {SORT_KEYS.map((option) => (
-                        <DropdownMenuRadioItem key={option.key} value={option.key}>
+                        <MenuRadioItem key={option.key} value={option.key}>
                             {option.label}
-                        </DropdownMenuRadioItem>
+                        </MenuRadioItem>
                     ))}
-                </DropdownMenuRadioGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel>Rows</DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={density} onValueChange={(value) => onDensity(value as Density)}>
-                    <DropdownMenuRadioItem value="comfortable">Comfortable</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="compact">Compact</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-        </DropdownMenu>
+                </MenuRadioGroup>
+                <MenuSeparator />
+                <MenuLabel>Rows</MenuLabel>
+                <MenuRadioGroup value={density} onValueChange={(value) => onDensity(value as Density)}>
+                    <MenuRadioItem value="comfortable">Comfortable</MenuRadioItem>
+                    <MenuRadioItem value="compact">Compact</MenuRadioItem>
+                </MenuRadioGroup>
+            </MenuContent>
+        </Menu>
     );
 }

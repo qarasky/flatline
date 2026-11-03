@@ -88,7 +88,7 @@ case "${1:-start}" in
         exit 0
         ;;
     status)
-        printf '%s: %s\n' "backend" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$BACKEND_PORT/api/v1/auth/setup" 2>/dev/null || echo down)"
+        printf '%s: %s\n' "backend" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$BACKEND_PORT/healthz" 2>/dev/null || echo down)"
         printf '%s: %s\n' "web" "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$WEB_PORT/sign-in" 2>/dev/null || echo down)"
         exit 0
         ;;
@@ -146,20 +146,19 @@ fi
     start_one "backend" "$BACKEND_BIN"
 )
 
-# Wait for the backend: it runs migrations and writes the operator token on
-# first boot, and everything below depends on both.
+# Wait for the backend: it runs migrations on first boot, and everything
+# below depends on that.
 for _ in $(seq 1 40); do
-    if curl -s -m 2 -o /dev/null "http://127.0.0.1:$BACKEND_PORT/api/v1/auth/setup"; then
+    if curl -s -m 2 -o /dev/null "http://127.0.0.1:$BACKEND_PORT/healthz"; then
         break
     fi
     sleep 1
 done
 
-# The operator token is this instance's sign-in credential (mode 0600).
-TOKEN=""
-if [ -f "$DATA_DIR/initial-token.txt" ]; then
-    TOKEN="$(tr -d '\r\n' <"$DATA_DIR/initial-token.txt")"
-fi
+# The mock fleet creates its monitors through the API, so it needs an
+# operator API token. Sign in with Kore ID, mint one in Tokens, and pass it as
+# FLATLINE_TOKEN. It is a machine credential, not a browser sign-in.
+TOKEN="${FLATLINE_TOKEN:-}"
 
 # --- mock fleet ------------------------------------------------------------
 
@@ -168,7 +167,7 @@ if [ -x "$DATA_DIR/mockagent" ]; then
         start_one "mock-agent" "$DATA_DIR/mockagent" \
             --server "http://127.0.0.1:$BACKEND_PORT" --token "$TOKEN" --interval 3s
     else
-        echo "  no operator token found; skipping the mock fleet"
+        echo "  FLATLINE_TOKEN is unset; skipping the mock fleet (sign in with Kore ID and mint one in Tokens)"
     fi
 fi
 
@@ -193,11 +192,8 @@ echo "  backend     http://$LAN_IP:$BACKEND_PORT"
 echo "  web         http://$LAN_IP:$WEB_PORT"
 echo "  superboard  http://$LAN_IP:$WEB_PORT/superboard   (kiosk: /superboard/kiosk, scope: /superboard/kiosk/work)"
 echo
-if [ -n "$TOKEN" ]; then
-    echo "  operator token: $TOKEN"
-else
-    echo "  operator token: see $DATA_DIR/initial-token.txt"
-fi
+echo "  sign in with Kore ID (KORE_ID_ISSUER); mint an operator API token in Tokens for scripts"
+
 echo
 echo "  ./dev.sh status   check health"
 echo "  ./dev.sh logs     follow logs"

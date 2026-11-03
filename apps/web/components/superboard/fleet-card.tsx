@@ -1,6 +1,8 @@
 "use client";
 
-import { memo, useEffect, useState, type MouseEvent } from "react";
+import { memo, useEffect, useState } from "react";
+import { IconButton, StatusDot, pointFromEvent, type MenuPoint, type Status } from "@qarasky/kore-ui";
+import { MoreHorizontal } from "lucide-react";
 import type {
     BackupAgentSummary,
     CPUPeak,
@@ -91,7 +93,7 @@ function BackupLines({ agents }: { agents: BackupAgentSummary[] }) {
             {backupLines(agents, now).map((line) => (
                 <span
                     key={line.key}
-                    className={`fleet-freshness tnum ${line.tone === "warn" ? "text-warn" : "text-quiet"}`}
+                    className={`fleet-freshness tnum ${line.tone === "warn" ? "text-status-warn" : "text-muted"}`}
                     title={line.title}
                 >
                     {line.text}
@@ -113,6 +115,20 @@ function temperature(value: number | undefined): string | null {
  * flipped back on. Nothing else in the card depends on it.
  */
 const SHOW_GPU = false;
+
+/**
+ * The status pill's dot: the card's attention first, then the host state.
+ * A muted outage is a down mark in the dim red (the class tweak at the call).
+ */
+function attentionDot(attention: "bad" | "muted" | "warn" | "normal", hostStatus: number): Status {
+    if (attention === "bad" || attention === "muted") {
+        return "down";
+    }
+    if (attention === "warn") {
+        return "warn";
+    }
+    return ({ 0: "down", 1: "up", 2: "warn", 3: "maint" } as Record<number, Status>)[hostStatus] ?? "off";
+}
 
 /** Stable empty list, so a card without backup agents keeps its memo. */
 const NO_BACKUPS: BackupAgentSummary[] = [];
@@ -137,7 +153,8 @@ export const FleetCard = memo(function FleetCard({
     /** Whether `server.cpuPeak10m` is still inside its 10-minute window. */
     peakFresh: boolean;
     onOpenHistory: (id: number) => void;
-    onMenu: (e: MouseEvent, monitor: MonitorSummary) => void;
+    /** Open the card's action menu at a viewport point. */
+    onMenu: (point: MenuPoint, monitor: MonitorSummary) => void;
 }) {
     const { monitor, metrics, time } = server;
     const { containers, issues, hot } = fleetAttention(metrics, time, monitor.interval || 60);
@@ -196,13 +213,13 @@ export const FleetCard = memo(function FleetCard({
     const updates = updatesStatus(metrics.updates);
     const updatesTone =
         updates?.tone === "reboot"
-            ? "text-bad fleet-reboot"
+            ? "text-status-down fleet-reboot"
             : updates?.tone === "ok"
-              ? "text-ok"
+              ? "text-status-up"
               : updates?.tone === "warn"
-                ? "text-warn"
+                ? "text-status-warn"
                 : updates?.tone === "critical"
-                  ? "text-critical"
+                  ? "text-status-critical"
                   : "";
     const agent = metrics.agent;
     // The monitor carries the acknowledged counter values, so the warning
@@ -237,7 +254,7 @@ export const FleetCard = memo(function FleetCard({
             aria-label={`${displayName}: ${headline}${attention === "muted" ? ", muted" : ""}`}
             onContextMenu={(e) => {
                 e.preventDefault();
-                onMenu(e, monitor);
+                onMenu(pointFromEvent(e), monitor);
             }}
         >
             <header className="fleet-heading">
@@ -257,7 +274,7 @@ export const FleetCard = memo(function FleetCard({
                             <ProviderLogo provider={monitor.provider} />
                             <span className="truncate">
                                 {displayName}{" "}
-                                <span aria-hidden="true" className="text-quiet">
+                                <span aria-hidden="true" className="text-muted">
                                     ↗
                                 </span>
                             </span>
@@ -270,7 +287,7 @@ export const FleetCard = memo(function FleetCard({
                                 <>
                                     {subline ? " · " : null}
                                     <span
-                                        className={`whitespace-nowrap${backup.tone === "warn" ? " text-warn" : ""}`}
+                                        className={`whitespace-nowrap${backup.tone === "warn" ? " text-status-warn" : ""}`}
                                         title={backup.title}
                                     >
                                         {backup.text}
@@ -281,12 +298,29 @@ export const FleetCard = memo(function FleetCard({
                     ) : null}
                 </div>
                 <div className="fleet-health">
-                    <span className="fleet-status">
-                        <span className="size-2 rounded-full bg-current" />
-                        {headline}
+                    <span className="flex items-center gap-1">
+                        <span className="fleet-status">
+                            <StatusDot
+                                status={attentionDot(attention, monitor.status)}
+                                aria-hidden="true"
+                                muted={attention === "muted"}
+                            />
+                            {headline}
+                        </span>
+                        {/* The same actions as the right-click menu, for keyboard and touch. */}
+                        <IconButton
+                            label={`More actions for ${displayName}`}
+                            tooltip={false}
+                            icon={<MoreHorizontal />}
+                            className="fleet-card-more"
+                            onClick={(e) => {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                onMenu({ x: rect.left, y: rect.bottom + 4 }, monitor);
+                            }}
+                        />
                     </span>
                     {attention === "muted" ? <MutedAge since={mute.since} /> : null}
-                    <span className={`fleet-freshness tnum ${stale ? "text-warn" : "text-quiet"}`}>
+                    <span className={`fleet-freshness tnum ${stale ? "text-status-warn" : "text-muted"}`}>
                         {stale ? "Stale · " : "Updated "}
                         <SampleAge time={time} />
                     </span>
@@ -313,7 +347,7 @@ export const FleetCard = memo(function FleetCard({
                         </span>
                     ) : null}
                     {warning ? (
-                        <span className="fleet-secondary text-warn" title={warning.title} role="status">
+                        <span className="fleet-secondary text-status-warn" title={warning.title} role="status">
                             {warning.text}
                         </span>
                     ) : null}
@@ -363,7 +397,7 @@ export const FleetCard = memo(function FleetCard({
                 <div className="fleet-resources">
                     {smart ? (
                         <p
-                            className={`fleet-secondary ${smart.tone === "bad" ? "text-bad" : "text-warn"}`}
+                            className={`fleet-secondary ${smart.tone === "bad" ? "text-status-down" : "text-status-warn"}`}
                             title={smart.title}
                             role="status"
                         >
@@ -400,13 +434,13 @@ export const FleetCard = memo(function FleetCard({
                         </span>
                     </div>
                     {metrics.dockerError ? (
-                        <p className="fleet-secondary text-warn" title={metrics.dockerError} role="status">
+                        <p className="fleet-secondary text-status-warn" title={metrics.dockerError} role="status">
                             {dockerAge
                                 ? `Collection failing — containers as of ${dockerAge} ago`
                                 : "Collection unavailable — container health unknown"}
                         </p>
                     ) : dockerAge ? (
-                        <p className="fleet-secondary text-warn" role="status">
+                        <p className="fleet-secondary text-status-warn" role="status">
                             Containers as of {dockerAge} ago
                         </p>
                     ) : null}
@@ -419,7 +453,7 @@ export const FleetCard = memo(function FleetCard({
                     <div className="mb-2 flex items-baseline justify-between gap-2">
                         <h3 className="fleet-label">Websites</h3>
                         <span className="fleet-secondary tnum">
-                            {websitesDown > 0 ? <span className="text-bad">{websitesDown} down · </span> : null}
+                            {websitesDown > 0 ? <span className="text-status-down">{websitesDown} down · </span> : null}
                             {websitesUp}/{links.length} up
                         </span>
                     </div>

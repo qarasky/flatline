@@ -79,6 +79,19 @@ services:
       # Absolute origin used in the provisioning docs/scripts; without it
       # the request's Host header is used.
       FLATLINE_PUBLIC_URL: ${FLATLINE_PUBLIC_URL:-}
+      # Kore ID single sign-on (docs/sso.md). It is the ONLY browser sign-in;
+      # with KORE_ID_ISSUER empty the sign-in page says no method is configured.
+      KORE_ID_ISSUER: ${KORE_ID_ISSUER:-}
+      KORE_ID_CLIENT_ID: ${KORE_ID_CLIENT_ID:-flatline}
+      KORE_ID_CLIENT_SECRET: ${KORE_ID_CLIENT_SECRET:-}
+      KORE_ID_CLIENT_AUTH: ${KORE_ID_CLIENT_AUTH:-basic}
+      KORE_ID_REDIRECT_URI: ${KORE_ID_REDIRECT_URI:-}
+      KORE_ID_POST_LOGOUT_REDIRECT_URI: ${KORE_ID_POST_LOGOUT_REDIRECT_URI:-}
+      KORE_ID_AUTO_PROVISION: ${KORE_ID_AUTO_PROVISION:-true}
+      KORE_ID_ALLOWED_EMAILS: ${KORE_ID_ALLOWED_EMAILS:-}
+      KORE_ID_ALLOWED_SUBS: ${KORE_ID_ALLOWED_SUBS:-}
+      KORE_APP_URLS: ${KORE_APP_URLS:-}
+      KORE_ID_ACCOUNT_URL: ${KORE_ID_ACCOUNT_URL:-}
     volumes:
       - ./data-rust:/app/data
     # Not published: Caddy reaches it over `internal`; `egress` is for the

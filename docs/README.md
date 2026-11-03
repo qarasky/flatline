@@ -1,6 +1,6 @@
-# Flatline documentation
+# KoreMonitor documentation
 
-Flatline is a self-hosted uptime monitor: a Rust backend, a Next.js web app, a
+KoreMonitor is a self-hosted uptime monitor: a Rust backend, a Next.js web app, a
 Go host agent and a Go backup agent, deployed as one origin behind Caddy. Start with [architecture](architecture.md)
 for the shape of the system, then go to whichever document matches your task.
 
@@ -9,12 +9,13 @@ for the shape of the system, then go to whichever document matches your task.
 | Document                                       | Read it when                                                                                                 |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | [architecture.md](architecture.md)             | Understanding how the pieces fit, how data is stored and retained, and how live updates work.                |
-| [api.md](api.md)                               | Calling Flatline from a script, an integration or an LLM agent.                                              |
+| [api.md](api.md)                               | Calling KoreMonitor from a script, an integration or an LLM agent.                                           |
 | [agent.md](agent.md)                           | Installing, configuring, updating or debugging the `superboard` host agent.                                  |
 | [backup-agent.md](backup-agent.md)             | Named backup agents (encryption optional): configuration, scheduling, offline verify and restore.            |
 | [superboard.md](superboard.md)                 | Changing or explaining the wall board: card anatomy, scopes, history, links.                                 |
 | [dashboard.md](dashboard.md)                   | Working on the web app (`apps/web/`): routes, sections, sign-in, live updates, adding a section.             |
 | [dashboard-motion.md](dashboard-motion.md)     | Adding or changing animation in the operator UI.                                                             |
+| [sso.md](sso.md)                               | Signing in with Kore ID: flow, who gets an account, bearer tokens, env keys.                                 |
 | [status-pages.md](status-pages.md)             | Publishing, theming or password-gating a public status page.                                                 |
 | [deployment.md](deployment.md)                 | Shipping a release: the office host, the image, rollout, the fleet inventory.                                |
 | [operations.md](operations.md)                 | Backing up, restore-testing backup agents, rolling back, rotating tokens, diagnosing a broken instance.      |

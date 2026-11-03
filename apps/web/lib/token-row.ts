@@ -2,8 +2,6 @@
 
 import { formatDuration } from "@/lib/attention";
 import { parseTimestamp } from "@/lib/fleet-presentation";
-import type { Me } from "@/lib/me";
-
 /** An operator token as `GET /api/v1/api-keys` lists it (the secret is never included). */
 export interface TokenKey {
     id: number;
@@ -22,11 +20,9 @@ export interface TokenRowView {
     maker: string;
     /** The expiry date (UTC), or "never". */
     expires: string;
-    /** This browser signed in with it: disabling or deleting it signs this browser out. */
-    isCurrent: boolean;
 }
 
-export function tokenRow(key: TokenKey, me: Me, nowMs: number): TokenRowView {
+export function tokenRow(key: TokenKey, nowMs: number): TokenRowView {
     const expiry = parseTimestamp(key.expires);
     // An expired token stays dead whatever `active` says, so expiry wins.
     const status = Number.isFinite(expiry) && expiry < nowMs ? "expired" : key.active ? "active" : "disabled";
@@ -37,7 +33,6 @@ export function tokenRow(key: TokenKey, me: Me, nowMs: number): TokenRowView {
         lastUsed: Number.isFinite(used) ? `${formatDuration(Math.max(0, nowMs - used))} ago` : "never",
         maker,
         expires: Number.isFinite(expiry) ? new Date(expiry).toISOString().slice(0, 10) : "never",
-        isCurrent: me.principal === "token" && me.token.id === key.id,
     };
 }
 

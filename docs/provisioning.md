@@ -5,11 +5,11 @@
 > agent, then (with operator access) add website monitors, group them and
 > link them to the host.
 >
-> Fetch it fresh for every onboarding: it ships with the deployed Flatline
+> Fetch it fresh for every onboarding: it ships with the deployed KoreMonitor
 > backend and the origin, credential, token family and agent version below
 > are substituted by the server.
 
-- **Flatline origin**: {{ORIGIN}}
+- **KoreMonitor origin**: {{ORIGIN}}
 - **Supplied credential**: `{{TOKEN}}`
 - **Credential kind**: `{{TOKEN_KIND}}` (prefix `{{TOKEN_PREFIX}}`)
 - **Host push monitor**: {{MONITOR_ID}} (`{{MONITOR_NAME}}`)
@@ -18,11 +18,11 @@
 
 The credential in this link is one of two families:
 
-| Prefix                   | Kind              | Can do                                                       | Cannot do                           |
-| ------------------------ | ----------------- | ------------------------------------------------------------ | ----------------------------------- |
-| `flatline_op_`           | Operator          | GUI sign-in, every `/api/v1` call, mint more operator tokens | Send telemetry; act as a host agent |
-| `flatline_agent_push_`   | Push (host) agent | `/api/push/{token}`, `/agent/*`, this runbook                | Call `/api/v1`, sign in to the GUI  |
-| `flatline_agent_backup_` | Backup agent      | `/api/backup/v1` only                                        | Anything in this runbook            |
+| Prefix                   | Kind              | Can do                                          | Cannot do                           |
+| ------------------------ | ----------------- | ----------------------------------------------- | ----------------------------------- |
+| `flatline_op_`           | Operator API      | Every `/api/v1` call, mint more operator tokens | Send telemetry; act as a host agent |
+| `flatline_agent_push_`   | Push (host) agent | `/api/push/{token}`, `/agent/*`, this runbook   | Call `/api/v1`                      |
+| `flatline_agent_backup_` | Backup agent      | `/api/backup/v1` only                           | Anything in this runbook            |
 
 Legacy `flatline_...` tokens minted before the split still work and are
 resolved by the store that holds them. Do not create new ones.
@@ -37,7 +37,7 @@ report.** Keep it in an environment variable in the provisioning shell.
 
 If this document, `/api/v1/openapi.json` or the source could disagree with
 the deployed instance, prefer the instance's responses. Do not modify
-Flatline itself as part of a project onboarding.
+KoreMonitor itself as part of a project onboarding.
 
 ---
 
@@ -63,7 +63,7 @@ Then decide, and state the plan in one short message before changing
 anything:
 
 - **One host, one push monitor.** If an agent already exists and points to
-  the Flatline monitor in this link, reuse it. If it points elsewhere, stop
+  the KoreMonitor monitor in this link, reuse it. If it points elsewhere, stop
   and ask — never silently reassign a shared host.
 - **Several projects on one host.** They share one push monitor and one
   agent. Their websites still get their own HTTP monitors.
@@ -176,7 +176,7 @@ the human for an operator token through their private credential channel.
 A ready-to-send request:
 
 > The agent is installed and reporting, and I need to configure websites
-> and notifications. Please mint an operator token in Flatline →
+> and notifications. Please mint an operator token in KoreMonitor →
 > Agents → API keys (prefix `flatline_op_`) and send it through the private
 > channel. I will use it only for this onboarding and will not store it in
 > the repository or in shell history.
@@ -233,8 +233,8 @@ a duplicate because a response was slow — search again first.
 
 Choose an endpoint that proves the application works. A homepage proves the
 web server responds; a health/readiness endpoint proves more. Agree with the
-human which behavior matters. Checks run from the Flatline server, so
-`localhost` or a Docker service name is usable only if Flatline can reach it
+human which behavior matters. Checks run from the KoreMonitor server, so
+`localhost` or a Docker service name is usable only if KoreMonitor can reach it
 from its own network.
 
 For each missing domain or subdomain:
@@ -359,7 +359,7 @@ before treating it as installation delay.
 | `unavailable` / `rate_limited`                                                    | Store hiccup or too many failed imported-key checks. Retry after `retryAfterSeconds`; it is not a wrong token.                     |
 | Agent push 404                                                                    | Monitor deleted, paused, or the host holds a token for a different monitor. Compare config privately.                              |
 | No telemetry                                                                      | `sudo superboard check`, `systemctl status superboard`, `journalctl -u superboard -n 50`; confirm `server_url` and outbound HTTPS. |
-| Website DOWN while host UP                                                        | Application, URL, TLS or reachability from Flatline; host UP is not website UP.                                                    |
+| Website DOWN while host UP                                                        | Application, URL, TLS or reachability from KoreMonitor; host UP is not website UP.                                                 |
 | Website check PENDING                                                             | Wait one interval, then read heartbeats; a failing retry is pending, not success.                                                  |
 | Checksum mismatch                                                                 | Retry the download; if persistent, report a server/proxy mismatch. Never bypass verification.                                      |
 | Agent updated but old version runs                                                | Check the service/process on the host; non-systemd installs need a manual restart.                                                 |

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Flatline Superboard agent installer / updater.
+# KoreMonitor Superboard agent installer / updater.
 #
-# Served by the Flatline server with the download credential already
+# Served by the KoreMonitor server with the download credential already
 # substituted, so a host needs exactly one command:
 #
 #   curl -fsSL '<origin>/agent/install.sh?token=<key>' | sudo bash -s -- \
@@ -29,7 +29,7 @@ usage() {
     cat <<'EOF'
 usage: install.sh [--server URL] [--token PUSH_TOKEN] [--interval SECONDS] [--update]
 
-  --server URL        Flatline origin, used for the agent config and for the
+  --server URL        KoreMonitor origin, used for the agent config and for the
                       downloads (default: the origin this script came from)
   --token PUSH_TOKEN  the monitor's push token; required for a fresh install
   --interval SECONDS  live sample interval (default 1)

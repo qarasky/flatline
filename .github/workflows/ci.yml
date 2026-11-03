@@ -1,0 +1,72 @@
+# The checks AGENTS.md lists, run on every pull request and push, and called
+# by images.yml so nothing is published from a red main or tag.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master, main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend-rs
+      - run: cargo test --manifest-path backend-rs/Cargo.toml
+
+  web:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      # The root package.json only carries prettier and has no lockfile.
+      - run: npm install --no-package-lock --no-audit --no-fund
+      - run: npm --prefix apps/web ci --no-audit --no-fund
+      - run: npm run fmt:check
+      - run: npm run test:web
+      - run: npm run typecheck:web
+      - run: npm run build:web
+
+  agent:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: superboard
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: superboard/go.mod
+          cache-dependency-path: superboard/go.sum
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test ./...
+
+  backup-agent:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backup-agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backup-agent/go.mod
+          cache-dependency-path: backup-agent/go.sum
+      - run: go vet ./...
+      - run: go test -race ./...

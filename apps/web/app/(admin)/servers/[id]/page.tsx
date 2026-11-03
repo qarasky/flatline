@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
-import { PageHeader } from "@/components/page-header";
+import { PageHeader } from "@qarasky/kore-ui";
 import { ServerDetail } from "@/components/servers/server-detail";
 import { isApiError } from "@/lib/api";
 import { orNull } from "@/lib/fleet-metrics";
 import { fetchLatestMetrics, fetchMonitor } from "@/lib/monitors-api";
 
-export const metadata: Metadata = { title: "Server · Flatline" };
+export const metadata: Metadata = { title: "Server · KoreMonitor" };
 
 /** One server's page. Only push monitors are servers; anything else is not found here. */
 export default async function ServerPage({ params }: { params: Promise<{ id: string }> }) {
@@ -24,7 +24,7 @@ export default async function ServerPage({ params }: { params: Promise<{ id: str
         }
         return (
             <>
-                <PageHeader crumbs={[{ label: "Servers", href: "/servers" }, { label: monitor.name }]} />
+                <PageHeader breadcrumbs={[{ label: "Servers", href: "/servers" }]} title={monitor.name} />
                 <ServerDetail initial={monitor} initialSample={sample} />
             </>
         );

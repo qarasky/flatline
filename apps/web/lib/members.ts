@@ -3,10 +3,10 @@ export interface Member {
     id: number;
     email: string;
     name: string;
-    mustChangePassword: boolean;
-    startingPasswordExpired: boolean;
     createdAt: string;
     tokenCount: number;
+    /** The account is tied to a Kore ID subject. */
+    sso: boolean;
 }
 
 /** A token a member made, from `GET /api/v1/users/{id}`. */
@@ -16,20 +16,14 @@ export interface MemberToken {
     active: boolean;
 }
 
-export type MemberStatus = "active" | "awaiting-first-sign-in" | "needs-reset";
-
-/** Where a member stands with their password. */
-export function memberStatus(member: Member): MemberStatus {
-    if (!member.mustChangePassword) {
-        return "active";
-    }
-    return member.startingPasswordExpired ? "needs-reset" : "awaiting-first-sign-in";
-}
-
-/** The warning before removing a member, when removing them leaves no account. */
+/**
+ * The warning before removing a member, when removing them leaves no
+ * account. Access comes from Kore ID, so the next sign-in provisions a new
+ * one; the person must still be granted the app there.
+ */
 export function removalWarning(members: Member[], removingId: number): string | null {
     const others = members.filter((member) => member.id !== removingId);
     return others.length === 0
-        ? "This is the last account. Signing in will need a token until someone adds an account."
+        ? "This is the last account. The next Kore ID sign-in will provision a new operator; nobody can sign in until then."
         : null;
 }

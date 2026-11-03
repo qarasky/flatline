@@ -1,11 +1,12 @@
 "use client";
 
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetBody, SheetContent } from "@qarasky/kore-ui";
+
 import { useMedia } from "@/hooks/use-media";
 
 import { MonitorDetail } from "./monitor-detail";
 
-/** At this width the peek sits beside the list; below it, it slides over as a sheet. */
+/** At this width the peek sits beside the list; below it, it opens over the list as a sheet. */
 export const WIDE_QUERY = "(min-width: 1280px)";
 
 /**
@@ -37,7 +38,7 @@ export function PeekPanel({
         return (
             <aside
                 aria-label="Monitor details"
-                className="bg-background sticky top-12 h-[calc(100svh-3rem)] w-[480px] shrink-0 overflow-y-auto border-l"
+                className="bg-surface min-h-0 w-[480px] shrink-0 overflow-y-auto border-l"
             >
                 {detail}
             </aside>
@@ -45,9 +46,8 @@ export function PeekPanel({
     }
     return (
         <Sheet open onOpenChange={(open) => !open && onClose()}>
-            <SheetContent side="right" showCloseButton={false} className="w-full overflow-y-auto sm:max-w-xl">
-                <SheetTitle className="sr-only">Monitor details</SheetTitle>
-                {detail}
+            <SheetContent title="Monitor details" hideTitle size="lg" showClose={false}>
+                <SheetBody className="p-0">{detail}</SheetBody>
             </SheetContent>
         </Sheet>
     );

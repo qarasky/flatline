@@ -1,14 +1,14 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "@qarasky/kore-ui";
 import { usageTone } from "@/components/fleet/metric-bar";
 
 const TONE_TEXT: Record<ReturnType<typeof usageTone>, string> = {
-    ok: "text-ok",
-    warn: "text-warn",
-    bad: "text-bad",
-    muted: "text-quiet",
+    ok: "text-status-up",
+    warn: "text-status-warn",
+    bad: "text-status-down",
+    muted: "text-muted",
 };
 
 /**

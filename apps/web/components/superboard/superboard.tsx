@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Monitor } from "lucide-react";
+import { Button, Dialog, DialogBody, DialogContent, EmptyState, StatusDot } from "@qarasky/kore-ui";
 import { ApiError } from "@/lib/api";
 import type { BackupAgentSummary, MonitorLinks, MonitorSummary, ResolvedMonitorLink } from "@/lib/monitor-types";
 import {
@@ -16,15 +18,12 @@ import { subscribeLive } from "@/lib/live-hub";
 import { FleetCard, type FleetServer } from "./fleet-card";
 import { RenameDialog, ServerMenu, type MenuAnchor, type MenuItem } from "./server-menu";
 import { WebsiteLinkDialog } from "./website-links";
-import { Badge } from "@/components/legacy-ui/badge";
-import { Button } from "@/components/legacy-ui/button";
 import { agentWarningCounts, fleetAttention, isPeakFresh, isSampleStale, matchGroups } from "@/lib/fleet-presentation";
 import { backupAttention, groupBackupsByMonitor } from "@/lib/backup-card";
 import { cardMute, coveredIds } from "@/lib/mute";
 import { serialRefresh } from "@/lib/serial-refresh";
 import { fleetPageSize } from "@/lib/fleet-layout";
 import { LoadHistory } from "@/components/fleet/load-history";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
 import { KioskSignIn } from "./kiosk-sign-in";
 
@@ -114,7 +113,7 @@ function Clock() {
     }, []);
 
     return (
-        <span className="tnum text-sm text-quiet">
+        <span className="tnum text-heading text-muted">
             {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
         </span>
     );
@@ -160,9 +159,8 @@ function Superboard({
     const [menu, setMenu] = useState<MenuAnchor | null>(null);
     const [renaming, setRenaming] = useState<{ monitor: MonitorSummary; name: string } | null>(null);
     const [linkServer, setLinkServer] = useState<MonitorSummary | null>(null);
-    const openMenu = useCallback((e: React.MouseEvent, monitor: MonitorSummary) => {
-        e.preventDefault();
-        setMenu({ x: e.clientX, y: e.clientY, monitor });
+    const openMenu = useCallback((point: MenuAnchor["point"], monitor: MonitorSummary) => {
+        setMenu({ point, monitor });
     }, []);
 
     // Menu contents for the current anchor. "Clear agent warnings" only
@@ -563,9 +561,9 @@ function Superboard({
     const rotated = pageCount > 1;
 
     const position = (
-        <span className="tnum text-xs text-quiet">
+        <span className="tnum text-meta text-muted">
             {page + 1} / {pageCount}
-            {paused && rotated ? <span className="ml-2 font-semibold text-warn">paused</span> : null}
+            {paused && rotated ? <span className="ml-2 font-semibold text-status-warn">paused</span> : null}
         </span>
     );
 
@@ -573,16 +571,16 @@ function Superboard({
 
     const content =
         loaded && servers.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-                <p className="text-lg font-semibold">
-                    {filter ? `No servers in scope “${scopeTitle}”.` : "No servers reporting yet."}
-                </p>
-                <p className="max-w-md text-sm text-quiet">
-                    {filter
+            <EmptyState
+                className="h-full"
+                icon={<Monitor />}
+                title={filter ? `No servers in scope “${scopeTitle}”` : "No servers reporting yet"}
+                description={
+                    filter
                         ? "Check the group name in the URL, or link these monitors to a group in the admin panel."
-                        : "Install the Superboard agent on a box, or POST metrics to a push monitor. Any monitor that sends a metrics sample shows up here automatically."}
-                </p>
-            </div>
+                        : "Install the Superboard agent on a box, or POST metrics to a push monitor. Any monitor that sends a metrics sample shows up here automatically."
+                }
+            />
         ) : (
             <div
                 ref={gridRef}
@@ -616,64 +614,53 @@ function Superboard({
         >
             {kiosk ? (
                 <div className="flex items-center justify-between px-4 py-2">
-                    <span className="text-sm font-semibold tracking-tight">
-                        Flatline <span className="font-normal text-quiet">Superboard</span>
-                        {filter ? <span className="font-normal text-quiet"> · {scopeTitle}</span> : null}
+                    <span className="text-heading font-semibold tracking-[-0.01em]">
+                        KoreMonitor <span className="font-normal text-muted">Superboard</span>
+                        {filter ? <span className="font-normal text-muted"> · {scopeTitle}</span> : null}
                     </span>
                     <span className="flex items-center gap-4">
                         {down > 0 ? (
-                            <Badge tone="down">
-                                <span className="size-1.5 rounded-full bg-current" />
-                                {down} down
-                            </Badge>
+                            <StatusDot status="down" label={`${down} down`} className="font-semibold" />
+                        ) : attentionCount > 0 ? (
+                            <StatusDot
+                                status="warn"
+                                label={`${attentionCount} need attention`}
+                                className="font-semibold"
+                            />
                         ) : (
-                            <Badge tone={attentionCount > 0 ? "degraded" : "neutral"}>
-                                <span className="size-1.5 rounded-full bg-current" />
-                                {attentionCount > 0
-                                    ? `${attentionCount} need attention`
-                                    : mutedCount > 0
-                                      ? "Nothing new"
-                                      : "All hosts up"}
-                            </Badge>
+                            <StatusDot
+                                status={mutedCount > 0 ? "off" : "up"}
+                                label={mutedCount > 0 ? "Nothing new" : "All hosts up"}
+                            />
                         )}
-                        {mutedCount > 0 ? (
-                            <Badge tone="neutral">
-                                <span className="size-1.5 rounded-full bg-bad-dim" />
-                                {mutedCount} muted
-                            </Badge>
-                        ) : null}
+                        {mutedCount > 0 ? <StatusDot status="down" label={`${mutedCount} muted`} muted /> : null}
                         {position}
                         <Clock />
                     </span>
                 </div>
             ) : (
-                <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-                    <button
-                        type="button"
-                        className="text-sm font-semibold tracking-tight hover:text-primary"
-                        onClick={() => window.location.assign("/monitors")}
-                    >
-                        ← Flatline
-                    </button>
-                    <span className="text-sm text-quiet">Superboard</span>
-                    {filter ? <span className="text-xs text-quiet">· {scopeTitle}</span> : null}
-                    <span className="text-xs text-quiet">
+                <div className="flex items-center gap-3 border-b border-border px-4 py-2">
+                    <Button asChild variant="ghost" size="sm" className="font-semibold">
+                        <a href="/monitors">
+                            <ArrowLeft />
+                            KoreMonitor
+                        </a>
+                    </Button>
+                    <span className="text-sub text-muted">Superboard</span>
+                    {filter ? <span className="text-meta text-muted">· {scopeTitle}</span> : null}
+                    <span className="text-meta text-muted">
                         <span className="tnum">{servers.length}</span> {servers.length === 1 ? "server" : "servers"}
-                        {down > 0 ? <span className="ml-1 font-semibold text-bad">· {down} down</span> : null}
-                        {mutedCount > 0 ? <span className="ml-1 text-bad-dim">· {mutedCount} muted</span> : null}
+                        {down > 0 ? <span className="ml-1 font-semibold text-status-down">· {down} down</span> : null}
+                        {mutedCount > 0 ? (
+                            <span className="ml-1 text-status-down-muted">· {mutedCount} muted</span>
+                        ) : null}
                     </span>
                     <div className="ml-auto flex items-center gap-3">
                         {position}
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                                window.location.assign(
-                                    filter ? `/superboard/kiosk/${encodeScope(filter)}` : "/superboard/kiosk"
-                                )
-                            }
-                        >
-                            Kiosk
+                        <Button asChild size="sm">
+                            <a href={filter ? `/superboard/kiosk/${encodeScope(filter)}` : "/superboard/kiosk"}>
+                                Kiosk
+                            </a>
                         </Button>
                         <Button size="sm" variant="ghost" onClick={() => void signOut()}>
                             Sign out
@@ -683,19 +670,20 @@ function Superboard({
             )}
 
             {error ? (
-                <div className="border-b border-border bg-destructive/10 px-4 py-2 text-xs text-destructive">
+                <div className="border-b border-border bg-danger/10 px-4 py-2 text-meta text-danger" role="alert">
                     {error}
                 </div>
             ) : null}
 
             <div className={`flex min-h-0 flex-1 flex-col p-4 ${kiosk ? "pt-0" : ""}`}>{content}</div>
             <Dialog open={historyMonitor !== undefined} onOpenChange={(open) => !open && closeHistory()}>
-                <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-5xl">
-                    <DialogHeader>
-                        <DialogTitle>{historyMonitor?.name ?? "Server"}: load history</DialogTitle>
-                        <DialogDescription>CPU, RAM, GPU and VRAM over the chosen range.</DialogDescription>
-                    </DialogHeader>
-                    {historyMonitor ? <LoadHistory monitorId={historyMonitor.id} /> : null}
+                {/* Wider than kore-ui's lg (680px): two charts side by side. */}
+                <DialogContent
+                    className="w-[min(1040px,calc(100vw-32px))]"
+                    title={`Load history: “${historyMonitor?.name ?? "Server"}”`}
+                    description="CPU, RAM, GPU and VRAM over the chosen range."
+                >
+                    <DialogBody>{historyMonitor ? <LoadHistory monitorId={historyMonitor.id} /> : null}</DialogBody>
                 </DialogContent>
             </Dialog>
             {menu ? <ServerMenu anchor={menu} items={menuItems} onClose={() => setMenu(null)} /> : null}
@@ -743,7 +731,7 @@ async function signOut(): Promise<void> {
  * Superboard entry point. The session cookie authenticates the board like
  * every admin page. When the session is refused (signed out elsewhere, a
  * revoked screen token), the desk board goes to sign-in and the kiosk shows
- * its QR sign-in in place, so a wall screen never lands on a password form.
+ * the Kore ID sign-in in place, so a wall screen never lands on a password form.
  * @param props.kiosk Render chrome-free for a wall display
  * @param props.filter Group scope from the URL, or null for the whole fleet
  * @param props.signedOut The server found no session (kiosk only)

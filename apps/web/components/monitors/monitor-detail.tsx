@@ -4,8 +4,21 @@ import { ArrowLeft, Maximize2, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import {
+    Badge,
+    Button,
+    Card,
+    IconButton,
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+    cn,
+} from "@qarasky/kore-ui";
+
 import { useBoardData } from "@/components/board/board-data";
-import { Button } from "@/components/ui/button";
 import { isApiError } from "@/lib/api";
 import { STATUS_LABEL } from "@/lib/board-format";
 import { statusKeyOf } from "@/lib/board-model";
@@ -15,7 +28,6 @@ import { subscribeLive } from "@/lib/live-hub";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { BEAT_LIMIT, fetchHeartbeats, fetchMonitor, muteMonitor, unmuteMonitor } from "@/lib/monitors-api";
 import { isCovered } from "@/lib/mute";
-import { cn } from "@/lib/utils";
 
 import { MonitorForm } from "./monitor-form";
 import { StatusDot, statusTone } from "./status-dot";
@@ -51,7 +63,7 @@ function formatTime(value: string): string {
 /** One bar per heartbeat, newest on the right; the events table carries the words. */
 function BeatBar({ beats }: { beats: HeartbeatEntry[] }) {
     if (beats.length === 0) {
-        return <p className="text-muted-foreground text-xs">No history yet.</p>;
+        return <p className="text-muted text-meta">No history yet.</p>;
     }
     const ordered = [...beats].reverse();
     return (
@@ -72,7 +84,7 @@ function BeatBar({ beats }: { beats: HeartbeatEntry[] }) {
 function PingSparkline({ beats }: { beats: HeartbeatEntry[] }) {
     const points = [...beats].reverse().filter((b) => b.status === 1 && b.ping != null);
     if (points.length < 2) {
-        return <p className="text-muted-foreground text-xs">Not enough ping data yet.</p>;
+        return <p className="text-muted text-meta">Not enough ping data yet.</p>;
     }
     const width = 100;
     const height = 32;
@@ -100,14 +112,14 @@ function PingSparkline({ beats }: { beats: HeartbeatEntry[] }) {
                 <path
                     d={path}
                     fill="none"
-                    stroke="var(--status-up)"
+                    stroke="var(--color-status-up)"
                     strokeWidth="1.5"
                     vectorEffect="non-scaling-stroke"
                 />
             </svg>
-            <div className="text-xs">
-                <div className="text-sm font-semibold tabular-nums">{Math.round(last)}ms</div>
-                <div className="text-muted-foreground">
+            <div className="text-meta">
+                <div className="text-sub font-semibold tabular-nums">{Math.round(last)}ms</div>
+                <div className="text-muted">
                     <span className="tabular-nums">{Math.round(min)}</span>–
                     <span className="tabular-nums">{Math.round(max)}</span>ms range
                 </div>
@@ -118,10 +130,10 @@ function PingSparkline({ beats }: { beats: HeartbeatEntry[] }) {
 
 function Stat({ label, value }: { label: string; value: string }) {
     return (
-        <div className="bg-card rounded-md border p-3">
-            <div className="text-muted-foreground mb-1 text-[11px] tracking-wide uppercase">{label}</div>
-            <div className="text-lg font-semibold tabular-nums">{value}</div>
-        </div>
+        <Card className="p-3">
+            <div className="text-muted text-meta mb-1">{label}</div>
+            <div className="text-title font-semibold tabular-nums">{value}</div>
+        </Card>
     );
 }
 
@@ -244,9 +256,7 @@ export function MonitorDetail({
     }, [id]);
 
     const back = compact ? (
-        <Button variant="ghost" size="icon-sm" aria-label="Close" onClick={onClose}>
-            <X />
-        </Button>
+        <IconButton label="Close" icon={<X />} onClick={onClose} />
     ) : (
         <Button variant="ghost" size="sm" asChild>
             <Link href="/monitors">
@@ -261,11 +271,11 @@ export function MonitorDetail({
             <div className="space-y-3 px-4 py-10">
                 <p role="status">This monitor was deleted.</p>
                 {compact ? (
-                    <Button variant="outline" size="sm" onClick={onClose}>
+                    <Button size="sm" onClick={onClose}>
                         Close
                     </Button>
                 ) : (
-                    <Button variant="outline" size="sm" asChild>
+                    <Button size="sm" asChild>
                         <Link href="/monitors">Back to Monitors</Link>
                     </Button>
                 )}
@@ -275,11 +285,11 @@ export function MonitorDetail({
     if (!monitor) {
         return error ? (
             <div className="space-y-3 px-4 py-10">
-                <p className="text-status-down">{error}</p>
+                <p className="text-danger">{error}</p>
                 {back}
             </div>
         ) : (
-            <p className="text-muted-foreground px-4 py-10">Loading…</p>
+            <p className="text-muted px-4 py-10">Loading…</p>
         );
     }
 
@@ -305,17 +315,22 @@ export function MonitorDetail({
     }
 
     return (
-        <div className="px-4 py-4">
+        <div className={cn(compact && "px-4 py-4")}>
             <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-                {compact ? null : back}
-                <h1 className="text-base font-semibold">{monitor.name}</h1>
-                <span className={cn("flex items-center gap-1.5 text-xs font-medium", statusTone(status))}>
-                    <StatusDot status={status} size={10} muted={covered} />
+                {/* The full page has breadcrumbs; no back link. */}
+                {/* The full page's PageHeader holds the h1. */}
+                {compact ? (
+                    <h1 className="text-title font-semibold tracking-[-0.01em]">{monitor.name}</h1>
+                ) : (
+                    <h2 className="text-title font-semibold tracking-[-0.01em]">{monitor.name}</h2>
+                )}
+                <span className={cn("text-sub flex items-center gap-2 font-medium", statusTone(status))}>
+                    <StatusDot status={status} muted={covered} />
                     {covered && status === "down" ? `${STATUS_LABEL[status]} · muted` : STATUS_LABEL[status]}
                 </span>
-                <span className="text-muted-foreground text-xs">{monitor.type}</span>
+                <Badge>{monitor.type}</Badge>
                 {covered ? (
-                    <span className="text-status-muted text-xs">
+                    <span className="text-status-down-muted text-meta">
                         {ownMute
                             ? monitor.mute?.mutedAt
                                 ? `Muted ${ageOf(monitor.mute.mutedAt, now)} ago`
@@ -326,9 +341,8 @@ export function MonitorDetail({
                 <div className="ml-auto flex items-center gap-1.5">
                     {covered || monitor.status === 0 ? (
                         <Button
-                            variant="outline"
                             size="sm"
-                            disabled={muting}
+                            loading={muting}
                             onClick={() => void toggleMute(monitor)}
                             title={
                                 covered
@@ -340,7 +354,7 @@ export function MonitorDetail({
                         </Button>
                     ) : null}
                     {editing ? null : (
-                        <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+                        <Button size="sm" onClick={() => setEditing(true)}>
                             Edit
                         </Button>
                     )}
@@ -351,15 +365,11 @@ export function MonitorDetail({
                     ) : null}
                     {compact ? (
                         <>
-                            <Button variant="ghost" size="icon-sm" asChild>
-                                <Link
-                                    href={`/monitors/${monitor.id}`}
-                                    aria-label="Open full page"
-                                    title="Open full page"
-                                >
+                            <IconButton label="Open full page" asChild>
+                                <Link href={`/monitors/${monitor.id}`}>
                                     <Maximize2 />
                                 </Link>
-                            </Button>
+                            </IconButton>
                             {back}
                         </>
                     ) : null}
@@ -411,9 +421,13 @@ function MonitorBody({
     const hasCertDays = certDays !== "" && certDays != null;
     return (
         <>
-            {muteError ? <p className="text-status-down mb-3 text-xs">{muteError}</p> : null}
-            {error ? <p className="text-status-warn mb-3 text-xs">{error}</p> : null}
-            {monitor.url ? <p className="text-muted-foreground mb-4 truncate text-xs">{monitor.url}</p> : null}
+            {muteError ? (
+                <p role="alert" className="text-danger text-meta mb-3">
+                    {muteError}
+                </p>
+            ) : null}
+            {error ? <p className="text-warning text-meta mb-3">{error}</p> : null}
+            {monitor.url ? <p className="text-muted text-meta mb-4 truncate">{monitor.url}</p> : null}
 
             <div className={cn("mb-4 grid grid-cols-2 gap-3", !compact && "md:grid-cols-4")}>
                 <Stat label="24h uptime" value={percent(monitor.uptime24h)} />
@@ -422,78 +436,75 @@ function MonitorBody({
                 <Stat label="Interval" value={`${monitor.interval}s`} />
             </div>
             <div className={cn("mb-4 grid grid-cols-1 gap-3", !compact && "md:grid-cols-2")}>
-                <div className="bg-card rounded-md border p-3">
-                    <div className="text-muted-foreground mb-2 text-[11px] tracking-wide uppercase">
+                <Card className="p-3">
+                    <div className="text-muted text-meta mb-2">
                         Recent checks{" "}
                         <span className="tabular-nums">
                             ({beats.length} of {total})
                         </span>
                     </div>
                     <BeatBar beats={beats} />
-                </div>
-                <div className="bg-card rounded-md border p-3">
-                    <div className="text-muted-foreground mb-2 text-[11px] tracking-wide uppercase">Ping trend</div>
+                </Card>
+                <Card className="p-3">
+                    <div className="text-muted text-meta mb-2">Ping trend</div>
                     <PingSparkline beats={beats} />
-                </div>
+                </Card>
             </div>
             {monitor.validCert || hasCertDays ? (
-                <div className="bg-card mb-4 rounded-md border p-3 text-xs">
-                    <span className="text-muted-foreground mr-3">Certificate</span>
-                    {monitor.validCert ? (
-                        <span className="text-status-up">valid</span>
-                    ) : (
-                        <span className="text-status-down">invalid</span>
-                    )}
+                <Card className="text-sub mb-4 flex flex-wrap items-center gap-3 p-3">
+                    <span className="text-muted">Certificate</span>
+                    {monitor.validCert ? <Badge tone="success">Valid</Badge> : <Badge tone="danger">Invalid</Badge>}
                     {hasCertDays ? (
-                        <span className="text-muted-foreground ml-3 tabular-nums">
-                            expires in {String(certDays)} days
-                        </span>
+                        <span className="text-muted tabular-nums">expires in {String(certDays)} days</span>
                     ) : null}
-                </div>
+                </Card>
             ) : null}
 
-            <h2 className="text-muted-foreground mb-2 text-[11px] tracking-wide uppercase">
-                Events {downs > 0 ? <span className="tabular-nums">({downs} outages in view)</span> : null}
+            <h2 className="text-heading mb-2 font-semibold">
+                Events{" "}
+                {downs > 0 ? (
+                    <span className="text-muted text-meta font-normal tabular-nums">({downs} outages in view)</span>
+                ) : null}
             </h2>
             {beats.length === 0 ? (
-                <p className="text-muted-foreground">No checks recorded yet.</p>
+                <p className="text-muted">No checks recorded yet.</p>
             ) : (
-                <div className="overflow-x-auto">
-                    <table className="w-full border-collapse">
-                        <thead>
-                            <tr className="text-muted-foreground border-b text-left text-xs tracking-wide uppercase">
-                                <th className="py-2 pr-4 font-medium">Time</th>
-                                <th className="w-32 py-2 font-medium">Status</th>
-                                <th className="w-20 py-2 pl-3 text-right font-medium">Ping</th>
-                                <th className="py-2 pl-3 font-medium">Message</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {beats.map((beat, i) => {
-                                const key = statusKeyOf({ active: true, status: beat.status });
-                                return (
-                                    <tr key={i} className="border-border/60 border-b last:border-0">
-                                        <td className="text-muted-foreground py-1.5 pr-4 whitespace-nowrap tabular-nums">
-                                            {formatTime(beat.time)}
-                                        </td>
-                                        <td className="py-1.5 whitespace-nowrap">
-                                            <span className={cn("flex items-center gap-1.5 text-xs", statusTone(key))}>
-                                                <StatusDot status={key} size={9} />
-                                                {beatLabel(beat.status)}
-                                            </span>
-                                        </td>
-                                        <td className="py-1.5 pl-3 text-right whitespace-nowrap tabular-nums">
-                                            {beat.ping == null ? "—" : `${Math.round(beat.ping)}ms`}
-                                        </td>
-                                        <td className="text-muted-foreground max-w-md truncate py-1.5 pl-3 text-xs">
-                                            {beat.msg || "—"}
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
+                <Table caption="Recent checks" className="text-sub">
+                    <TableHeader>
+                        <TableRow className="h-10">
+                            <TableHead>Time</TableHead>
+                            <TableHead className="w-32">Status</TableHead>
+                            <TableHead align="right" className="w-20">
+                                Ping
+                            </TableHead>
+                            <TableHead>Message</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {beats.map((beat, i) => {
+                            const key = statusKeyOf({ active: true, status: beat.status });
+                            return (
+                                <TableRow key={i} className="h-10">
+                                    <TableCell muted className="py-1.5 whitespace-nowrap tabular-nums">
+                                        {formatTime(beat.time)}
+                                    </TableCell>
+                                    <TableCell className="py-1.5 whitespace-nowrap">
+                                        <span className={cn("flex items-center gap-2", statusTone(key))}>
+                                            <StatusDot status={key} />
+                                            {beatLabel(beat.status)}
+                                        </span>
+                                    </TableCell>
+                                    <TableCell align="right" className="py-1.5 whitespace-nowrap">
+                                        {beat.ping == null ? "—" : `${Math.round(beat.ping)}ms`}
+                                    </TableCell>
+                                    <TableCell muted className="max-w-md truncate py-1.5">
+                                        {beat.msg || "—"}
+                                    </TableCell>
+                                </TableRow>
+                            );
+                        })}
+                    </TableBody>
+                </Table>
             )}
         </>
     );

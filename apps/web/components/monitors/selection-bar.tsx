@@ -2,7 +2,7 @@
 
 import { Pause, Play, Trash2, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button, IconButton } from "@qarasky/kore-ui";
 
 /** Floats over the list while rows are selected: bulk Pause, Resume, Delete and Clear. */
 export function SelectionBar({
@@ -27,9 +27,9 @@ export function SelectionBar({
         <div
             role="toolbar"
             aria-label="Selected monitors"
-            className="bg-raised fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-lg border px-2 py-1.5 shadow-lg"
+            className="bg-raised fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-overlay border border-border-strong px-2 py-1.5 shadow-overlay"
         >
-            <span className="px-2 text-xs tabular-nums">{count} selected</span>
+            <span className="text-sub px-2 tabular-nums">{count} selected</span>
             <Button variant="ghost" size="sm" disabled={busy} onClick={onPause}>
                 <Pause />
                 Pause
@@ -38,13 +38,11 @@ export function SelectionBar({
                 <Play />
                 Resume
             </Button>
-            <Button variant="ghost" size="sm" disabled={busy} onClick={onDelete} className="text-status-down">
+            <Button variant="ghost" size="sm" disabled={busy} onClick={onDelete} className="text-danger">
                 <Trash2 />
                 Delete
             </Button>
-            <Button variant="ghost" size="icon-sm" aria-label="Clear selection" disabled={busy} onClick={onClear}>
-                <X />
-            </Button>
+            <IconButton label="Clear selection" icon={<X />} disabled={busy} onClick={onClear} />
         </div>
     );
 }

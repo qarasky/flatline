@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -16,8 +15,9 @@ use sqlx::SqlitePool;
 
 use crate::AppState;
 
-/// Operator tokens: GUI sign-in and every `/api/v1` request. They control the
-/// whole instance and are never accepted by agent endpoints.
+/// Operator API tokens: machine credentials for every `/api/v1` request.
+/// They control the whole instance and are never accepted by agent
+/// endpoints. People sign in to the web app with Kore ID, not with these.
 pub const OP_TOKEN_PREFIX: &str = "flatline_op_";
 
 /// The shared prefix of every agent credential. Push (metric) and backup
@@ -101,11 +101,11 @@ pub fn token_kind(token: &str) -> TokenKind {
 /// The verdict of verifying a bearer token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenVerdict {
-    /// A valid operator token (its row id): GUI sign-in and the operator API.
+    /// A valid operator API token (its row id).
     Operator(i64),
     /// A credential belonging to an agent store. It is not valid for the
-    /// operator API or GUI sign-in; handlers answer with an explicit
-    /// "agent token" error instead of a bare 401.
+    /// operator API; handlers answer with an explicit "agent token" error
+    /// instead of a bare 401.
     Agent(TokenKind),
     /// Not a credential of any kind.
     Invalid,
@@ -324,7 +324,7 @@ pub async fn verify_push_token(pool: &SqlitePool, token: &str) -> Result<bool, V
     Ok(found.is_some())
 }
 
-/// Verify a bearer token for operator use (GUI sign-in and `/api/v1`).
+/// Verify a bearer token for operator API use (`/api/v1`).
 ///
 /// Returns [`TokenVerdict::Agent`] when the token belongs to a push or backup
 /// agent store, so the caller can say *which* kind of credential was used
@@ -539,54 +539,16 @@ fn touch(pool: &SqlitePool, digest: &str, id: i64) {
     });
 }
 
-/// On a fresh database, mint the admin token and store it in the data
-/// directory (0600). Returns the plaintext once so boot can log it.
-pub async fn ensure_initial_token(
-    pool: &SqlitePool,
-    data_dir: &Path,
-) -> anyhow::Result<Option<String>> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tokens")
-        .fetch_one(pool)
-        .await?;
-
-    if count > 0 {
-        return Ok(None);
-    }
-
+/// On an import, mint an operator API token and store it. The importer prints
+/// it once so automation has a working credential even when every imported
+/// key's plaintext is lost. It is not a browser sign-in: people use Kore ID.
+pub async fn mint_admin_token(pool: &SqlitePool) -> anyhow::Result<String> {
     let token = mint_op_token();
     sqlx::query("INSERT INTO tokens (name, hash, scheme) VALUES ('admin', ?, 'sha256')")
         .bind(hash_token(&token))
         .execute(pool)
         .await?;
-
-    write_token_file(&data_dir.join("initial-token.txt"), &token)?;
-    Ok(Some(token))
-}
-
-/// Mint an admin token unconditionally. Used by the importer: the operator
-/// must be able to sign in even when every imported key's plaintext is lost.
-pub async fn mint_admin_token(pool: &SqlitePool, data_dir: &Path) -> anyhow::Result<String> {
-    let token = mint_op_token();
-    sqlx::query("INSERT INTO tokens (name, hash, scheme) VALUES ('admin', ?, 'sha256')")
-        .bind(hash_token(&token))
-        .execute(pool)
-        .await?;
-
-    write_token_file(&data_dir.join("initial-token.txt"), &token)?;
     Ok(token)
-}
-
-/// Write the token file with owner-only permissions.
-fn write_token_file(path: &Path, token: &str) -> anyhow::Result<()> {
-    std::fs::write(path, format!("{token}\n"))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    }
-
-    Ok(())
 }
 
 /// The bearer token of a request, if any.
@@ -615,12 +577,9 @@ pub const SESSION_MAX_AGE: i64 = 34_560_000;
 /// Who a request acts as. Every principal has full permission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Principal {
-    /// A member signed in with email and password.
-    Account {
-        user_id: i64,
-        must_change_password: bool,
-    },
-    /// An operator token, as a bearer header or through a token session.
+    /// A member signed in through Kore ID.
+    Account { user_id: i64 },
+    /// An operator API token, as a bearer header.
     Token { token_id: i64 },
 }
 
@@ -652,8 +611,19 @@ pub struct Authed {
 
 /// Whether a credential still authenticates: the SSE stream's periodic
 /// revalidation. A store error is `Err`, not a revocation.
-pub async fn still_valid(pool: &SqlitePool, credential: &Credential) -> Result<bool, VerifyError> {
+pub async fn still_valid(
+    pool: &SqlitePool,
+    sso: Option<&crate::sso::Sso>,
+    credential: &Credential,
+) -> Result<bool, VerifyError> {
     match credential {
+        Credential::Bearer(token) if crate::sso::looks_like_jwt(token) => match sso {
+            Some(sso) => Ok(matches!(
+                kore_bearer(pool, sso, token).await,
+                Ok(Principal::Account { .. })
+            )),
+            None => Ok(false),
+        },
         Credential::Bearer(token) => Ok(matches!(
             verify_token(pool, token).await?,
             TokenVerdict::Operator(_)
@@ -662,32 +632,41 @@ pub async fn still_valid(pool: &SqlitePool, credential: &Credential) -> Result<b
     }
 }
 
-/// The paths an account with a starting password may still reach: who am I,
-/// and choosing a password. Signing out is public.
-const PASSWORD_CHANGE_PATHS: [(&str, &str); 2] = [
-    ("GET", "/api/v1/auth/me"),
-    ("POST", "/api/v1/auth/password"),
-];
-
-/// The client's address for sign-in limits: Cloudflare's `CF-Connecting-IP`,
-/// else the first `X-Forwarded-For` hop, else `"unknown"`. The proxy in front
-/// must strip these headers from anyone but Cloudflare.
-pub fn client_address(headers: &axum::http::HeaderMap) -> String {
-    let header = |name: &str| {
-        headers
-            .get(name)
-            .and_then(|value| value.to_str().ok())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
+/// The account behind a Kore ID access token used as a bearer: verified
+/// against the provider's keys (audience = this app's client id) and tied
+/// to an account that already signed in through SSO. Machine credentials
+/// never take this path; they are not JWTs.
+pub async fn kore_bearer(
+    pool: &SqlitePool,
+    sso: &crate::sso::Sso,
+    token: &str,
+) -> Result<Principal, Response> {
+    let claims = match sso.verify_access_token(token).await {
+        Ok(claims) => claims,
+        Err(crate::sso::SsoError::Unavailable(why)) => {
+            tracing::warn!("sso: bearer check could not reach the provider: {why}");
+            return Err(verify_error_response(&VerifyError::Unavailable(
+                "sso".into(),
+            )));
+        }
+        Err(error) => {
+            tracing::debug!("sso: bearer refused: {error:?}");
+            return Err(unauthorized());
+        }
     };
-    header("cf-connecting-ip")
-        .or_else(|| {
-            header("x-forwarded-for")
-                .and_then(|value| value.split(',').next().map(|hop| hop.trim().to_string()))
-                .filter(|hop| !hop.is_empty())
-        })
-        .unwrap_or_else(|| "unknown".to_string())
+    match crate::accounts::by_kore_sub(pool, &claims.sub).await {
+        Ok(Some(account)) => Ok(Principal::Account {
+            user_id: account.id,
+        }),
+        // A valid Kore ID token for someone who has never signed in here.
+        Ok(None) => Err(unauthorized()),
+        Err(error) => {
+            tracing::error!("sso: account lookup: {error:?}");
+            Err(verify_error_response(&VerifyError::Unavailable(
+                "sso".into(),
+            )))
+        }
+    }
 }
 
 /// The session cookie's value, if the request carries one.
@@ -723,16 +702,14 @@ pub fn clear_session_cookie(secure: bool) -> String {
 }
 
 /// Middleware: every `/api/v1` route requires an operator credential: a
-/// bearer token, or the web app's session cookie (an account or token
-/// session). The push endpoint authenticates by monitor token in the path
+/// bearer API token, or the web app's session cookie (created only by Kore ID
+/// sign-in). The push endpoint authenticates by monitor token in the path
 /// instead and is mounted separately.
 ///
 /// 401 only for a credential that is missing or invalid; a store failure
 /// answers 503 and the failed-check limiter 429, so a busy database never
 /// signs a client out. A cookie-authenticated write without the CSRF header
-/// answers 403, and so does anything but [`PASSWORD_CHANGE_PATHS`] from an
-/// account that must change its password. The caller is passed on as an
-/// [`Authed`] extension.
+/// answers 403. The caller is passed on as an [`Authed`] extension.
 pub async fn require_token(
     State(state): State<AppState>,
     mut request: Request<Body>,
@@ -740,14 +717,27 @@ pub async fn require_token(
 ) -> Response {
     let authed = if let Some(token) = bearer(request.headers()) {
         let token = token.to_string();
-        match verify_token(&state.pool, &token).await {
-            Ok(TokenVerdict::Operator(token_id)) => Authed {
-                principal: Principal::Token { token_id },
-                credential: Credential::Bearer(token),
-            },
-            Ok(TokenVerdict::Agent(kind)) => return agent_token_on_operator_api(kind),
-            Ok(TokenVerdict::Invalid) => return unauthorized(),
-            Err(error) => return verify_error_response(&error),
+        if crate::sso::looks_like_jwt(&token) {
+            let Some(sso) = state.sso.as_deref() else {
+                return unauthorized();
+            };
+            match kore_bearer(&state.pool, sso, &token).await {
+                Ok(principal) => Authed {
+                    principal,
+                    credential: Credential::Bearer(token),
+                },
+                Err(response) => return response,
+            }
+        } else {
+            match verify_token(&state.pool, &token).await {
+                Ok(TokenVerdict::Operator(token_id)) => Authed {
+                    principal: Principal::Token { token_id },
+                    credential: Credential::Bearer(token),
+                },
+                Ok(TokenVerdict::Agent(kind)) => return agent_token_on_operator_api(kind),
+                Ok(TokenVerdict::Invalid) => return unauthorized(),
+                Err(error) => return verify_error_response(&error),
+            }
         }
     } else if let Some(session) = session_id(request.headers()) {
         match crate::sessions::resolve(&state.pool, &session).await {
@@ -781,46 +771,26 @@ pub async fn require_token(
         )
         .into_response();
     }
-    if let Principal::Account {
-        must_change_password: true,
-        ..
-    } = authed.principal
-    {
-        let allowed = PASSWORD_CHANGE_PATHS.iter().any(|(method, path)| {
-            request.method().as_str() == *method && request.uri().path() == *path
-        });
-        if !allowed {
-            return crate::api::ApiError::new(
-                StatusCode::FORBIDDEN,
-                "password_change_required",
-                "Choose your own password before doing anything else.",
-            )
-            .with_hint(
-                "This account still has the starting password someone else set. Send `POST /api/v1/auth/password` with `{currentPassword, newPassword}` (at least 10 characters); `GET /api/v1/auth/me` and signing out keep working.",
-            )
-            .into_response();
-        }
-    }
     request.extensions_mut().insert(authed);
     next.run(request).await
 }
 
-/// The response for an agent credential used on the operator API or GUI
-/// sign-in. Explicit on purpose: a generic 401 sends humans and AI agents
-/// hunting through OpenAPI or source for the difference.
+/// The response for an agent credential used on the operator API. Explicit on
+/// purpose: a generic 401 sends humans and AI agents hunting through OpenAPI
+/// or source for the difference.
 pub fn agent_token_on_operator_api(kind: TokenKind) -> Response {
     let (label, endpoint_hint) = match kind {
         TokenKind::PushAgent => (
             "host-agent token",
-            "Push-agent tokens are only accepted by /api/push/{pushToken} and /agent/*. GUI sign-in and /api/v1 need an operator token (`flatline_op_...`); mint one in the dashboard's Agents panel.",
+            "Push-agent tokens are only accepted by /api/push/{pushToken} and /agent/*. /api/v1 needs an operator API token (`flatline_op_...`); mint one in the dashboard's Tokens section.",
         ),
         TokenKind::BackupAgent => (
             "backup-agent token",
-            "Backup-agent tokens are only accepted under /api/backup/v1. GUI sign-in and /api/v1 need an operator token (`flatline_op_...`); mint one in the dashboard's Agents panel.",
+            "Backup-agent tokens are only accepted under /api/backup/v1. /api/v1 needs an operator API token (`flatline_op_...`); mint one in the dashboard's Tokens section.",
         ),
         _ => (
             "agent token",
-            "Agent tokens are only accepted by agent endpoints. GUI sign-in and /api/v1 need an operator token (`flatline_op_...`).",
+            "Agent tokens are only accepted by agent endpoints. /api/v1 needs an operator API token (`flatline_op_...`).",
         ),
     };
     (
@@ -838,9 +808,9 @@ pub fn agent_token_on_operator_api(kind: TokenKind) -> Response {
             "expectedPrefix": OP_TOKEN_PREFIX,
             "hint": endpoint_hint,
             "nextActions": [
-                "Use an operator token (`flatline_op_...`) for GUI sign-in and /api/v1 requests.",
-                "Mint or rotate an operator token in the dashboard: Agents panel -> API keys.",
-                "Keep agent tokens in the host agent config; never paste them into a browser login."
+                "Use an operator API token (`flatline_op_...`) for /api/v1 requests.",
+                "Mint or rotate an operator API token in the dashboard: Tokens.",
+                "Keep agent tokens in the host agent config; never paste them into a browser."
             ],
             "docs": "/llms.txt",
         })),
@@ -955,7 +925,7 @@ pub fn unauthorized() -> Response {
             "message": "Missing or invalid token.",
             "expectedTokenKind": "operator",
             "expectedPrefix": OP_TOKEN_PREFIX,
-            "hint": "Send `Authorization: Bearer flatline_op_...`. Operator tokens sign in to the GUI and authorize /api/v1. Host agents use `flatline_agent_push_...` on /api/push/{token}; backup agents use `flatline_agent_backup_...` on /api/backup/v1.",
+            "hint": "Send `Authorization: Bearer flatline_op_...` for /api/v1. Browser sessions are created only by Kore ID sign-in. Host agents use `flatline_agent_push_...` on /api/push/{token}; backup agents use `flatline_agent_backup_...` on /api/backup/v1.",
             "docs": "/llms.txt",
         })),
     )
@@ -996,12 +966,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
-            matches!(
-                verify_token(&pool, &token).await,
-                Ok(TokenVerdict::Operator(_))
-            )
-        );
+        assert!(matches!(
+            verify_token(&pool, &token).await,
+            Ok(TokenVerdict::Operator(_))
+        ));
         assert_eq!(
             verify_token(&pool, "flatline_wrong").await,
             Ok(TokenVerdict::Invalid)
@@ -1074,12 +1042,10 @@ mod tests {
         let id = insert_bcrypt(&pool, plaintext).await;
         let digest = hash_token(plaintext);
 
-        assert!(
-            matches!(
-                verify_token(&pool, plaintext).await,
-                Ok(TokenVerdict::Operator(_))
-            )
-        );
+        assert!(matches!(
+            verify_token(&pool, plaintext).await,
+            Ok(TokenVerdict::Operator(_))
+        ));
         assert!(
             VERIFIED.lock().unwrap().get(&digest).is_some(),
             "a verified imported key is cached"
@@ -1192,12 +1158,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert!(
-            matches!(
-                verify_token(&pool, &token).await,
-                Ok(TokenVerdict::Operator(_))
-            )
-        );
+        assert!(matches!(
+            verify_token(&pool, &token).await,
+            Ok(TokenVerdict::Operator(_))
+        ));
         assert!(TOUCHED.lock().unwrap().get(&hash_token(&token)).is_some());
 
         // Clear the column; a second verification inside the interval must
@@ -1207,39 +1171,16 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert!(
-            matches!(
-                verify_token(&pool, &token).await,
-                Ok(TokenVerdict::Operator(_))
-            )
-        );
+        assert!(matches!(
+            verify_token(&pool, &token).await,
+            Ok(TokenVerdict::Operator(_))
+        ));
         tokio::time::sleep(Duration::from_millis(50)).await;
         let last: Option<String> = sqlx::query_scalar("SELECT last_used_at FROM tokens")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert!(last.is_none(), "touch is throttled");
-    }
-
-    #[tokio::test]
-    async fn initial_token_is_written_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::connect(dir.path()).await.unwrap();
-
-        let first = ensure_initial_token(&pool, dir.path()).await.unwrap();
-        assert!(first.is_some());
-        assert!(dir.path().join("initial-token.txt").exists());
-
-        // Second call is a no-op: never rotate silently.
-        let second = ensure_initial_token(&pool, dir.path()).await.unwrap();
-        assert!(second.is_none());
-
-        assert!(
-            matches!(
-                verify_token(&pool, &first.unwrap()).await,
-                Ok(TokenVerdict::Operator(_))
-            )
-        );
     }
 
     #[tokio::test]

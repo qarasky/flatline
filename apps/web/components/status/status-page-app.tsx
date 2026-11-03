@@ -48,8 +48,8 @@ function formatClock(epoch: number): string {
 export function StatusNotice({ children }: { children: React.ReactNode }) {
     return (
         <div className="status-page">
-            <div className="wrap">
-                <p className="site-description" role="status">
+            <div className="status-wrap">
+                <p className="text-sub text-muted" role="status">
                     {children}
                 </p>
             </div>
@@ -147,7 +147,10 @@ export function StatusPageApp({
             history={state.snapshot.history}
             notice={
                 state.stale ? (
-                    <div className="stale-banner" role="status">
+                    <div
+                        className="mb-4 rounded-ui border border-status-warn/60 bg-surface px-3.5 py-2.5 text-sub text-status-warn"
+                        role="status"
+                    >
                         Stale since {formatClock(state.updatedAt)} — the latest status could not be loaded. Retrying…
                     </div>
                 ) : null

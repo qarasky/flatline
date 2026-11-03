@@ -43,6 +43,7 @@ pub async fn events(
 
     let mut receiver = state.events.subscribe();
     let pool = state.pool.clone();
+    let sso = state.sso.clone();
     // A5: streams end at once on shutdown instead of holding the graceful
     // drain open for their 15-minute lifetime.
     let shutting_down = state.engine.shutdown_token().wait();
@@ -67,7 +68,7 @@ pub async fn events(
                 _ = keepalive.tick() => {
                     // A store error skips this round; only a definite
                     // "invalid" signs the client out.
-                    if auth::still_valid(&pool, &credential).await == Ok(false) {
+                    if auth::still_valid(&pool, sso.as_deref(), &credential).await == Ok(false) {
                         yield Ok(Event::default().data(json!({"type": "unauthorized"}).to_string()));
                         break;
                     }

@@ -1,4 +1,5 @@
-//! Token checks over HTTP: a token-store failure is 503, never 401 (A1).
+//! Token checks over HTTP: a token-store failure is 503, never 401 (A1),
+//! and agent credentials stay distinct from operator API tokens.
 
 use axum::http::StatusCode;
 use serde_json::json;
@@ -35,20 +36,6 @@ async fn a_failing_token_store_answers_503_not_401() {
     )
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-
-    // Sign-in must not tell the operator their token is wrong either.
-    let (status, body) = send(
-        &h.app,
-        request(
-            "POST",
-            "/api/v1/auth/login",
-            None,
-            Some(json!({ "username": "", "password": h.token })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["error"], "unavailable");
 
     // Provisioning shares the rule.
     let (status, _) = send(
@@ -125,15 +112,9 @@ async fn agent_tokens_are_rejected_on_operator_surfaces() {
     assert_eq!(status, StatusCode::CREATED);
     let push = body["monitor"]["pushToken"].as_str().unwrap().to_string();
 
-    // GUI sign-in must say "agent token", not "invalid".
     let (status, body) = send(
         &h.app,
-        request(
-            "POST",
-            "/api/v1/auth/login",
-            None,
-            Some(json!({ "password": push })),
-        ),
+        request("GET", "/api/v1/monitors", Some(&push), None),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -145,24 +126,15 @@ async fn agent_tokens_are_rejected_on_operator_surfaces() {
         "the hint must name the operator prefix: {body}"
     );
 
-    // The operator API answers the same way.
-    let (status, body) = send(
-        &h.app,
-        request("GET", "/api/v1/monitors", Some(&push), None),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(body["error"], "agent_token_on_operator_api");
-
     // A backup token is also an agent token, even without a stored row: the
     // prefix alone is enough to route the error.
     let (status, body) = send(
         &h.app,
         request(
-            "POST",
-            "/api/v1/auth/login",
+            "GET",
+            "/api/v1/monitors",
+            Some("flatline_agent_backup_deadbeef"),
             None,
-            Some(json!({ "password": "flatline_agent_backup_deadbeef" })),
         ),
     )
     .await;
@@ -230,15 +202,10 @@ async fn legacy_push_tokens_are_still_recognised_as_agent_tokens() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    // And using it to sign in names the agent token, not a generic 401.
+    // On the operator API it is named as an agent token, not a generic 401.
     let (status, body) = send(
         &h.app,
-        request(
-            "POST",
-            "/api/v1/auth/login",
-            None,
-            Some(json!({ "password": legacy })),
-        ),
+        request("GET", "/api/v1/monitors", Some(legacy), None),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -339,16 +306,7 @@ async fn bare_pre_2026_push_tokens_are_recognised_as_agent_tokens() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (status, body) = send(
-        &h.app,
-        request(
-            "POST",
-            "/api/v1/auth/login",
-            None,
-            Some(json!({ "password": bare })),
-        ),
-    )
-    .await;
+    let (status, body) = send(&h.app, request("GET", "/api/v1/monitors", Some(bare), None)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body["error"], "agent_token_on_operator_api");
     assert_eq!(body["tokenKind"], "push_agent");

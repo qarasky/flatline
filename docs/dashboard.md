@@ -13,13 +13,26 @@ the Vite dashboard the app replaced, so links to it keep working.)
   with their data, then hydrate. The build is `output: "standalone"`, traced
   from the repository root so `packages/shared` (the status-page client and
   types) comes along.
-- **Tailwind CSS 4 and shadcn components** (`components/ui/`, on Radix), themed
-  once in `app/globals.css`: dark only, near-black cool surfaces and one blue
-  accent (`--primary`). Status colours are semantic and never derived from the
-  accent; maintenance is violet so it never reads as the accent.
-- **lucide** icons, **cmdk** for the ⌘K palette, `qrcode-generator` for the
-  kiosk's QR code. Nothing loads from another host (Caddy's CSP forbids it):
-  the font is bundled and the QR code is a `data:` image.
+- **Tailwind CSS 4 and kore-ui** (`@qarasky/kore-ui`, pinned to a release
+  tarball in `apps/web/package.json`), the design system shared by every Kore
+  app. Its `DESIGN.md` is the source of truth for tokens, layout, components
+  and copy; KoreMonitor follows it and documents only what is specific to
+  monitoring. `app/globals.css` imports `@qarasky/kore-ui/theme.css` and keeps
+  only monitoring CSS (the monitor board, heartbeat strips, fleet meters,
+  history charts, the wall board and status pages), written on kore-ui's
+  variables (`var(--color-*)`). Dark only; status colours are kore-ui's
+  `status-*` tokens, plus two app-only ones (`status-muted` for a muted down
+  monitor, `status-critical` for a critical resource level).
+- **The shell is kore-ui's:** `AppShell` with a collapsible sidebar (state in
+  the `sidebar_state` cookie, ⌘B toggles it), search in the top bar (⌘K), the
+  Kore app switcher and account menu (Kore ID account, other apps from
+  `KORE_APP_URLS`, sign out), `PageHeader` with breadcrumbs, and `AuthScreen`
+  for sign-in. The shell shows the product as **KoreMonitor** (kore-ui's
+  default, pinned by the `names` override in `lib/kore.ts`); the rename from
+  Flatline is display-only, so code and deployment identifiers keep the
+  `flatline` name.
+- **lucide** icons and **cmdk** for the ⌘K palette. Nothing loads from another
+  host (Caddy's CSP forbids it): the font is bundled.
 - **Vitest** for tests (`apps/web/__tests__/`). The old dashboard's pure
   modules were ported into `apps/web/lib/` with their tests in
   `__tests__/ported/`.
@@ -28,7 +41,7 @@ the Vite dashboard the app replaced, so links to it keep working.)
 | ------------------- | ---------------------------------------------------------------------------------------- |
 | `app/`              | Routes. `app/(admin)/` holds the signed-in sections under one layout.                    |
 | `components/`       | One folder per section (`monitors/`, `servers/`, …) plus shared pieces.                  |
-| `components/ui/`    | shadcn primitives. `components/legacy-ui/` holds the old look's controls.                |
+| `components/ui/`    | Only `command.tsx`: cmdk styled with kore-ui tokens (kore-ui has no command palette).    |
 | `lib/`              | Pure logic and the API clients (`lib/api.ts`, `lib/<section>-api.ts`); what tests cover. |
 | `hooks/`            | Small client hooks (clock, media queries, idle calm).                                    |
 | `proxy.ts`          | The optimistic sign-in gate (Next 16's "proxy", formerly middleware).                    |
@@ -40,20 +53,19 @@ the Vite dashboard the app replaced, so links to it keep working.)
 | Path                                              | Shows                                                                                                           |
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `/`                                               | Signed in: Monitors. On a client domain the backend maps: that status page. Otherwise: sign-in.                 |
-| `/sign-in`, `/account/password`                   | Sign-in; choosing your own password after a starting one.                                                       |
+| `/sign-in`                                        | Kore ID sign-in, or a clear "no sign-in method configured" state.                                               |
 | `/monitors`, `/monitors/<id>`                     | The monitor board (`?m=ID` peeks a monitor, `?new=1` opens New monitor); a monitor's own page.                  |
 | `/attention`                                      | What needs a look.                                                                                              |
 | `/servers`, `/servers/<id>`                       | Push monitors with live CPU, RAM and disk; a server's page.                                                     |
 | `/backups`, `/backups/<id>`                       | Backup agents; an agent's page.                                                                                 |
-| `/notifications`, `/tokens`, `/members`           | Telegram configs, operator tokens, member accounts.                                                             |
+| `/notifications`, `/tokens`, `/members`           | Telegram configs, operator API tokens, member accounts.                                                         |
 | `/superboard`, `/superboard/<scope>`              | The wall board at a desk ([superboard](superboard.md)).                                                         |
-| `/superboard/kiosk`, `/superboard/kiosk/<groups>` | The wall board on the wall; signed out, it shows a QR sign-in.                                                  |
-| `/device`                                         | The phone's page for approving a screen's QR sign-in.                                                           |
+| `/superboard/kiosk`, `/superboard/kiosk/<groups>` | The wall board on the wall; signed out, it shows the Kore ID sign-in.                                           |
 | `/status/<slug>`                                  | A public status page ([status pages](status-pages.md)).                                                         |
 | `/build`                                          | `{"build": "<id>"}`: the build this server runs (new-deploy detection).                                         |
 | `/index.html`                                     | A stub for wall screens still running the old dashboard (see [carry-over](#carry-over-from-the-old-dashboard)). |
 
-Signed out, only `/`, `/sign-in`, the kiosk, `/status/*`, `/device`, `/build` and
+Signed out, only `/`, `/sign-in`, the kiosk, `/status/*`, `/build` and
 `/index.html` open; anything else redirects to `/sign-in?next=<path>`
 (`lib/gate.ts`). Old dashboard links survive: `/?m=12` goes to
 `/monitors/12`, and `/?status=down&sort=name` carries its filters and sort to
@@ -61,52 +73,31 @@ Signed out, only `/`, `/sign-in`, the kiosk, `/status/*`, `/device`, `/build` an
 
 ## Signing in
 
-People sign in with an email and password (member accounts); **Use a token
-instead** signs in with an operator token. Either way the browser posts to
-`POST /api/v1/auth/session` and gets the backend's HttpOnly `fl_session`
-cookie, which holds a server-side session id; no credential is kept in the
-browser. The cookie is `Secure` when the request came in over https (the
-tunnel's `X-Forwarded-Proto`, which Caddy trusts only from the Docker host).
+**Kore ID is the only sign-in.** The page offers **Continue with Kore ID**, a
+link to `GET /api/v1/auth/sso/start`; with `KORE_ID_ISSUER` unset it says that
+no sign-in method is configured. The callback sets the backend's HttpOnly
+`fl_session` cookie, which holds a server-side session id; no credential is
+kept in the browser. The cookie is `Secure` when the request came in over
+https (the tunnel's `X-Forwarded-Proto`, which Caddy trusts only from the
+Docker host). Signing out follows the `ssoLogoutUrl` the backend returns. See
+[sso.md](sso.md).
 
-- **First run.** With no account yet the sign-in page offers **Create the
-  first account**, which asks for an operator token (`initial-token.txt`)
-  besides the new account's details.
-- **Starting passwords.** An account added on Members, or reset there, is held
-  on `/account/password` until it chooses its own.
+- **First run.** The first person to sign in through Kore ID becomes a full
+  operator (auto-provisioning); there is no first-account screen or token file.
 - **The gate.** `proxy.ts` only checks that the cookie exists. Server layouts
   check it for real (`requireOperator`, `GET /api/v1/auth/me`); a rejected
   session goes to `/sign-in?expired=1`.
-- **One level of access.** Every account and every token has full operator
-  permission. **Tokens** mints named tokens so an integration has its own
-  revocable credential; **Members** adds, resets and removes people, and
-  removing someone can also revoke the tokens they made.
-
-### Sign in with a QR code
-
-A screen without a keyboard (the wall TV) shows a QR code on the signed-out
-kiosk. Scan it with a phone: `/device` signs the phone in if needed, then asks
-for a name for the screen. **Approve**, and the screen gets its own operator
-token, trades it for a session cookie and reloads; the token itself is never
-stored on the screen. It appears in **Tokens** under the name you gave it,
-never expires, and is revoked there without affecting any other device. The
-code lives five minutes and renews itself; a denied or expired request is
-replaced by a fresh code. The QR URL uses `FLATLINE_PUBLIC_URL` when it is set,
-otherwise the address the screen was opened on, so set it when the phone cannot
-reach that address. See the
-[design](superpowers/specs/2026-10-21-qr-sign-in-design.md).
+- **One level of access.** Every account and every operator API token has full
+  permission. **Tokens** mints named API tokens for integrations and machines;
+  **Members** lists the accounts Kore ID provisioned and removes people (and
+  optionally the tokens they made).
 
 ### Carry-over from the old dashboard
 
-The Vite dashboard kept its token in `localStorage` (`flatline.token`) and
-polled `/index.html` for a new build. Two things let a wall screen that was
-running it come back on its own after the switch:
-
-- `GET /index.html` answers a stub naming a module entry the old build never
-  had, so the old tab sees a "new build" and reloads into this app.
-- The kiosk and the sign-in page trade a token found under `flatline.token`
-  for a session instead of showing a QR code or the form. A revoked token is
-  forgotten; while Flatline cannot be reached (as right after a deploy) the
-  trade is retried.
+The Vite dashboard polled `/index.html` for a new build. `GET /index.html`
+answers a stub naming a module entry the old build never had, so the old tab
+sees a "new build" and reloads into this app. It then signs in with Kore ID
+like every other browser; a token left in `localStorage` is not accepted.
 
 ## Data: server and browser
 
@@ -142,7 +133,7 @@ id of the build the server runs (`lib/build-id.ts`). Every 5 minutes, when the
 tab becomes visible and whenever the live stream reconnects, an open tab
 compares the two. On a change the kiosk and status pages reload themselves
 (waiting while someone is typing); admin pages and the desk Superboard show
-**A new version of Flatline is available — Reload / Later**. The dev server
+**A new version of KoreMonitor is available — Reload / Later**. The dev server
 has no build id, so it never triggers.
 
 ### Errors
@@ -155,8 +146,8 @@ nobody sits at, show what failed and reload themselves after 30 s.
 
 The sidebar lists the sections in order (`lib/nav.ts`); Superboard opens
 outside the admin layout. `⌘K` / `Ctrl+K` (or Search in the sidebar) jumps to
-any section, monitor or server, or runs New monitor, Open Superboard, Change
-password (accounts) or Sign out (`lib/commands.ts`).
+any section, monitor or server, or runs New monitor, Open Superboard or Sign
+out (`lib/commands.ts`).
 
 ### Monitors
 
@@ -237,32 +228,33 @@ Shortcuts never fire while typing in a field (`lib/board-keys.ts`).
 - **Notifications** (`/notifications`): the Telegram configs with the monitors
   using each. Editing one leaves the bot-token field empty; an empty field
   keeps the stored token.
-- **Tokens** (`/tokens`): operator tokens, device sign-ins from the kiosk's QR
-  included, with who made each and when it was last used. A new token is
-  shown once; disabling or deleting the one this browser signed in with signs
-  it out.
-- **Members** (`/members`): accounts are added (with a starting password that
-  expires after 7 days), reset and removed here.
+- **Tokens** (`/tokens`): operator API tokens for scripts and machines, with
+  who made each and when it was last used. A new token is shown once. They do
+  not sign in a browser.
+- **Members** (`/members`): the accounts Kore ID provisioned; remove one here
+  when someone leaves. Access itself is granted in Kore ID's admin.
 
-### Superboard, the approve page and status pages
+### Superboard and status pages
 
-The Superboard ([superboard](superboard.md)), `/device` and the status pages
-were ported as they were and keep the old dashboard's look: `app/legacy.css`,
-scoped to `.legacy-theme`, with the new blue accent. Status pages render on the
-server and load no admin code ([status pages](status-pages.md)).
+The Superboard ([superboard](superboard.md)) and the status pages have their
+own full-screen layouts (no app shell) built from kore-ui components and
+tokens. Status pages render on the server and load no admin code
+([status pages](status-pages.md)).
 
 ## Adding a section
 
 1. **The route:** `app/(admin)/<section>/page.tsx`, a server component that
-   renders `PageHeader` (breadcrumbs and actions) and the section's client
+   renders kore-ui's `PageHeader` (title, breadcrumbs, actions) and the section's client
    component. Under `(admin)` it gets the session check, the sidebar, the
    palette and the shared live data for free. Set `metadata.title`
-   (`"<Section> · Flatline"`).
+   (`"<Section> · KoreMonitor"`).
 2. **The data:** a `lib/<section>-api.ts` module over `api()` for the
    section's endpoints, usable from server and client components. Live data
    comes from `useBoardData()` or a `subscribeLive` subscriber, not a second
    stream.
-3. **The components:** `components/<section>/`, built from `components/ui/`.
+3. **The components:** `components/<section>/`, built from kore-ui parts
+   (never a local copy of something kore-ui has; compose missing pieces from
+   its parts).
    Keep pure decisions (formatting, sorting, what a row says) in `lib/` so
    they test without a DOM.
 4. **Navigation:** add the section to `NAV_SECTIONS` in `lib/nav.ts`; the

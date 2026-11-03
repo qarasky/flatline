@@ -1,14 +1,14 @@
 # Architecture
 
-Flatline is four programs, a reverse proxy and one database.
+KoreMonitor is four programs, a reverse proxy and one database.
 
-| Process              | Language | Runs on                         | Job                                                                                                                     |
-| -------------------- | -------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Backend              | Rust     | The Flatline server             | Check engine, REST API, storage, alerts, agent downloads and the provisioning documents.                                |
-| Web app              | Next.js  | The Flatline server (own image) | Operator UI, Superboard, public status pages. Server-rendered by a Node process; the browser calls the API same-origin. |
-| Caddy                | Caddy 2  | The Flatline server (own image) | The only published service: routes the backend's paths to the backend and everything else to the web app.               |
-| Agent (`superboard`) | Go       | Each monitored host             | Collects telemetry and pushes it outbound. Never listens on a port.                                                     |
-| Backup agent         | Go       | Selected hosts                  | Exports PostgreSQL/Garage, optionally encrypts, uploads resumable chunks. One process per named instance.               |
+| Process              | Language | Runs on                            | Job                                                                                                                     |
+| -------------------- | -------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Backend              | Rust     | The KoreMonitor server             | Check engine, REST API, storage, alerts, agent downloads and the provisioning documents.                                |
+| Web app              | Next.js  | The KoreMonitor server (own image) | Operator UI, Superboard, public status pages. Server-rendered by a Node process; the browser calls the API same-origin. |
+| Caddy                | Caddy 2  | The KoreMonitor server (own image) | The only published service: routes the backend's paths to the backend and everything else to the web app.               |
+| Agent (`superboard`) | Go       | Each monitored host                | Collects telemetry and pushes it outbound. Never listens on a port.                                                     |
+| Backup agent         | Go       | Selected hosts                     | Exports PostgreSQL/Garage, optionally encrypts, uploads resumable chunks. One process per named instance.               |
 
 There is no message broker and no Redis: one backend process owns the SQLite
 database, the in-memory live cache and the API. The web app holds no state of
@@ -68,9 +68,9 @@ agent ──POST /api/push──▶ caddy   (outbound only, per-monitor push tok
 | `notify.rs`       | Telegram delivery and its templates.                                                                                              |
 | `links.rs`        | Server → hosted-website links, including group expansion.                                                                         |
 | `status_pages.rs` | Public status page data, host resolution, password gates.                                                                         |
-| `auth.rs`         | Bearer tokens, the session cookie and its CSRF rule, push tokens, scope checks.                                                   |
-| `accounts.rs`     | Member accounts: bcrypt passwords, starting-password expiry, sign-in limits.                                                      |
-| `sessions.rs`     | Server-side sessions behind the `fl_session` cookie, for an account or a token.                                                   |
+| `auth.rs`         | Bearer API tokens, the session cookie and its CSRF rule, push tokens, scope checks.                                               |
+| `accounts.rs`     | Member accounts provisioned and linked by Kore ID.                                                                                |
+| `sessions.rs`     | Server-side account sessions behind the `fl_session` cookie, created by Kore ID.                                                  |
 | `provisioning.rs` | The runbook, installer, checksums and agent downloads.                                                                            |
 
 ## Data
@@ -237,17 +237,20 @@ worst (the compose file grants 30 s before `SIGKILL`):
 
 Operator access has one level, and agents have their own credentials:
 
-- **Member accounts** (email and password) for people. Every account has full
-  permission, the same as a token: accounts give each person their own
-  credentials and let one be removed without touching the others. A token
-  minted by a member records them as its maker, so removing them can revoke it.
-- **Bearer tokens** for every operator-facing call. One token type with full
-  permission; extra tokens exist to be individually revocable, not to be
-  restricted. The first token is written to `initial-token.txt` on first start.
-  A browser signs in with an email and password or a token
-  (`POST /api/v1/auth/session`) and then carries a server-side session id in
-  the `fl_session` cookie (`sessions.rs`); the session ends with its account
-  or token. Cookie writes need `X-Flatline-CSRF: 1`. See [api](api.md).
+- **Member accounts** for people, created and linked by Kore ID. Every account
+  has full permission, the same as a token: accounts give each person their own
+  identity and let one be removed without touching the others. A token minted
+  by a member records them as its maker, so removing them can revoke it. Kore
+  ID is the **only** browser sign-in; there is no password, first-account or
+  operator-token login.
+- **Operator API tokens** (`flatline_op_...`) for every operator-facing call.
+  One token type with full permission; extra tokens exist to be individually
+  revocable, not to be restricted. They are machine credentials and never
+  create a browser session. A browser signs in through Kore ID
+  (`GET /api/v1/auth/sso/start`) and then carries a server-side session id in
+  the `fl_session` cookie (`sessions.rs`); the session ends with its account or
+  Kore ID's back-channel logout. Cookie writes need `X-Flatline-CSRF: 1`. See
+  [api](api.md) and [sso](sso.md).
 - **Push tokens** (`flatline_agent_push_...`) on individual monitors, used by
   the agent for `POST /api/push/{token}` and for the `/agent/*` downloads. A
   push token can only affect its own monitor's data and can only fetch releases,
@@ -274,7 +277,6 @@ The backend reads its configuration from the environment:
 | `FLATLINE_AGENT_DIR`                | —            | Directory of agent binaries served under `/agent/*`. |
 | `FLATLINE_PUBLIC_URL`               | request host | Absolute origin used in the provisioning documents.  |
 | `FLATLINE_HEARTBEAT_RETENTION_DAYS` | `90`         | Heartbeat retention; `0` keeps forever.              |
-| `FLATLINE_PASSWORD_COST`            | `12`         | bcrypt cost for account passwords.                   |
 
 The web app reads `API_URL` (the backend's address for server-side calls,
 default `http://127.0.0.1:3001`; `http://flatline:3001` in the images) at

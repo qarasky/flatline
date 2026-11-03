@@ -3,7 +3,7 @@
 How and when the operator UI (the admin sections of the [web app](dashboard.md))
 animates. Written from published guidance (Atlassian, Carbon, Nielsen Norman
 Group, Emil Kowalski, WCAG 2.2, motion.dev, web.dev); claims tagged _(ours)_
-are Flatline's own calls, not sourced rules. The Superboard keeps its own
+are KoreMonitor's own calls, not sourced rules. The Superboard keeps its own
 behaviour and is not covered here.
 
 ## Principles
@@ -24,8 +24,8 @@ behaviour and is not covered here.
 Tokens and the pure decisions behind them live in `apps/web/lib/motion.ts`
 (tested in `apps/web/__tests__/ported/motion.test.mjs`). It imports no
 animation library: the web app animates with CSS (Tailwind transitions,
-`tw-animate-css` for the shadcn dialogs, sheets, menus and tooltips, and a few
-keyframes in `app/globals.css`), and the TypeScript side uses the tokens for
+kore-ui's own enter/exit animations for dialogs, menus, popovers, tooltips and
+toasts, and a few keyframes in `app/globals.css`), and the TypeScript side uses the tokens for
 its decisions.
 
 | Token  | Value                              | Use                                                 |
@@ -114,7 +114,7 @@ These are our synthesis; the sources cover the general principle, not streaming.
 ## Implementation notes
 
 - Prefer CSS: Tailwind `transition-*` utilities with the token durations, the
-  `tw-animate-css` enter/exit classes the shadcn components already use, and a
+  enter/exit animations kore-ui's components bring (`animate-kore-*`), and a
   named keyframe in `app/globals.css` for anything bespoke. There is no
   animation library in the bundle; adding one (for layout animation) is a
   deliberate choice, kept off the Superboard and status pages.

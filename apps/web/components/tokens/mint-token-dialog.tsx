@@ -1,66 +1,51 @@
 "use client";
 
-import { Copy, Plus } from "lucide-react";
+import {
+    Button,
+    CopyButton,
+    Dialog,
+    DialogBody,
+    DialogContent,
+    DialogFooter,
+    Field,
+    Input,
+    Select,
+} from "@qarasky/kore-ui";
+import { Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
-import { Button } from "@/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { EXPIRY_CHOICES, expiresAt, type ExpiryChoice } from "@/lib/token-row";
 import { mintToken } from "@/lib/tokens-api";
 
 /** The minted token, shown once: only Done closes it, and closing drops it. */
 function MintedToken({ name, token, onDone }: { name: string; token: string; onDone: () => void }) {
-    const [copied, setCopied] = useState(false);
     return (
         <Dialog open>
             <DialogContent
-                className="sm:max-w-lg"
-                showCloseButton={false}
+                size="lg"
+                title={`Token “${name}”`}
+                description="Copy it now: it is shown only this once. It can do everything an operator can."
+                showClose={false}
                 onInteractOutside={(event) => event.preventDefault()}
                 onEscapeKeyDown={(event) => event.preventDefault()}
             >
-                <DialogHeader>
-                    <DialogTitle>Token {name}</DialogTitle>
-                    <DialogDescription>
-                        Copy it now: it is shown only this once. It can do everything an operator can.
-                    </DialogDescription>
-                </DialogHeader>
-                <div className="flex gap-2">
-                    <Input
-                        readOnly
-                        value={token}
-                        aria-label="Operator token"
-                        className="font-mono text-xs"
-                        onFocus={(e) => e.target.select()}
-                    />
-                    <Button
-                        variant="outline"
-                        size="icon"
-                        aria-label="Copy token"
-                        onClick={() => {
-                            // The clipboard API needs a secure origin; on plain http the field is there to select.
-                            if (!navigator.clipboard) {
-                                return;
-                            }
-                            void navigator.clipboard.writeText(token).then(() => setCopied(true));
-                        }}
-                    >
-                        <Copy />
-                    </Button>
-                </div>
-                {copied ? <p className="text-muted-foreground text-xs">Copied.</p> : null}
+                <DialogBody>
+                    <div className="flex items-center gap-2">
+                        {/* The clipboard API needs a secure origin; on plain http the field is there to select. */}
+                        <Input
+                            readOnly
+                            value={token}
+                            aria-label="Operator token"
+                            className="font-mono text-sub"
+                            onFocus={(e) => e.target.select()}
+                        />
+                        <CopyButton value={token} label="Copy token" size="md" />
+                    </div>
+                </DialogBody>
                 <DialogFooter>
-                    <Button onClick={onDone}>Done</Button>
+                    <Button variant="primary" onClick={onDone}>
+                        Done
+                    </Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>
@@ -88,7 +73,7 @@ export function MintTokenDialog({ onMinted }: { onMinted: () => void }) {
             setMinted({ name: answer.apiKey.name, token: answer.token });
             onMinted();
         } catch (e) {
-            setError(e instanceof Error ? e.message : "Could not make the token.");
+            setError(e instanceof Error ? e.message : "Couldn't make the token. Try again.");
         } finally {
             setBusy(false);
         }
@@ -97,6 +82,7 @@ export function MintTokenDialog({ onMinted }: { onMinted: () => void }) {
     return (
         <>
             <Button
+                variant="primary"
                 size="sm"
                 onClick={() => {
                     setName("");
@@ -109,49 +95,38 @@ export function MintTokenDialog({ onMinted }: { onMinted: () => void }) {
                 New token
             </Button>
             <Dialog open={open} onOpenChange={(next) => !busy && setOpen(next)}>
-                <DialogContent className="sm:max-w-md">
-                    <form onSubmit={(e) => void submit(e)} className="grid gap-4">
-                        <DialogHeader>
-                            <DialogTitle>New operator token</DialogTitle>
-                            <DialogDescription>
-                                For scripts, the API and signing in without an account.
-                            </DialogDescription>
-                        </DialogHeader>
-                        <div className="grid gap-1.5">
-                            <Label htmlFor="token-name">Name</Label>
-                            <Input
-                                id="token-name"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                placeholder="What uses it"
-                                required
-                                maxLength={255}
-                            />
-                        </div>
-                        <div className="grid gap-1.5">
-                            <Label htmlFor="token-expiry">Expires</Label>
-                            <NativeSelect
-                                id="token-expiry"
-                                value={expiry}
-                                onChange={(e) => setExpiry(e.target.value as ExpiryChoice)}
-                            >
-                                {EXPIRY_CHOICES.map((choice) => (
-                                    <NativeSelectOption key={choice.value} value={choice.value}>
-                                        {choice.label}
-                                    </NativeSelectOption>
-                                ))}
-                            </NativeSelect>
-                        </div>
-                        {error ? (
-                            <p role="alert" className="text-status-down text-xs">
-                                {error}
-                            </p>
-                        ) : null}
+                <DialogContent
+                    title="New operator token"
+                    description="For scripts, the API and signing in without an account."
+                >
+                    <form onSubmit={(e) => void submit(e)} className="flex min-h-0 flex-col">
+                        <DialogBody className="flex flex-col gap-4">
+                            <Field label="Name" required>
+                                <Input
+                                    value={name}
+                                    onChange={(e) => setName(e.target.value)}
+                                    placeholder="Office wall screen"
+                                    maxLength={255}
+                                />
+                            </Field>
+                            <Field label="Expires">
+                                <Select<ExpiryChoice>
+                                    value={expiry}
+                                    onValueChange={setExpiry}
+                                    options={EXPIRY_CHOICES}
+                                />
+                            </Field>
+                            {error ? (
+                                <p role="alert" className="text-meta text-danger">
+                                    {error}
+                                </p>
+                            ) : null}
+                        </DialogBody>
                         <DialogFooter>
-                            <Button type="button" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
+                            <Button onClick={() => setOpen(false)} disabled={busy}>
                                 Cancel
                             </Button>
-                            <Button type="submit" disabled={busy || !name.trim()}>
+                            <Button type="submit" variant="primary" loading={busy} disabled={!name.trim()}>
                                 {busy ? "Making…" : "Make token"}
                             </Button>
                         </DialogFooter>

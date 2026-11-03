@@ -2,8 +2,8 @@
 
 The wall board: one card per server that pushes telemetry, sized and coloured to
 be read from across the room. It is a route in the [web app](dashboard.md)
-(`apps/web/`), not a separate application, and keeps the old dashboard's look
-(`app/legacy.css`).
+(`apps/web/`), not a separate application, with its own full-screen layout on
+kore-ui components and tokens.
 
 | Route               | Chrome                 | Use                 |
 | ------------------- | ---------------------- | ------------------- |
@@ -247,8 +247,8 @@ Small fleets stay on one page instead of rotating.
 | `rotate`        | `5`      | Seconds between pages (1–300). Rotation pauses on any interaction and resumes after 30 s idle, and pauses while the tab is hidden. |
 | `perPage`       | measured | Explicit page size override.                                                                                                       |
 
-A kiosk with no session shows a QR code to sign in with a phone; see
-[Sign in with a QR code](dashboard.md#sign-in-with-a-qr-code).
+A kiosk with no session shows the Kore ID sign-in; see
+[signing in](dashboard.md#signing-in).
 
 Kiosk mode is chrome-free and hides scrollbars. Reaching it is a route, not a
 parameter.

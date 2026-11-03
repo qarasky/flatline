@@ -1,122 +1,121 @@
 "use client";
 
-import { Ellipsis, KeyRound, UserMinus } from "lucide-react";
+import {
+    Avatar,
+    Badge,
+    EmptyState,
+    IconButton,
+    Menu,
+    MenuContent,
+    MenuItem,
+    MenuTrigger,
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+    TableRowHeader,
+} from "@qarasky/kore-ui";
+import { MoreHorizontal, UserMinus, Users } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
 import { RemoveMemberDialog } from "@/components/members/remove-member-dialog";
-import { ResetPasswordDialog } from "@/components/members/reset-password-dialog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { initials } from "@/lib/me";
-import { type Member, type MemberStatus, memberStatus } from "@/lib/members";
-import { PASSWORD_PATH } from "@/lib/session";
+import { type Member } from "@/lib/members";
 
-const STATUS: Record<MemberStatus, { label: string; className: string } | null> = {
-    active: null,
-    "awaiting-first-sign-in": { label: "Awaiting first sign-in", className: "text-status-warn" },
-    "needs-reset": { label: "Needs a password reset", className: "text-status-down" },
-};
-
-type Action = { kind: "reset" | "remove"; member: Member } | null;
-
-/** One dense row per member, with reset and remove behind the row's menu (change password on your own). */
+/** One row per member, with remove behind the row's menu for someone else. */
 export function MembersList({ members, meId }: { members: Member[]; meId: number | null }) {
-    const [action, setAction] = useState<Action>(null);
+    const [removing, setRemoving] = useState<Member | null>(null);
 
     if (members.length === 0) {
         return (
-            <div className="flex flex-1 items-center justify-center p-10">
-                <p className="text-muted-foreground max-w-sm text-center">
-                    No members yet. Add the people who use Flatline; until then, signing in needs a token.
-                </p>
-            </div>
+            <EmptyState
+                icon={<Users />}
+                title="No members yet"
+                description="People appear here after their first Kore ID sign-in. To give someone access, grant them the flatline app in Kore ID."
+            />
         );
     }
 
     return (
         <>
-            <ul aria-label="Members" className="divide-y">
-                {members.map((member) => {
-                    const status = STATUS[memberStatus(member)];
-                    const own = member.id === meId;
-                    return (
-                        <li key={member.id} className="flex h-11 items-center gap-3 px-4">
-                            <span className="bg-raised flex size-6 shrink-0 items-center justify-center rounded text-[10px] font-medium">
-                                {initials(member.name)}
-                            </span>
-                            <span className="min-w-0 truncate font-medium">
-                                {member.name}
-                                {own && <span className="text-muted-foreground font-normal"> (you)</span>}
-                            </span>
-                            <span className="text-muted-foreground min-w-0 flex-1 truncate">{member.email}</span>
-                            {member.tokenCount > 0 && (
-                                <Link
-                                    href="/tokens"
-                                    className="text-muted-foreground text-xs tabular-nums hover:underline"
-                                >
-                                    {member.tokenCount} token{member.tokenCount === 1 ? "" : "s"}
-                                </Link>
-                            )}
-                            {status && (
-                                <Badge variant="outline" className={status.className}>
-                                    {status.label}
-                                </Badge>
-                            )}
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="size-7"
-                                        aria-label={`${member.name}: actions`}
-                                    >
-                                        <Ellipsis />
-                                    </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="min-w-44">
-                                    {/* A reset would sign you out and hand you a starting password:
-                                        your own row changes it instead. */}
-                                    {own ? (
-                                        <DropdownMenuItem asChild>
-                                            <Link href={PASSWORD_PATH}>
-                                                <KeyRound />
-                                                Change password
-                                            </Link>
-                                        </DropdownMenuItem>
+            <p className="text-meta text-muted mb-4">
+                Every member is a full operator. Access comes from Kore ID: grant the flatline app there, and remove the
+                account here when someone leaves.
+            </p>
+            <Table caption="Members">
+                <TableHeader>
+                    <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead className="max-sm:hidden">Email</TableHead>
+                        <TableHead>Sign-in</TableHead>
+                        <TableHead align="right">Tokens</TableHead>
+                        <TableHead className="w-12">
+                            <span className="sr-only">Actions</span>
+                        </TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    {members.map((member) => {
+                        const own = member.id === meId;
+                        return (
+                            <TableRow key={member.id} data-member-id={member.id}>
+                                <TableRowHeader>
+                                    <div className="flex min-w-0 items-center gap-3">
+                                        <Avatar name={member.name} email={member.email} size="sm" />
+                                        <span className="min-w-0 truncate font-medium">{member.name}</span>
+                                        {own ? <Badge tone="accent">You</Badge> : null}
+                                    </div>
+                                </TableRowHeader>
+                                <TableCell muted className="max-w-72 truncate max-sm:hidden">
+                                    {member.email}
+                                </TableCell>
+                                <TableCell>
+                                    {member.sso ? (
+                                        <Badge tone="outline">Kore ID</Badge>
                                     ) : (
-                                        <DropdownMenuItem onSelect={() => setAction({ kind: "reset", member })}>
-                                            <KeyRound />
-                                            Reset password
-                                        </DropdownMenuItem>
+                                        <span className="text-muted">Linked on next sign-in</span>
                                     )}
+                                </TableCell>
+                                <TableCell align="right" muted>
+                                    {member.tokenCount > 0 ? (
+                                        <Link href="/tokens" className="hover:text-text hover:underline">
+                                            {member.tokenCount} token{member.tokenCount === 1 ? "" : "s"}
+                                        </Link>
+                                    ) : (
+                                        "—"
+                                    )}
+                                </TableCell>
+                                <TableCell align="right">
                                     {/* Nobody removes their own account: someone else does it. */}
-                                    {!own && (
-                                        <DropdownMenuItem
-                                            variant="destructive"
-                                            onSelect={() => setAction({ kind: "remove", member })}
-                                        >
-                                            <UserMinus />
-                                            Remove
-                                        </DropdownMenuItem>
-                                    )}
-                                </DropdownMenuContent>
-                            </DropdownMenu>
-                        </li>
-                    );
-                })}
-            </ul>
+                                    {!own ? (
+                                        <Menu>
+                                            <MenuTrigger asChild>
+                                                <IconButton
+                                                    label={`${member.name}: actions`}
+                                                    icon={<MoreHorizontal />}
+                                                />
+                                            </MenuTrigger>
+                                            <MenuContent align="end">
+                                                <MenuItem
+                                                    danger
+                                                    icon={<UserMinus />}
+                                                    onSelect={() => setRemoving(member)}
+                                                >
+                                                    Remove…
+                                                </MenuItem>
+                                            </MenuContent>
+                                        </Menu>
+                                    ) : null}
+                                </TableCell>
+                            </TableRow>
+                        );
+                    })}
+                </TableBody>
+            </Table>
 
-            {action?.kind === "reset" && <ResetPasswordDialog member={action.member} onClose={() => setAction(null)} />}
-            {action?.kind === "remove" && (
-                <RemoveMemberDialog member={action.member} members={members} onClose={() => setAction(null)} />
-            )}
+            {removing && <RemoveMemberDialog member={removing} members={members} onClose={() => setRemoving(null)} />}
         </>
     );
 }

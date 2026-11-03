@@ -7,7 +7,7 @@ import type { StatusPageSnapshot } from "@flatline/shared";
  * - Host resolution: only a successful answer with `slug: null` means "this
  *   host is not a status domain". Anything else (network error, 5xx, a body
  *   that is not the expected shape) is an error to retry, never "unmapped" —
- *   an unmapped host renders the operator token gate, which must not happen
+ *   an unmapped host renders the sign-in page, which must not happen
  *   on a client's status domain because the server blinked.
  * - Page refresh: once a page has rendered, a failed refresh keeps the last
  *   good snapshot on screen and marks it stale instead of replacing it with

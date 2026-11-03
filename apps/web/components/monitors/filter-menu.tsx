@@ -2,11 +2,10 @@
 
 import { ListFilter } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Button, Popover, PopoverContent, PopoverTrigger, cn } from "@qarasky/kore-ui";
+
 import { STATUS_LABEL } from "@/lib/board-format";
 import { STATUS_KEYS, activeFilterCount, type FilterState, type StatusKey } from "@/lib/board-model";
-import { cn } from "@/lib/utils";
 
 import { StatusDot } from "./status-dot";
 
@@ -21,8 +20,8 @@ function Chip({ pressed, onClick, children }: { pressed: boolean; onClick: () =>
             aria-pressed={pressed}
             onClick={onClick}
             className={cn(
-                "hover:bg-accent flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs",
-                pressed && "border-primary/60 bg-primary/10"
+                "text-meta flex h-7 items-center gap-1.5 rounded-ui border border-border-strong px-2 transition-colors hover:bg-white/5",
+                pressed && "border-accent/60 bg-accent/10"
             )}
         >
             {children}
@@ -33,7 +32,7 @@ function Chip({ pressed, onClick, children }: { pressed: boolean; onClick: () =>
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
     return (
         <section>
-            <h3 className="text-muted-foreground mb-1.5 text-[11px] tracking-wide uppercase">{title}</h3>
+            <h3 className="text-muted text-meta mb-1.5 font-medium">{title}</h3>
             <div className="flex flex-wrap gap-1.5">{children}</div>
         </section>
     );
@@ -57,11 +56,11 @@ export function FilterMenu({
     return (
         <Popover>
             <PopoverTrigger asChild>
-                <Button variant="outline" size="sm">
+                <Button size="sm">
                     <ListFilter />
                     Filter
                     {count > 0 ? (
-                        <span className="bg-primary text-primary-foreground inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums">
+                        <span className="bg-accent text-2xs inline-flex min-w-4 items-center justify-center rounded-full px-1 leading-4 font-semibold text-white tabular-nums">
                             {count}
                         </span>
                     ) : null}
@@ -75,7 +74,7 @@ export function FilterMenu({
                             pressed={filter.status.includes(status)}
                             onClick={() => onChange({ ...filter, status: toggle(filter.status, status) })}
                         >
-                            <StatusDot status={status} size={10} />
+                            <StatusDot status={status} />
                             {STATUS_LABEL[status]}
                         </Chip>
                     ))}
@@ -86,7 +85,7 @@ export function FilterMenu({
                         onClick={() => onChange({ ...filter, attention: !filter.attention })}
                     >
                         Needs attention
-                        <span className="text-muted-foreground tabular-nums">{attentionCount}</span>
+                        <span className="text-muted tabular-nums">{attentionCount}</span>
                     </Chip>
                 </div>
                 {types.length > 0 ? (
@@ -118,7 +117,7 @@ export function FilterMenu({
                 <div className="flex justify-end border-t pt-2">
                     <Button
                         variant="ghost"
-                        size="xs"
+                        size="sm"
                         disabled={count === 0}
                         onClick={() => onChange({ ...filter, status: [], types: [], tags: [], attention: false })}
                     >

@@ -1,4 +1,4 @@
-# Copilot instructions for Flatline
+# Copilot instructions for KoreMonitor
 
 ## Goals
 
@@ -8,7 +8,7 @@
 
 ## Repository overview
 
-Flatline is a self-hosted uptime monitor and fleet-telemetry system: a fork of
+KoreMonitor is a self-hosted uptime monitor and fleet-telemetry system: a fork of
 Uptime Kuma with its own Rust backend, a Go host agent, a Go backup agent and a
 Next.js web app behind Caddy. The Node/Express backend, the Vue frontend, the
 standalone Next.js status app and the Vite dashboard (`apps/dashboard/`) were

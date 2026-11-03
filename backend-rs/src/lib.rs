@@ -17,7 +17,6 @@ pub mod backups;
 pub mod badges;
 pub mod config;
 pub mod db;
-pub mod device;
 pub mod events;
 pub mod heartbeats;
 pub mod import;
@@ -28,6 +27,7 @@ pub mod mutes;
 pub mod notify;
 pub mod sessions;
 pub mod shutdown;
+pub mod sso;
 pub mod status_pages;
 
 use std::sync::Arc;
@@ -51,27 +51,23 @@ pub struct AppState {
     pub status_page_secret: Arc<String>,
     /// Short-lived cache behind `GET /api/v1/monitors/heartbeat-strips`.
     pub strips: Arc<api::strips::StripCache>,
-    /// Pending QR sign-in requests (in memory; see `device`).
-    pub devices: Arc<device::DeviceRequests>,
-    /// Failed email/password sign-ins (in memory; see `accounts`).
-    pub sign_ins: Arc<accounts::SignInLimiter>,
+    /// Kore ID sign-in, when `KORE_ID_ISSUER` is set.
+    pub sso: Option<Arc<sso::Sso>>,
 }
 
-/// Open the database, run migrations, and make sure an admin token exists.
+/// Open the database and run migrations. There is no bootstrap credential:
+/// the first person to sign in through Kore ID is provisioned as a full
+/// operator.
 pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
     let pool = db::connect(&config.data_dir).await?;
-
-    if let Some(token) = auth::ensure_initial_token(&pool, &config.data_dir).await? {
-        tracing::info!(
-            "first boot: admin token written to {}/initial-token.txt",
-            config.data_dir.display()
-        );
-        tracing::info!("admin token: {token}");
-    }
 
     let events = events::Events::new();
     let engine = monitors::engine::Engine::new(pool.clone(), Arc::clone(&events));
     let metrics = metrics::Metrics::new(pool.clone(), Arc::clone(&events));
+    let sso = config
+        .kore_id
+        .clone()
+        .map(|kore| Arc::new(sso::Sso::new(kore)));
     let config = Arc::new(config);
     let backups = backups::Backups::new(pool.clone(), Arc::clone(&config), Arc::clone(&events));
     let status_page_secret = status_pages::ensure_secret(&config.data_dir)?;
@@ -85,8 +81,7 @@ pub async fn build_state(config: config::Config) -> anyhow::Result<AppState> {
         backups,
         status_page_secret: Arc::new(status_page_secret),
         strips: Arc::new(api::strips::StripCache::new()),
-        devices: Arc::new(device::DeviceRequests::new()),
-        sign_ins: Arc::new(accounts::SignInLimiter::new()),
+        sso,
     })
 }
 

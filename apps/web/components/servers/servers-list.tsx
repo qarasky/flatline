@@ -1,93 +1,102 @@
 "use client";
 
-import { Search } from "lucide-react";
+import {
+    cn,
+    EmptyState,
+    Input,
+    PageBody,
+    Select,
+    Table,
+    TableBody,
+    TableCell,
+    TableEmpty,
+    TableHead,
+    TableHeader,
+    TableRow,
+    TableRowHeader,
+} from "@qarasky/kore-ui";
+import { Search, Server } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { useBoardData } from "@/components/board/board-data";
 import { PausedBanner } from "@/components/board/paused-banner";
-import { UsageBar } from "@/components/fleet/metric-bar";
+import { UsageMeter } from "@/components/fleet/metric-bar";
 import { ProviderLogo } from "@/components/fleet/provider-logo";
 import { StatusDot, statusTone } from "@/components/monitors/status-dot";
-import { Input } from "@/components/ui/input";
 import { useClock } from "@/hooks/use-clock";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { STATUS_LABEL } from "@/lib/board-format";
 import { statusKeyOf, statusRank } from "@/lib/board-model";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { isCovered } from "@/lib/mute";
 import { serverRow, type ServerRow } from "@/lib/server-row";
-import { cn } from "@/lib/utils";
 
 import { useFleetMetrics } from "./use-fleet-metrics";
 
 type SortKey = "worst" | "name" | "cpu" | "ram" | "disk";
-const SORTS: { key: SortKey; label: string }[] = [
-    { key: "worst", label: "Worst first" },
-    { key: "name", label: "Name" },
-    { key: "cpu", label: "CPU" },
-    { key: "ram", label: "RAM" },
-    { key: "disk", label: "Disk" },
+const SORTS: { value: SortKey; label: string }[] = [
+    { value: "worst", label: "Worst first" },
+    { value: "name", label: "Name" },
+    { value: "cpu", label: "CPU" },
+    { value: "ram", label: "RAM" },
+    { value: "disk", label: "Disk" },
 ];
 
-function Meter({ label, value }: { label: string; value: number | null }) {
-    return (
-        <div className="min-w-0">
-            <div className="flex items-baseline justify-between gap-2 text-xs">
-                <span className="text-muted-foreground">{label}</span>
-                <span className="tnum">{value === null ? "—" : `${value.toFixed(value < 10 ? 1 : 0)}%`}</span>
-            </div>
-            <div className="mt-1">
-                <UsageBar percent={value ?? undefined} label={label} />
-            </div>
-        </div>
-    );
-}
-
 function Row({ monitor, row, loaded }: { monitor: MonitorSummary; row: ServerRow; loaded: boolean }) {
+    const router = useRouter();
     const status = statusKeyOf(monitor);
     const muted = status === "down" && isCovered(monitor);
+    const href = `/servers/${monitor.id}`;
     return (
-        <li>
-            <Link
-                href={`/servers/${monitor.id}`}
-                data-server-id={monitor.id}
-                className="hover:bg-accent grid grid-cols-[12px_minmax(0,1.4fr)_88px_repeat(3,minmax(90px,1fr))_minmax(150px,0.9fr)] items-center gap-4 border-b px-4 py-2.5"
-            >
-                <StatusDot status={status} muted={muted} />
-                <span className="flex min-w-0 items-center gap-2 font-medium">
+        <TableRow
+            interactive
+            data-server-id={monitor.id}
+            onClick={(event) => {
+                // The name is the real link; the rest of the row is a mouse shortcut to it.
+                if (!(event.target as HTMLElement).closest("a")) {
+                    router.push(href);
+                }
+            }}
+        >
+            <TableRowHeader className="max-w-72">
+                <span className="flex min-w-0 items-center gap-2.5">
+                    <StatusDot status={status} muted={muted} />
                     <ProviderLogo provider={monitor.provider} />
-                    <span className="truncate">{monitor.name}</span>
+                    <Link href={href} className="truncate font-medium hover:underline">
+                        {monitor.name}
+                    </Link>
                 </span>
-                <span className={cn("text-xs", status === "up" ? "text-muted-foreground" : statusTone(status))}>
-                    {muted ? "Down · muted" : STATUS_LABEL[status]}
+            </TableRowHeader>
+            <TableCell
+                className={cn("text-sub whitespace-nowrap", status === "up" ? "text-muted" : statusTone(status))}
+            >
+                {muted ? "Down · muted" : STATUS_LABEL[status]}
+            </TableCell>
+            {row.freshness === "none" ? (
+                <TableCell muted colSpan={3} className="text-sub">
+                    {loaded ? "No metrics yet" : "Loading metrics…"}
+                </TableCell>
+            ) : (
+                <>
+                    <TableCell className="min-w-28">
+                        <UsageMeter label="CPU" percent={row.cpu} hideLabel />
+                    </TableCell>
+                    <TableCell className="min-w-28">
+                        <UsageMeter label="RAM" percent={row.ram} hideLabel />
+                    </TableCell>
+                    <TableCell className="min-w-28">
+                        <UsageMeter label="Disk" percent={row.disk} hideLabel />
+                    </TableCell>
+                </>
+            )}
+            <TableCell align="right" className="text-meta">
+                <span className={cn("block truncate", row.freshness === "stale" ? "text-status-warn" : "text-muted")}>
+                    {row.freshness === "none" ? "—" : row.ageText}
                 </span>
-                {row.freshness === "none" ? (
-                    <span className="text-muted-foreground col-span-3 text-xs">
-                        {loaded ? "No metrics yet" : "Loading metrics…"}
-                    </span>
-                ) : (
-                    <>
-                        <Meter label="CPU" value={row.cpu} />
-                        <Meter label="RAM" value={row.ram} />
-                        <Meter label="Disk" value={row.disk} />
-                    </>
-                )}
-                <span className="min-w-0 text-right text-xs">
-                    <span
-                        className={cn(
-                            "block truncate",
-                            row.freshness === "stale" ? "text-warn" : "text-muted-foreground"
-                        )}
-                    >
-                        {row.freshness === "none" ? "—" : row.ageText}
-                    </span>
-                    {row.agentVersion ? (
-                        <span className="text-muted-foreground block truncate tnum">agent {row.agentVersion}</span>
-                    ) : null}
-                </span>
-            </Link>
-        </li>
+                {row.agentVersion ? <span className="block truncate text-muted">agent {row.agentVersion}</span> : null}
+            </TableCell>
+        </TableRow>
     );
 }
 
@@ -133,57 +142,76 @@ export function ServersList() {
     }, [servers, samples, now, query, sort]);
 
     if (!rosterLoaded) {
-        return <p className="text-muted-foreground p-6">Loading…</p>;
+        return (
+            <PageBody width="full">
+                <p className="text-muted">Loading…</p>
+            </PageBody>
+        );
     }
     return (
-        <section aria-label="Servers" className="flex flex-1 flex-col">
+        <section aria-label="Servers" className="flex min-h-0 flex-1 flex-col">
             <PausedBanner />
-            {failed ? (
-                <p role="status" className="text-warn border-b px-4 py-1.5 text-xs">
-                    Could not load the latest metrics for some servers; their numbers may be old.
-                </p>
-            ) : null}
-            <div className="flex min-h-11 items-center gap-2 border-b px-4 py-2">
-                <span className="text-muted-foreground text-xs tnum">
-                    {servers.length} server{servers.length === 1 ? "" : "s"}
-                </span>
-                <div className="relative ml-auto">
-                    <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-                    <Input
-                        type="search"
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Search servers"
-                        aria-label="Search servers"
-                        className="h-8 w-56 pl-8"
+            <PageBody width="full" className="grid gap-4">
+                {servers.length === 0 ? (
+                    <EmptyState
+                        icon={<Server />}
+                        title="No servers yet"
+                        description="A server is a push monitor whose host runs the KoreMonitor agent."
                     />
-                </div>
-                <NativeSelect
-                    size="sm"
-                    aria-label="Sort"
-                    value={sort}
-                    onChange={(e) => setSort(e.target.value as SortKey)}
-                >
-                    {SORTS.map((s) => (
-                        <NativeSelectOption key={s.key} value={s.key}>
-                            {s.label}
-                        </NativeSelectOption>
-                    ))}
-                </NativeSelect>
-            </div>
-            {servers.length === 0 ? (
-                <div className="flex flex-1 items-center justify-center p-10">
-                    <p className="text-muted-foreground max-w-sm text-center">
-                        No servers yet. A server is a push monitor whose host runs the Flatline agent.
-                    </p>
-                </div>
-            ) : (
-                <ul>
-                    {rows.map(({ monitor, row }) => (
-                        <Row key={monitor.id} monitor={monitor} row={row} loaded={loaded} />
-                    ))}
-                </ul>
-            )}
+                ) : (
+                    <>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-meta text-muted tnum">
+                                {servers.length} server{servers.length === 1 ? "" : "s"}
+                            </span>
+                            <Input
+                                type="search"
+                                size="sm"
+                                leadingIcon={<Search />}
+                                value={query}
+                                onChange={(e) => setQuery(e.target.value)}
+                                placeholder="Search servers"
+                                aria-label="Search servers"
+                                className="ml-auto w-56"
+                            />
+                            <Select
+                                size="sm"
+                                aria-label="Sort"
+                                value={sort}
+                                onValueChange={setSort}
+                                options={SORTS}
+                                className="w-40"
+                            />
+                        </div>
+                        {failed ? (
+                            <p role="status" className="text-meta text-warning">
+                                Couldn&apos;t load the latest metrics for some servers; their numbers may be old.
+                            </p>
+                        ) : null}
+                        <Table caption="Servers">
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Server</TableHead>
+                                    <TableHead>Status</TableHead>
+                                    <TableHead>CPU</TableHead>
+                                    <TableHead>RAM</TableHead>
+                                    <TableHead>Disk</TableHead>
+                                    <TableHead align="right">Updated</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {rows.length === 0 ? (
+                                    <TableEmpty colSpan={6}>No servers match “{query.trim()}”.</TableEmpty>
+                                ) : (
+                                    rows.map(({ monitor, row }) => (
+                                        <Row key={monitor.id} monitor={monitor} row={row} loaded={loaded} />
+                                    ))
+                                )}
+                            </TableBody>
+                        </Table>
+                    </>
+                )}
+            </PageBody>
         </section>
     );
 }

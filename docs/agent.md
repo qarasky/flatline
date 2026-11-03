@@ -1,8 +1,8 @@
-# Flatline host agent (`superboard`)
+# KoreMonitor host agent (`superboard`)
 
 The host agent is a single Go binary that runs on each monitored machine,
 sampling the host every second and pushing the samples, plus a self-report, to
-one Flatline push monitor over HTTP. It is the only component a monitored host
+one KoreMonitor push monitor over HTTP. It is the only component a monitored host
 runs; see [architecture](architecture.md) for its place beside the Rust backend
 and the web app, and [superboard](superboard.md) for the card it feeds.
 
@@ -14,9 +14,9 @@ and the web app, and [superboard](superboard.md) for the card it feeds.
   works behind NAT, on a laptop, on a home router.
 - **Per-monitor push token.** Each host carries its own monitor's push token
   (`flatline_agent_push_...`), a bearer secret that routes the samples and gates
-  self-update downloads. It is an agent credential: the operator API and the GUI
-  reject it with `agent_token_on_operator_api`. There is no fleet-wide agent
-  credential, and backup-agent tokens are a separate family.
+  self-update downloads. It is an agent credential: `/api/v1` rejects it with
+  `agent_token_on_operator_api`. There is no fleet-wide agent credential, and
+  backup-agent tokens are a separate family.
 - **Silence is the alert.** The agent has no "host down" concept; if pushes
   stop, the server's push-timeout path on that monitor goes down.
 - **Telemetry must not kill telemetry.** Collectors degrade to an explicit
@@ -107,7 +107,7 @@ provisioning is in the [provisioning runbook](provisioning.md).
 
 | Key                           | Default                      | Meaning                                                                                                                                                                                   |
 | ----------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server_url`                  | — (required)                 | Flatline origin, e.g. `https://uptime.example`. Plain `http://` is refused unless `allow_insecure`.                                                                                       |
+| `server_url`                  | — (required)                 | KoreMonitor origin, e.g. `https://uptime.example`. Plain `http://` is refused unless `allow_insecure`.                                                                                    |
 | `push_token`                  | — (required)                 | The monitor's push token (`flatline_agent_push_...`; legacy `flatline_...` still accepted). Bearer secret: keep the file 0600. Rotation is one server-side regenerate plus one line here. |
 | `interval_seconds`            | `1`                          | Seconds between live samples. An explicitly configured interval is preserved on upgrade.                                                                                                  |
 | `allow_insecure`              | `false`                      | Permit plain HTTP. Off by default because metrics (hostnames, container names, versions) are useful recon in cleartext.                                                                   |

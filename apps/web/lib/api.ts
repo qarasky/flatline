@@ -1,5 +1,5 @@
 /**
- * Client for the Flatline API, usable from server and client components.
+ * Client for the KoreMonitor API, usable from server and client components.
  *
  * - On the server it calls `API_URL` directly and forwards the session cookie,
  *   so server-rendered pages fetch as the signed-in person.
@@ -10,7 +10,7 @@
  * message and hint.
  */
 
-import { CSRF_HEADER, HOME_PATH, PASSWORD_PATH, PATH_HEADER, SESSION_COOKIE, SIGN_IN_PATH } from "@/lib/session";
+import { CSRF_HEADER, HOME_PATH, PATH_HEADER, SESSION_COOKIE, SIGN_IN_PATH } from "@/lib/session";
 
 export const DEFAULT_API_URL = "http://127.0.0.1:3001";
 
@@ -132,19 +132,13 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
         if (options.signal?.aborted) {
             throw error;
         }
-        throw new ApiError(503, "unreachable", "Could not reach Flatline.");
+        throw new ApiError(503, "unreachable", "Could not reach KoreMonitor.");
     }
     if (!response.ok) {
         if (server && response.status === 401) {
             await toSignIn();
         }
-        const error = await toError(response);
-        if (server && error.code === "password_change_required") {
-            // A starting password: nothing else works until it is changed.
-            const { redirect } = await import("next/navigation");
-            redirect(PASSWORD_PATH);
-        }
-        throw error;
+        throw await toError(response);
     }
     if (response.status === 204) {
         return undefined as T;

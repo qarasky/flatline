@@ -33,9 +33,9 @@ const INSTALLER: &str = include_str!("../../../agent-install.sh");
 
 /// The LLM pointer file, served at `/llms.txt`.
 const LLMS: &str = "\
-# Flatline
+# KoreMonitor
 
-> Flatline is the server-monitoring service for this organisation. This file
+> KoreMonitor is the server-monitoring service for this organisation. This file
 > points LLM agents at the tokenized resources for one job: deploy a host
 > agent and put its websites on the board.
 

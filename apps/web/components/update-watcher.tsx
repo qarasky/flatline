@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@qarasky/kore-ui";
 import { useEffect, useRef, useState } from "react";
 
 import { startVersionWatch } from "@/lib/build-id";
@@ -56,24 +57,16 @@ export function UpdateWatcher({
     }
     return (
         <div
-            className="bg-card fixed right-4 bottom-4 z-50 flex items-center gap-3 rounded-md border px-4 py-3 shadow-lg"
+            className="bg-raised border-border-strong shadow-overlay animate-kore-pop-in fixed right-4 bottom-4 z-60 flex items-center gap-3 rounded-overlay border py-2 pr-2 pl-4"
             role="status"
         >
-            <span>A new version of Flatline is available.</span>
-            <button
-                type="button"
-                className="bg-primary text-primary-foreground rounded-md px-3 py-1 font-medium"
-                onClick={() => window.location.reload()}
-            >
-                Reload
-            </button>
-            <button
-                type="button"
-                className="text-muted-foreground hover:text-foreground"
-                onClick={() => setDismissed(true)}
-            >
+            <span>A new version of KoreMonitor is available.</span>
+            <Button variant="ghost" size="sm" onClick={() => setDismissed(true)}>
                 Later
-            </button>
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => window.location.reload()}>
+                Reload
+            </Button>
         </div>
     );
 }

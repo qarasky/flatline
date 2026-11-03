@@ -1,6 +1,6 @@
 # Security Policy
 
-Flatline is a self-hosted, single-operator deployment. There is no bug bounty and
+KoreMonitor is a self-hosted, single-operator deployment. There is no bug bounty and
 no supported-versions table; the operator runs whatever `master` is deployed.
 
 ## Reporting a vulnerability

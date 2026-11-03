@@ -59,7 +59,7 @@ export function BoardTree({ board }: { board: Board }) {
             {board.ungrouped.length > 0 ? (
                 <>
                     {board.roots.length > 0 ? (
-                        <div className="text-muted-foreground px-4 pt-4 pb-1 text-xs font-semibold tracking-wide uppercase">
+                        <div className="text-muted text-meta px-4 pt-4 pb-1 font-medium">
                             Ungrouped <span className="ml-1 font-normal tabular-nums">{board.ungrouped.length}</span>
                         </div>
                     ) : null}

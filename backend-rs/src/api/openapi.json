@@ -1,9 +1,9 @@
 {
     "openapi": "3.1.0",
     "info": {
-        "title": "Flatline API",
+        "title": "KoreMonitor API",
         "version": "1.0.0",
-        "description": "Monitoring API for automation and agents. Every response includes an `ok` boolean. Authenticate with `Authorization: Bearer <token>`. Credential families: `flatline_op_...` operator (GUI sign-in and every /api/v1 call), `flatline_agent_push_...` host agent (only /api/push/{token} and /agent/*), `flatline_agent_backup_...` backup agent (only /api/backup/v1). Using a credential on the wrong surface returns an explicit error code with a `hint`. Failures use `{ ok, error, code, message, hint?, details? }`."
+        "description": "Monitoring API for automation and agents. Every response includes an `ok` boolean. Authenticate machine calls with `Authorization: Bearer <token>`. Credential families: `flatline_op_...` operator API token (every /api/v1 call; people sign in to the web app with Kore ID), `flatline_agent_push_...` host agent (only /api/push/{token} and /agent/*), `flatline_agent_backup_...` backup agent (only /api/backup/v1). Using a credential on the wrong surface returns an explicit error code with a `hint`. Failures use `{ ok, error, code, message, hint?, details? }`. A Kore ID access token (a JWT whose audience is this app's client id) is also accepted as `Authorization: Bearer` for an account that has signed in through Kore ID."
     },
     "servers": [
         {
@@ -16,13 +16,13 @@
             "bearerAuth": {
                 "type": "http",
                 "scheme": "bearer",
-                "description": "Operator token `flatline_op_...` from the web app's Tokens section, or the admin token from data/initial-token.txt. Legacy `flatline_...` tokens are still accepted. Agent tokens are rejected here with `agent_token_on_operator_api`."
+                "description": "Operator API token `flatline_op_...` from the web app's Tokens section. It authenticates /api/v1 as a machine credential; it does not create a browser session (people sign in with Kore ID). Legacy `flatline_...` tokens are still accepted. Agent tokens are rejected here with `agent_token_on_operator_api`."
             },
             "cookieAuth": {
                 "type": "apiKey",
                 "in": "cookie",
                 "name": "fl_session",
-                "description": "The web app's session cookie, set by POST /api/v1/auth/session. It holds a random session id (`fls_...`), never a token; the server stores only its hash. A session belongs to a member account or an operator token and ends when it is signed out, after 30 idle days (account) or 400 (token), when the account is removed or its password reset or changed, or when the token is disabled, expires or is deleted. A cookie-authenticated request other than GET/HEAD/OPTIONS must send `X-Flatline-CSRF: 1`, or it is refused with 403 `csrf_required`."
+                "description": "The web app's session cookie, created only by a successful Kore ID sign-in. It holds a random session id (`fls_...`), never a token; the server stores only its hash. A session belongs to a member account and ends when it is signed out, after 30 idle days, or when the account is removed. A cookie-authenticated request other than GET/HEAD/OPTIONS must send `X-Flatline-CSRF: 1`, or it is refused with 403 `csrf_required`."
             }
         },
         "parameters": {
@@ -76,12 +76,6 @@
                             "unauthorized",
                             "agent_token_on_operator_api",
                             "csrf_required",
-                            "setup_done",
-                            "starting_password_expired",
-                            "not_an_account",
-                            "wrong_password",
-                            "same_password",
-                            "password_change_required",
                             "operator_token_on_agent_api",
                             "agent_monitor_inactive",
                             "backup_agent_token_on_metric_agent_api",
@@ -89,7 +83,6 @@
                             "not_found",
                             "conflict",
                             "cannot_remove_self",
-                            "weak_password",
                             "email_taken",
                             "rate_limited",
                             "unavailable",
@@ -776,8 +769,8 @@
             },
             "User": {
                 "type": "object",
-                "description": "A member account. Every account has full permission, the same as an operator token. Passwords never appear in a response.",
-                "required": ["id", "email", "name", "mustChangePassword", "startingPasswordExpired", "createdAt"],
+                "description": "A member account. Every account has full permission, the same as an operator API token. Accounts are provisioned by a Kore ID sign-in; there are no passwords.",
+                "required": ["id", "email", "name", "createdAt"],
                 "properties": {
                     "id": {
                         "type": "integer"
@@ -789,20 +782,16 @@
                     "name": {
                         "type": "string"
                     },
-                    "mustChangePassword": {
-                        "type": "boolean",
-                        "description": "The password was set by someone else (add or reset); the member must choose their own at sign-in before anything else works."
-                    },
-                    "startingPasswordExpired": {
-                        "type": "boolean",
-                        "description": "A starting password unchanged for more than 7 days. Sign-in refuses it; someone must reset it."
-                    },
                     "createdAt": {
                         "type": "string"
                     },
                     "tokenCount": {
                         "type": "integer",
                         "description": "Operator tokens this account minted (list and detail only)."
+                    },
+                    "sso": {
+                        "type": "boolean",
+                        "description": "The account is tied to a Kore ID subject."
                     }
                 }
             }
@@ -819,7 +808,7 @@
                 }
             },
             "Forbidden": {
-                "description": "`csrf_required` (a cookie write without `X-Flatline-CSRF: 1`) or `password_change_required` (an account still on its starting password).",
+                "description": "`csrf_required` (a cookie write without `X-Flatline-CSRF: 1`).",
                 "content": {
                     "application/json": {
                         "schema": {
@@ -1417,7 +1406,7 @@
         "/api/v1/monitors/{id}/agent-warnings/clear": {
             "post": {
                 "summary": "Clear agent warnings",
-                "description": "Requires the `write` scope. Acknowledges every agent warning counter at once: `agent.failedPushes`, `agent.samplesDropped` and the per-collector `agent.collectorErrors`. The board shows each reported counter minus its ack, so this clears the whole \"Agent: …\" line on a card. Docker collector errors are acknowledged too, though the card renders them in the container section. The counters reset when the agent restarts and the acks are dropped automatically, so new warnings are never masked.",
+                "description": "Requires the `write` scope. Acknowledges every agent warning counter at once: `agent.failedPushes`, `agent.samplesDropped` and the per-collector `agent.collectorErrors`. The board shows each reported counter minus its ack, so this clears the whole \"Agent: \u2026\" line on a card. Docker collector errors are acknowledged too, though the card renders them in the container section. The counters reset when the agent restarts and the acks are dropped automatically, so new warnings are never masked.",
                 "parameters": [
                     {
                         "$ref": "#/components/parameters/monitorId"
@@ -1678,161 +1667,10 @@
                 }
             }
         },
-        "/api/v1/auth/setup": {
-            "get": {
-                "summary": "First-account status",
-                "description": "Public. `setupNeeded` is true while no member account exists; the sign-in page then offers \"Create the first account\".",
-                "security": [],
-                "responses": {
-                    "200": {
-                        "description": "Setup state",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "required": ["ok", "setupNeeded"],
-                                    "properties": {
-                                        "ok": {
-                                            "type": "boolean",
-                                            "const": true
-                                        },
-                                        "setupNeeded": {
-                                            "type": "boolean"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "post": {
-                "summary": "Create the first account",
-                "description": "Public. Body `{token, email, name, password}`: any valid operator token (for example the first-boot token in `data/initial-token.txt`) creates the first member account, with the password as typed (no change required), and signs it in (sets the `fl_session` cookie). Without a valid operator token: 401 `unauthorized`, or 401 `agent_token_on_operator_api` for an agent token. Once any account exists: 409 `setup_done`; add further members with `POST /api/v1/users`.",
-                "security": [],
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object",
-                                "required": ["token", "email", "name", "password"],
-                                "properties": {
-                                    "token": {
-                                        "type": "string"
-                                    },
-                                    "email": {
-                                        "type": "string"
-                                    },
-                                    "name": {
-                                        "type": "string",
-                                        "maxLength": 100
-                                    },
-                                    "password": {
-                                        "type": "string",
-                                        "minLength": 10
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Created and signed in; Set-Cookie carries the session. Body `{ok, principal:\"account\", user}`."
-                    },
-                    "400": {
-                        "$ref": "#/components/responses/BadRequest"
-                    },
-                    "401": {
-                        "$ref": "#/components/responses/Unauthorized"
-                    },
-                    "409": {
-                        "description": "`setup_done`: an account already exists.",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/Error"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/auth/login": {
-            "post": {
-                "summary": "Password login",
-                "description": "Unauthenticated, rate limited. Verifies password (+ TOTP when enrolled) and mints a full-scope token returned exactly once. Login tokens expire after 30 days.",
-                "responses": {
-                    "200": {
-                        "description": "Token and account"
-                    },
-                    "401": {
-                        "description": "Bad credentials, or TOTP required (error two_factor_required)."
-                    }
-                }
-            }
-        },
         "/api/v1/auth/session": {
-            "post": {
-                "summary": "Sign a browser in",
-                "description": "Public. Body `{email, password}` signs a member in and answers `{ok:true, principal:\"account\", mustChangePassword}`; body `{token}` signs in with an operator token and answers `{ok:true, principal:\"token\", tokenKind:\"operator\"}`. On success sets the `fl_session` cookie (`HttpOnly; SameSite=Lax; Path=/; Max-Age=34560000`, plus `Secure` behind HTTPS) holding a new session id. A wrong email and a wrong password answer the same 401 `unauthorized`; a right password whose starting password expired (unchanged for 7 days) answers 401 `starting_password_expired`. Failed email/password attempts are limited to 5 per email and 20 per client address in 15 minutes, each counted before its password is checked; past that, even the right password answers 429 `rate_limited` with `retryAfterSeconds`. A bad token answers 401 `unauthorized`, an agent token 401 `agent_token_on_operator_api`, a busy token store 503; none of them set a cookie.",
-                "security": [],
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "oneOf": [
-                                    {
-                                        "type": "object",
-                                        "required": ["email", "password"],
-                                        "properties": {
-                                            "email": {
-                                                "type": "string"
-                                            },
-                                            "password": {
-                                                "type": "string"
-                                            }
-                                        }
-                                    },
-                                    {
-                                        "type": "object",
-                                        "required": ["token"],
-                                        "properties": {
-                                            "token": {
-                                                "type": "string"
-                                            }
-                                        }
-                                    }
-                                ]
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Signed in; Set-Cookie carries the session"
-                    },
-                    "401": {
-                        "description": "Wrong email or password, or not an operator token"
-                    },
-                    "429": {
-                        "description": "`rate_limited`: too many failed sign-ins for this email or address.",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/Error"
-                                }
-                            }
-                        }
-                    }
-                }
-            },
             "delete": {
                 "summary": "Sign a browser out",
-                "description": "Public. Ends the session server-side and clears the `fl_session` cookie; works with a missing or already-ended session.",
+                "description": "Public. Ends the session server-side and clears the `fl_session` cookie; works with a missing or already-ended session. When the session came from Kore ID, the answer also carries `ssoLogoutUrl`: the provider's end-session URL, which the browser should follow to end the Kore ID session too. People sign in only through Kore ID (`GET /api/v1/auth/sso/start`).",
                 "security": [],
                 "responses": {
                     "200": {
@@ -1841,65 +1679,10 @@
                 }
             }
         },
-        "/api/v1/auth/device/start": {
-            "post": {
-                "summary": "Start a QR sign-in",
-                "description": "Public. A screen with no session asks to sign in. Returns the request `code` (shown as a QR code at `<base>/device#<code>`), a private `pollSecret` that only the screen keeps, `expiresIn` seconds and the instance `publicUrl`. 429 `busy` when too many screens are waiting.",
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    }
-                }
-            }
-        },
-        "/api/v1/auth/device/poll": {
-            "post": {
-                "summary": "Collect a QR sign-in",
-                "description": "Public. Body `{code, pollSecret}`. Returns status `pending`, `denied`, `expired` or `approved`; an approved response carries a new operator `token` that never expires. A wrong secret or unknown code reads as `expired`. The token is minted on the first poll after approval and can be fetched again for 60 seconds. A screen approved by a member who was removed before that first poll reads as `denied`.",
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    }
-                }
-            }
-        },
-        "/api/v1/auth/device/lookup": {
-            "post": {
-                "summary": "Describe a waiting screen",
-                "description": "Operator token. Body `{code}`. Returns the screen's user agent, how long it has waited and a suggested name. 404 when the request is unknown, expired or already answered.",
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    }
-                }
-            }
-        },
-        "/api/v1/auth/device/approve": {
-            "post": {
-                "summary": "Approve a waiting screen",
-                "description": "Operator token. Body `{code, name}` (name 1 to 60 characters). The screen then receives its own operator token, listed in `/api/v1/api-keys` under that name. 409 `not_pending` when already answered or expired.",
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    }
-                }
-            }
-        },
-        "/api/v1/auth/device/deny": {
-            "post": {
-                "summary": "Deny a waiting screen",
-                "description": "Operator token. Body `{code}`. 409 `not_pending` when already answered or expired.",
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    }
-                }
-            }
-        },
         "/api/v1/auth/me": {
             "get": {
                 "summary": "Who is signed in",
-                "description": "Says who the credential acts as: `principal:\"account\"` with `account:{id, email, name, mustChangePassword}` for a member's session, or `principal:\"token\"` with `token:{id, name}` for a bearer token or token session. Also states the credential family and capabilities. An agent token answers 401 `agent_token_on_operator_api` with the expected prefix.",
+                "description": "Says who the credential acts as: `principal:\"account\"` with `account:{id, email, name, sso}` for a Kore ID session, or `principal:\"token\"` with `token:{id, name}` for a bearer API token. Also states the credential family and capabilities. An agent token answers 401 `agent_token_on_operator_api` with the expected prefix.",
                 "responses": {
                     "200": {
                         "description": "The principal, credential kind (`operator`), capabilities and agent-endpoint map.",
@@ -1919,7 +1702,7 @@
                                         },
                                         "account": {
                                             "type": "object",
-                                            "required": ["id", "email", "name", "mustChangePassword"],
+                                            "required": ["id", "email", "name"],
                                             "properties": {
                                                 "id": {
                                                     "type": "integer"
@@ -1930,8 +1713,9 @@
                                                 "name": {
                                                     "type": "string"
                                                 },
-                                                "mustChangePassword": {
-                                                    "type": "boolean"
+                                                "sso": {
+                                                    "type": "boolean",
+                                                    "description": "The account signs in with Kore ID."
                                                 }
                                             }
                                         },
@@ -3979,61 +3763,6 @@
                         "$ref": "#/components/responses/Unauthorized"
                     }
                 }
-            },
-            "post": {
-                "summary": "Add a member with a starting password (at least 10 characters). They must choose their own password at first sign-in; the starting password expires after 7 days. 409 `email_taken`, 400 `weak_password`.",
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object",
-                                "required": ["email", "name", "password"],
-                                "properties": {
-                                    "email": {
-                                        "type": "string"
-                                    },
-                                    "name": {
-                                        "type": "string",
-                                        "maxLength": 100
-                                    },
-                                    "password": {
-                                        "type": "string",
-                                        "minLength": 10
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "201": {
-                        "description": "Success.",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "required": ["ok", "user"],
-                                    "properties": {
-                                        "ok": {
-                                            "type": "boolean",
-                                            "const": true
-                                        },
-                                        "user": {
-                                            "$ref": "#/components/schemas/User"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "400": {
-                        "$ref": "#/components/responses/BadRequest"
-                    },
-                    "401": {
-                        "$ref": "#/components/responses/Unauthorized"
-                    }
-                }
             }
         },
         "/api/v1/users/{id}": {
@@ -4231,117 +3960,6 @@
                 }
             }
         },
-        "/api/v1/users/{id}/reset-password": {
-            "parameters": [
-                {
-                    "name": "id",
-                    "in": "path",
-                    "required": true,
-                    "schema": {
-                        "type": "integer"
-                    }
-                }
-            ],
-            "post": {
-                "summary": "Give a member a new starting password (at least 10 characters). They must change it at their next sign-in; every session they have ends now.",
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object",
-                                "required": ["password"],
-                                "properties": {
-                                    "password": {
-                                        "type": "string",
-                                        "minLength": 10
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Success.",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "required": ["ok", "user"],
-                                    "properties": {
-                                        "ok": {
-                                            "type": "boolean",
-                                            "const": true
-                                        },
-                                        "user": {
-                                            "$ref": "#/components/schemas/User"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "400": {
-                        "$ref": "#/components/responses/BadRequest"
-                    },
-                    "401": {
-                        "$ref": "#/components/responses/Unauthorized"
-                    }
-                }
-            }
-        },
-        "/api/v1/auth/password": {
-            "post": {
-                "summary": "Change your own password",
-                "description": "For a member's session only (a bearer token or token session answers 400 `not_an_account`). Body `{currentPassword, newPassword}`; a wrong current password answers 400 `wrong_password`, a new one under 10 characters 400 `weak_password`, a new one equal to the current one 400 `same_password`, and an expired starting password 401 `starting_password_expired`. Success clears `mustChangePassword` and ends the account's other sessions; this one stays signed in. An account with a starting password can reach only this route, `GET /api/v1/auth/me` and sign-out; everything else answers 403 `password_change_required`.",
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object",
-                                "required": ["currentPassword", "newPassword"],
-                                "properties": {
-                                    "currentPassword": {
-                                        "type": "string"
-                                    },
-                                    "newPassword": {
-                                        "type": "string",
-                                        "minLength": 10
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Changed.",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "required": ["ok"],
-                                    "properties": {
-                                        "ok": {
-                                            "type": "boolean",
-                                            "const": true
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "400": {
-                        "$ref": "#/components/responses/BadRequest"
-                    },
-                    "401": {
-                        "$ref": "#/components/responses/Unauthorized"
-                    }
-                }
-            }
-        },
         "/api/v1/notifications/{id}": {
             "parameters": [
                 {
@@ -4383,6 +4001,102 @@
                     },
                     "404": {
                         "description": "No such notification."
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/sso/config": {
+            "get": {
+                "summary": "Which sign-in method is configured",
+                "description": "Public. `{ok, sso, provider, accountUrl, apps}`: whether Kore ID sign-in is configured, and (with Kore ID) the Kore ID account page and the other Kore apps' URLs (`KORE_APP_URLS`) for the account menu and app switcher. Kore ID is the only browser sign-in; without it the sign-in page says no method is configured. The sign-in page and the app shell read it.",
+                "security": [],
+                "responses": {
+                    "200": {
+                        "description": "Sign-in methods"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/sso/start": {
+            "get": {
+                "summary": "Start Kore ID sign-in",
+                "description": "Public. Redirects (303) the browser to Kore ID's authorization endpoint with PKCE S256, `state` and `nonce`, and sets the short-lived `fl_sso` cookie that binds the callback to this browser. `next` is a local path to open afterwards (anything else becomes `/`). Without Kore ID configured it redirects to `/sign-in?sso_error=disabled`.",
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "next",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "303": {
+                        "description": "Redirect to Kore ID"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/sso/backchannel-logout": {
+            "post": {
+                "summary": "Kore ID back-channel logout",
+                "description": "Public; Kore ID calls it server to server (OIDC Back-Channel Logout 1.0) when a Kore ID session ends. Verifies the `logout_token` (EdDSA against the JWKS, `iss`, `aud` = this client id, `iat`, `exp`, header `typ: logout+jwt`, the back-channel logout event in `events`, no `nonce`, a `sid` or `sub`, `jti` not seen before), then deletes every session made from that `sid` (or, without `sid`, every Kore ID session of that `sub`). Register `<public URL>/api/v1/auth/sso/backchannel-logout` as the client's `backchannelLogoutUri`.",
+                "security": [],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["logout_token"],
+                                "properties": {
+                                    "logout_token": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Sessions ended (or none matched)"
+                    },
+                    "400": {
+                        "description": "`invalid_request`: missing or invalid logout token, or Kore ID is not configured"
+                    },
+                    "503": {
+                        "description": "The provider's keys could not be fetched; retry"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/sso/callback": {
+            "get": {
+                "summary": "Kore ID sign-in callback",
+                "description": "Public; Kore ID returns the browser here with `code` and `state`. Verifies state (one use, bound to the `fl_sso` cookie), exchanges the code with the PKCE verifier, verifies the id token (EdDSA against the provider's JWKS, issuer, audience, expiry, nonce), then signs in the account tied to the token's `sub`. An unknown `sub` gets an account (Kore ID already enforced app access) unless `KORE_ID_AUTO_PROVISION=false`; when `KORE_ID_ALLOWED_SUBS` or `KORE_ID_ALLOWED_EMAILS` is set, only listed identities do. A local account with the same email is linked only when `email_verified` is true. The id token's `sid` is stored on the session for back-channel logout. Success: 303 to `next` with the `fl_session` cookie. Failure: 303 to `/sign-in?sso_error=` one of `state`, `provider`, `token`, `unavailable`, `denied`, `disabled`, with no session.",
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "code",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "303": {
+                        "description": "Redirect; Set-Cookie carries the session on success"
                     }
                 }
             }

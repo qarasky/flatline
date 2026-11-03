@@ -4,11 +4,11 @@ import { Suspense } from "react";
 import { MonitorsBoard } from "@/components/monitors/monitors-board";
 import { NewMonitorButton } from "@/components/monitors/new-monitor-dialog";
 import { PauseButton } from "@/components/monitors/pause-button";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader } from "@qarasky/kore-ui";
 import { parseBoardQuery } from "@/lib/board-url";
 import { toSearchString } from "@/lib/search-string";
 
-export const metadata: Metadata = { title: "Monitors · Flatline" };
+export const metadata: Metadata = { title: "Monitors · KoreMonitor" };
 
 export default async function MonitorsPage({
     searchParams,
@@ -21,7 +21,7 @@ export default async function MonitorsPage({
     return (
         <>
             <PageHeader
-                crumbs={[{ label: "Monitors" }]}
+                title="Monitors"
                 actions={
                     <>
                         <PauseButton />

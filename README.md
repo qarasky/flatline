@@ -1,8 +1,8 @@
 <div align="center" width="100%">
-    <img src="./apps/web/app/icon.svg" width="96" alt="Flatline mark" />
+    <img src="./apps/web/app/icon.svg" width="96" alt="KoreMonitor mark" />
 </div>
 
-# Flatline
+# KoreMonitor
 
 Self-hosted uptime monitoring, live server telemetry, and Telegram alerts —
 built for one operator, a wall monitor and AI agents.
@@ -54,7 +54,7 @@ Both agents update themselves from the builds the server ships.
   per-collector error counts on the card, with one right-click action to clear
   the warnings you have seen.
 - **Back up client servers**: named backup agents export each project's Postgres
-  databases and S3/Garage buckets daily to the Flatline server's storage, with
+  databases and S3/Garage buckets daily to the KoreMonitor server's storage, with
   optional age encryption, resumable uploads, retention and offline
   verify/restore. The Superboard shows each server's backup-agent version and a
   live "last backup … ago" line per project, and flags a server whose backup is
@@ -85,11 +85,11 @@ cd flatline
 
 `./dev.sh` builds the backend and agent, starts the backend on `:3001` and the
 web app on `:3003` (which forwards `/api` and `/agent` to the backend, so the
-browser sees one origin), and starts the mock fleet: a Go agent that
-creates a demo set of hosts through the public API, pushes believable telemetry,
-creates a few demo websites and leaves agent warnings on two hosts. It prints
-the operator token — also in `./.dev-data/initial-token.txt`. `./dev.sh stop`
-stops everything; `./dev.sh status` checks health.
+browser sees one origin). Sign in with Kore ID (`KORE_ID_ISSUER`, see
+[docs/sso.md](docs/sso.md)). The mock fleet needs an operator API token: mint
+one in **Tokens** and run `FLATLINE_TOKEN=flatline_op_... ./dev.sh`. Without
+it the backend and web app still start; the mock fleet is skipped.
+`./dev.sh stop` stops everything; `./dev.sh status` checks health.
 
 ### Docker
 
@@ -102,10 +102,10 @@ docker compose up -d --build
 Three containers, one published port (**3001**, set with `FLATLINE_BIND` and
 `FLATLINE_PORT`): `caddy` routes the backend's paths to `flatline` (the API,
 check engine and agent downloads) and everything else to `web` (the Next.js
-app); only Caddy is published. Data lives in `./data`; on first run the
-operator token is written to `./data/initial-token.txt` (0600) — sign in with
-it ("Use a token instead") and create the first account. There is no seed
-script.
+app); only Caddy is published. Data lives in `./data`. The first person to
+sign in through Kore ID becomes a full operator: there is no seed script and
+no first-account token. Configure `KORE_ID_ISSUER` (and the client secret)
+before the first sign-in; see [docs/sso.md](docs/sso.md).
 
 Backup storage is opt-in: to accept uploads from backup agents, provision a
 storage directory and add `-f docker/compose.backups.yaml` to every
@@ -143,14 +143,15 @@ documented in [docs/deployment.md](docs/deployment.md).
 
 ## Sign in and tokens
 
-People sign in to the web app with an email and password (member accounts,
-added on **Members**), or with an operator token. There is one level of access:
-every account and every token has full permission. **Tokens** mints additional
-named tokens (shown once) so an integration can have its own revocable
-credential, not to limit what it can do.
+People sign in to the web app **only with Kore ID** (the shared OpenID Connect
+provider behind Kore, KoreMind, KoreCalendar and KoreMonitor). A first sign-in
+provisions a full operator account; access is managed in Kore ID's admin. There
+is no password, operator-token or first-account sign-in.
 
-An operator token authenticates the REST API and the tokenized provisioning
-documents:
+**Tokens** mints named operator API tokens (shown once) for scripts, machines
+and agents: they authenticate `/api/v1` and the tokenized provisioning
+documents, never a browser session. There is one level of access: every account
+and every operator API token has full permission.
 
 ```bash
 export FLATLINE_URL=http://localhost:3001
@@ -171,7 +172,7 @@ Everything lives in [`docs/`](docs/README.md):
 | Document                                     | Read it when                                               |
 | -------------------------------------------- | ---------------------------------------------------------- |
 | [Architecture](docs/architecture.md)         | You want to know how the pieces fit and where data lives.  |
-| [API](docs/api.md)                           | You are calling Flatline from a script or an agent.        |
+| [API](docs/api.md)                           | You are calling KoreMonitor from a script or an agent.     |
 | [Host agent](docs/agent.md)                  | You are installing, configuring or debugging `superboard`. |
 | [Superboard](docs/superboard.md)             | You are changing or explaining the wall board.             |
 | [Web app](docs/dashboard.md)                 | You are working on the operator UI.                        |

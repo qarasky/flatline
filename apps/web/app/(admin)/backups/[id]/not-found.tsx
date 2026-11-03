@@ -1,18 +1,23 @@
+import { Button, EmptyState, PageBody, PageHeader } from "@qarasky/kore-ui";
+import { Archive } from "lucide-react";
 import Link from "next/link";
-
-import { PageHeader } from "@/components/page-header";
-import { Button } from "@/components/ui/button";
 
 export default function BackupAgentNotFound() {
     return (
         <>
-            <PageHeader crumbs={[{ label: "Backups", href: "/backups" }, { label: "Not found" }]} />
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
-                <p className="font-medium">No backup agent with that id</p>
-                <Button variant="outline" size="sm" asChild>
-                    <Link href="/backups">Back to Backups</Link>
-                </Button>
-            </div>
+            <PageHeader breadcrumbs={[{ label: "Backups", href: "/backups" }]} title="Not found" />
+            <PageBody>
+                <EmptyState
+                    icon={<Archive />}
+                    title="No backup agent with that id"
+                    description="It may have been removed, or the link is wrong."
+                    action={
+                        <Button asChild>
+                            <Link href="/backups">Back to Backups</Link>
+                        </Button>
+                    }
+                />
+            </PageBody>
         </>
     );
 }

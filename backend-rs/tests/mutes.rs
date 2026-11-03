@@ -144,7 +144,13 @@ async fn mute_refuses_when_nothing_is_down() {
     }
     let (status, body) = mute(&h, s).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body["message"].as_str().unwrap_or_default().contains("nothing to mute"), "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("nothing to mute"),
+        "{body}"
+    );
 
     let (status, _) = mute(&h, 9999).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -227,13 +233,21 @@ async fn openapi_documents_mute() {
     let h = harness().await;
     let (_, body) = get_json(&h.app, "/api/v1/openapi.json", &h.token).await;
     let path = &body["paths"]["/api/v1/monitors/{id}/mute"];
-    assert!(path["post"].is_object() && path["delete"].is_object(), "{path}");
+    assert!(
+        path["post"].is_object() && path["delete"].is_object(),
+        "{path}"
+    );
     let schema = body["components"]["schemas"]["Monitor"]["properties"].clone();
-    assert!(schema["mute"].is_object() && schema["mutedBy"].is_object(), "{schema}");
+    assert!(
+        schema["mute"].is_object() && schema["mutedBy"].is_object(),
+        "{schema}"
+    );
 }
 
 async fn current(h: &Harness, subject: i64) -> Option<flatline_backend::mutes::Mute> {
-    flatline_backend::mutes::get(&h.pool, subject).await.unwrap()
+    flatline_backend::mutes::get(&h.pool, subject)
+        .await
+        .unwrap()
 }
 
 async fn push_token(h: &Harness, id: i64) -> String {
@@ -281,7 +295,10 @@ async fn new_website_down_ends_mute() {
 
     let mut events = h.state.events.subscribe();
     beat(&h, b, DOWN).await;
-    assert!(current(&h, s).await.is_none(), "a new down website ends the mute");
+    assert!(
+        current(&h, s).await.is_none(),
+        "a new down website ends the mute"
+    );
     let mut saw_invalidate = false;
     while let Ok(event) = events.try_recv() {
         saw_invalidate |= event.kind() == "invalidate";
@@ -316,7 +333,10 @@ async fn recovery_shrinks_then_ends_mute() {
     beat(&h, a, UP).await;
     assert_eq!(current(&h, s).await.unwrap().monitors, vec![s]);
     beat(&h, a, DOWN).await;
-    assert!(current(&h, s).await.is_none(), "down again after recovery is new");
+    assert!(
+        current(&h, s).await.is_none(),
+        "down again after recovery is new"
+    );
 
     // Second scenario: everything recovers.
     beat(&h, a, DOWN).await;
@@ -324,7 +344,10 @@ async fn recovery_shrinks_then_ends_mute() {
     beat(&h, s, UP).await;
     assert_eq!(current(&h, s).await.unwrap().monitors, vec![a]);
     beat(&h, a, UP).await;
-    assert!(current(&h, s).await.is_none(), "full recovery ends the mute");
+    assert!(
+        current(&h, s).await.is_none(),
+        "full recovery ends the mute"
+    );
 }
 
 #[tokio::test]
@@ -351,7 +374,10 @@ async fn new_failing_disk_ends_mute() {
     push_sample(&h, s, disks(40.0, "passed")).await;
     assert!(current(&h, s).await.is_some());
     push_sample(&h, s, disks(40.0, "failed")).await;
-    assert!(current(&h, s).await.is_none(), "a newly failing disk ends the mute");
+    assert!(
+        current(&h, s).await.is_none(),
+        "a newly failing disk ends the mute"
+    );
 }
 
 #[tokio::test]
@@ -361,7 +387,10 @@ async fn disk_already_full_at_mute_time_does_not_end_mute() {
     beat(&h, a, DOWN).await;
     push_sample(&h, s, disks(95.0, "passed")).await;
     assert_eq!(mute(&h, s).await.0, StatusCode::OK);
-    assert_eq!(current(&h, s).await.unwrap().full_mounts, vec!["/".to_string()]);
+    assert_eq!(
+        current(&h, s).await.unwrap().full_mounts,
+        vec!["/".to_string()]
+    );
 
     push_sample(&h, s, disks(96.0, "passed")).await;
     assert!(current(&h, s).await.is_some(), "still the same breach");
@@ -381,7 +410,12 @@ async fn deleting_a_snapshot_monitor_shrinks_the_mute() {
 
     let (status, _) = send(
         &h.app,
-        request("DELETE", &format!("/api/v1/monitors/{a}"), Some(&h.token), None),
+        request(
+            "DELETE",
+            &format!("/api/v1/monitors/{a}"),
+            Some(&h.token),
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -453,26 +487,48 @@ async fn muted_monitor_resends_are_silent() {
     let (url, captured) = alert_stub().await;
     let n = alert_notification(&h, &url).await;
     let s = create(&h, "srv", "push", json!({ "notificationIDList": [n] })).await;
-    let a = create(&h, "site-a", "http", json!({ "resendInterval": 1, "notificationIDList": [n] })).await;
+    let a = create(
+        &h,
+        "site-a",
+        "http",
+        json!({ "resendInterval": 1, "notificationIDList": [n] }),
+    )
+    .await;
     let b = create(&h, "site-b", "http", json!({ "notificationIDList": [n] })).await;
     link(&h, s, json!([a, b])).await;
     beat(&h, s, UP).await;
     beat(&h, b, UP).await;
     beat(&h, a, DOWN).await;
-    assert_eq!(sent(&captured, "[site-a]").await, 1, "the outage pages once");
+    assert_eq!(
+        sent(&captured, "[site-a]").await,
+        1,
+        "the outage pages once"
+    );
 
     assert_eq!(mute(&h, s).await.0, StatusCode::OK);
     beat(&h, a, DOWN).await;
     beat(&h, a, DOWN).await;
-    assert_eq!(sent(&captured, "[site-a]").await, 1, "resends are silent while muted");
+    assert_eq!(
+        sent(&captured, "[site-a]").await,
+        1,
+        "resends are silent while muted"
+    );
 
     assert_eq!(unmute(&h, s).await.0, StatusCode::OK);
     beat(&h, a, DOWN).await;
-    assert_eq!(sent(&captured, "[site-a]").await, 2, "unmuted resends resume");
+    assert_eq!(
+        sent(&captured, "[site-a]").await,
+        2,
+        "unmuted resends resume"
+    );
 
     assert_eq!(mute(&h, s).await.0, StatusCode::OK);
     beat(&h, b, DOWN).await;
-    assert_eq!(sent(&captured, "[site-b]").await, 1, "a new outage pages while muted");
+    assert_eq!(
+        sent(&captured, "[site-b]").await,
+        1,
+        "a new outage pages while muted"
+    );
 }
 
 #[tokio::test]
@@ -487,7 +543,12 @@ async fn recovery_is_sent_while_muted() {
     beat(&h, a, DOWN).await;
     assert_eq!(mute(&h, s).await.0, StatusCode::OK);
     beat(&h, a, UP).await;
-    assert_eq!(sent(&captured, "UP").await, 1, "{:?}", captured.lock().unwrap());
+    assert_eq!(
+        sent(&captured, "UP").await,
+        1,
+        "{:?}",
+        captured.lock().unwrap()
+    );
 }
 
 #[tokio::test]
@@ -495,7 +556,13 @@ async fn covered_group_is_silent() {
     let h = harness().await;
     let (url, captured) = alert_stub().await;
     let n = alert_notification(&h, &url).await;
-    let g = create(&h, "grp", "group", json!({ "resendInterval": 1, "notificationIDList": [n] })).await;
+    let g = create(
+        &h,
+        "grp",
+        "group",
+        json!({ "resendInterval": 1, "notificationIDList": [n] }),
+    )
+    .await;
     let s = create(&h, "srv", "push", json!({})).await;
     let a = create(&h, "site-a", "http", json!({ "parent": g })).await;
     link(&h, s, json!([a])).await;
@@ -507,7 +574,11 @@ async fn covered_group_is_silent() {
     assert_eq!(mute(&h, s).await.0, StatusCode::OK);
     beat(&h, g, DOWN).await;
     beat(&h, g, DOWN).await;
-    assert_eq!(sent(&captured, "[grp]").await, 1, "a covered group's resends are silent");
+    assert_eq!(
+        sent(&captured, "[grp]").await,
+        1,
+        "a covered group's resends are silent"
+    );
 }
 
 #[tokio::test]
@@ -538,11 +609,26 @@ async fn host_muted_silences_cpu_ram_not_disk() {
     let now = chrono::Utc::now().timestamp_millis();
     for offset in [0, 61_000] {
         let time = flatline_backend::metrics::sql_time_millis(now + offset);
-        h.state.metrics.store(s, &time, &sample, true).await.unwrap();
-        h.state.metrics.evaluate_alerts_at(&monitor, now + offset).await;
+        h.state
+            .metrics
+            .store(s, &time, &sample, true)
+            .await
+            .unwrap();
+        h.state
+            .metrics
+            .evaluate_alerts_at(&monitor, now + offset)
+            .await;
     }
-    assert_eq!(sent(&captured, "[cpu]").await, 0, "CPU is silenced while the host is muted");
-    assert_eq!(sent(&captured, "[disk]").await, 1, "a disk breach always pages");
+    assert_eq!(
+        sent(&captured, "[cpu]").await,
+        0,
+        "CPU is silenced while the host is muted"
+    );
+    assert_eq!(
+        sent(&captured, "[disk]").await,
+        1,
+        "a disk breach always pages"
+    );
 }
 
 #[tokio::test]
@@ -554,7 +640,13 @@ async fn host_recovery_resumes_backup_alerts() {
     let t0 = chrono::Utc::now() - chrono::Duration::days(3);
 
     // Host muted: its backups are expected to fall behind.
-    let down_host = create(&h, "down-host", "push", json!({ "notificationIDList": [n] })).await;
+    let down_host = create(
+        &h,
+        "down-host",
+        "push",
+        json!({ "notificationIDList": [n] }),
+    )
+    .await;
     beat(&h, down_host, DOWN).await;
     assert_eq!(mute(&h, down_host).await.0, StatusCode::OK);
 
@@ -587,8 +679,16 @@ async fn host_recovery_resumes_backup_alerts() {
         .evaluate_health((t0 + chrono::Duration::hours(37)).timestamp_millis())
         .await
         .unwrap();
-    assert_eq!(sent(&captured, "backup-down").await, 0, "muted host: overdue is silent");
-    assert_eq!(sent(&captured, "backup-up").await, 1, "website-only mute: overdue pages");
+    assert_eq!(
+        sent(&captured, "backup-down").await,
+        0,
+        "muted host: overdue is silent"
+    );
+    assert_eq!(
+        sent(&captured, "backup-up").await,
+        1,
+        "website-only mute: overdue pages"
+    );
 }
 
 // -- Final review fixes ------------------------------------------------------
@@ -615,14 +715,20 @@ async fn concurrent_recoveries_both_leave_the_snapshot() {
             let pool = pool.clone();
             let id = *id;
             tokio::spawn(async move {
-                flatline_backend::mutes::on_status(&pool, id, UP).await.unwrap()
+                flatline_backend::mutes::on_status(&pool, id, UP)
+                    .await
+                    .unwrap()
             })
         })
         .collect();
     for task in tasks {
         task.await.unwrap();
     }
-    assert_eq!(current(&h, s).await.unwrap().monitors, vec![s], "every recovery is kept");
+    assert_eq!(
+        current(&h, s).await.unwrap().monitors,
+        vec![s],
+        "every recovery is kept"
+    );
 }
 
 #[tokio::test]
@@ -635,7 +741,10 @@ async fn a_sample_without_disks_keeps_the_full_mounts() {
 
     // An agent that just restarted reports no disks yet.
     push_sample(&h, s, json!({ "cpu": { "percent": 5.0 }, "disk": null })).await;
-    assert_eq!(current(&h, s).await.unwrap().full_mounts, vec!["/".to_string()]);
+    assert_eq!(
+        current(&h, s).await.unwrap().full_mounts,
+        vec!["/".to_string()]
+    );
     push_sample(&h, s, disks(95.0, "passed")).await;
     assert!(current(&h, s).await.is_some(), "the same breach is not new");
 }
@@ -653,7 +762,12 @@ async fn a_mute_ended_by_a_disk_is_announced() {
     assert_eq!(mute(&h, s).await.0, StatusCode::OK);
 
     push_sample(&h, s, disks(40.0, "failed")).await;
-    assert_eq!(sent(&captured, "/dev/sdb").await, 1, "{:?}", captured.lock().unwrap());
+    assert_eq!(
+        sent(&captured, "/dev/sdb").await,
+        1,
+        "{:?}",
+        captured.lock().unwrap()
+    );
 }
 
 #[tokio::test]
@@ -672,5 +786,8 @@ async fn muting_a_group_mutes_its_down_monitors() {
     assert_eq!(listing(&h).await[&a]["mutedBy"], json!([g]));
 
     beat(&h, b, DOWN).await;
-    assert!(current(&h, g).await.is_none(), "a new down monitor in the group ends its mute");
+    assert!(
+        current(&h, g).await.is_none(),
+        "a new down monitor in the group ends its mute"
+    );
 }

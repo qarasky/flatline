@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 
-import { PageHeader } from "@/components/page-header";
+import { PageHeader } from "@qarasky/kore-ui";
 import { ServersList } from "@/components/servers/servers-list";
 
-export const metadata: Metadata = { title: "Servers · Flatline" };
+export const metadata: Metadata = { title: "Servers · KoreMonitor" };
 
 export default function ServersPage() {
     return (
         <>
-            <PageHeader crumbs={[{ label: "Servers" }]} />
+            <PageHeader title="Servers" />
             <ServersList />
         </>
     );

@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 
+import { EmptyState, Spinner, cn } from "@qarasky/kore-ui";
+
 import { useBoardData } from "@/components/board/board-data";
 import { useAttention } from "@/components/board/use-attention";
 import { StatusDot } from "@/components/monitors/status-dot";
 import { unmutedCount, type AttentionItem, type AttentionKind } from "@/lib/attention";
 import { attentionHref } from "@/lib/attention-href";
-import { cn } from "@/lib/utils";
 
 function KindMark({ kind, muted }: { kind: AttentionKind; muted: boolean }) {
     if (kind === "down") {
@@ -20,7 +21,7 @@ function KindMark({ kind, muted }: { kind: AttentionKind; muted: boolean }) {
     return (
         <span
             aria-hidden
-            className="text-status-warn inline-flex size-3 items-center justify-center text-[11px] leading-none"
+            className="text-status-warn text-2xs inline-flex size-3 items-center justify-center leading-none"
         >
             {glyph}
         </span>
@@ -30,8 +31,8 @@ function KindMark({ kind, muted }: { kind: AttentionKind; muted: boolean }) {
 function Row({ item }: { item: AttentionItem }) {
     const tone = item.muted
         ? item.kind === "down"
-            ? "text-status-muted"
-            : "text-muted-foreground"
+            ? "text-status-down-muted"
+            : "text-muted"
         : item.kind === "down"
           ? "text-status-down"
           : "text-status-warn";
@@ -39,12 +40,12 @@ function Row({ item }: { item: AttentionItem }) {
         <li>
             <Link
                 href={attentionHref(item)}
-                className="hover:bg-accent grid grid-cols-[12px_120px_minmax(160px,320px)_minmax(0,1fr)] items-center gap-3 border-b px-4 py-2.5"
+                className="grid min-h-row grid-cols-[12px_120px_minmax(160px,320px)_minmax(0,1fr)] items-center gap-3 border-b border-border px-4 py-2 transition-colors hover:bg-white/5"
             >
                 <KindMark kind={item.kind} muted={item.muted} />
-                <span className={cn("text-xs font-medium", tone)}>{item.title}</span>
+                <span className={cn("text-meta font-medium", tone)}>{item.title}</span>
                 <span className="truncate font-medium">{item.name}</span>
-                <span className="text-muted-foreground truncate text-xs tabular-nums">
+                <span className="text-muted text-meta truncate tabular-nums">
                     {item.muted ? `${item.detail} · muted` : item.detail}
                 </span>
             </Link>
@@ -64,18 +65,25 @@ export function AttentionList() {
     const muted = items.length - open;
 
     if (!rosterLoaded) {
-        return <p className="text-muted-foreground p-6">Loading…</p>;
+        return (
+            <div className="text-muted flex items-center gap-2 p-6">
+                <Spinner />
+                Loading…
+            </div>
+        );
     }
     return (
-        <section aria-label="Needs attention" className="flex flex-1 flex-col">
-            <p role="status" className="text-muted-foreground border-b px-4 py-2.5 text-xs tabular-nums">
+        <section aria-label="Needs attention" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+            <p role="status" className="text-muted text-meta border-b border-border px-4 py-2.5 tabular-nums">
                 {open === 0 && muted === 0 ? "All clear" : `${open} need${open === 1 ? "s" : ""} attention`}
-                {muted > 0 ? <span className="text-status-muted"> · {muted} muted</span> : null}
+                {muted > 0 ? <span className="text-status-down-muted"> · {muted} muted</span> : null}
             </p>
             {items.length === 0 ? (
-                <div className="flex flex-1 items-center justify-center p-10">
-                    <p className="text-muted-foreground">Nothing needs attention.</p>
-                </div>
+                <EmptyState
+                    className="flex-1"
+                    title="Nothing needs attention"
+                    description="Outages, flapping monitors, silent agents and failed backups show up here."
+                />
             ) : (
                 <ul>
                     {items.map((item) => (
@@ -87,25 +95,7 @@ export function AttentionList() {
     );
 }
 
-/** The sidebar's count: unmuted items only, hidden at zero; a dot when the sidebar is icons only. */
-export function AttentionCount() {
-    const open = unmutedCount(useAttention());
-    if (open === 0) {
-        return null;
-    }
-    return (
-        <>
-            <span
-                data-sidebar="menu-badge"
-                aria-label={`${open} need attention`}
-                className="text-status-down pointer-events-none absolute top-1.5 right-1 flex h-5 min-w-5 items-center justify-center rounded-md px-1 text-xs font-medium tabular-nums group-data-[collapsible=icon]:hidden"
-            >
-                {open}
-            </span>
-            <span
-                aria-hidden
-                className="bg-status-down pointer-events-none absolute top-1.5 right-1.5 hidden size-2 rounded-full group-data-[collapsible=icon]:block"
-            />
-        </>
-    );
+/** How many attention items are not muted: the sidebar's count. */
+export function useAttentionCount(): number {
+    return unmutedCount(useAttention());
 }

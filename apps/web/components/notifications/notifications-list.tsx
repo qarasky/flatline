@@ -1,28 +1,31 @@
 "use client";
 
-import { Ellipsis, Plus } from "lucide-react";
+import {
+    Badge,
+    Button,
+    ConfirmDialog,
+    EmptyState,
+    IconButton,
+    Menu,
+    MenuContent,
+    MenuItem,
+    MenuSeparator,
+    MenuTrigger,
+    Table,
+    TableBody,
+    TableCell,
+    TableEmpty,
+    TableHead,
+    TableHeader,
+    TableRow,
+    TableRowHeader,
+} from "@qarasky/kore-ui";
+import { Bell, ChevronDown, ChevronRight, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 
 import { useBoardData } from "@/components/board/board-data";
-import { Button } from "@/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { deleteNotification, fetchNotificationList, type NotificationRecord } from "@/lib/notifications-api";
-import { cn } from "@/lib/utils";
 
 import { NotificationDialog } from "./notification-dialog";
 
@@ -41,7 +44,6 @@ export function NotificationsList() {
     // The record stays after the dialog closes, so its text holds while it fades out.
     const [deleting, setDeleting] = useState<NotificationRecord | null>(null);
     const [deleteOpen, setDeleteOpen] = useState(false);
-    const [busy, setBusy] = useState(false);
     const [open, setOpen] = useState<Set<number>>(new Set());
     const names = new Map(monitors.map((m) => [m.id, m.name]));
 
@@ -50,7 +52,7 @@ export function NotificationsList() {
             setRecords(await fetchNotificationList());
             setError(null);
         } catch (e) {
-            setError(e instanceof Error ? e.message : "Could not load the notifications.");
+            setError(e instanceof Error ? e.message : "Couldn't load the notifications. Reload the page to try again.");
         }
     }, []);
     useEffect(() => {
@@ -58,130 +60,162 @@ export function NotificationsList() {
     }, [load]);
 
     async function remove(record: NotificationRecord) {
-        setBusy(true);
         try {
             await deleteNotification(record.id);
-            setDeleteOpen(false);
             await load();
         } catch (e) {
-            setError(e instanceof Error ? e.message : "Could not delete the notification.");
-            setDeleteOpen(false);
-        } finally {
-            setBusy(false);
+            setError(e instanceof Error ? e.message : "Couldn't delete the notification. Try again.");
         }
     }
 
+    function toggleOpen(id: number) {
+        setOpen((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    }
+
     return (
-        <section aria-label="Notifications" className="flex flex-1 flex-col">
-            <div className="flex min-h-11 items-center border-b px-4 py-2">
-                <span className="text-muted-foreground text-xs">
+        <section aria-label="Notifications" className="flex flex-col gap-4">
+            <div className="flex items-center gap-3">
+                <p className="text-meta text-muted min-w-0 flex-1">
                     Telegram notifications. A monitor&apos;s form picks which it uses.
-                </span>
-                <Button size="sm" className="ml-auto" onClick={() => setEditing({ record: null })}>
+                </p>
+                <Button variant="primary" size="sm" onClick={() => setEditing({ record: null })}>
                     <Plus />
                     New notification
                 </Button>
             </div>
             {error ? (
-                <p role="alert" className="text-status-down px-4 py-2 text-xs">
+                <p role="alert" className="text-meta text-danger">
                     {error}
                 </p>
             ) : null}
-            {records === null ? (
-                <p className="text-muted-foreground p-6">Loading…</p>
-            ) : records.length === 0 ? (
-                <div className="flex flex-1 items-center justify-center p-10">
-                    <p className="text-muted-foreground">No notifications yet. Add one to get alerts in Telegram.</p>
-                </div>
+            {records !== null && records.length === 0 ? (
+                <EmptyState
+                    icon={<Bell />}
+                    title="No notifications yet"
+                    description="Add one to get alerts in Telegram."
+                />
             ) : (
-                <ul aria-label="Notification list">
-                    {records.map((record) => {
-                        const used = record.monitorIds;
-                        const expanded = open.has(record.id);
-                        return (
-                            <li key={record.id} data-notification-id={record.id} className="border-b px-4 py-2.5">
-                                <div className="flex items-center gap-3">
-                                    <span className="min-w-0 truncate font-medium">{record.name}</span>
-                                    <span
-                                        className={cn(
-                                            "text-xs",
-                                            record.active ? "text-status-up" : "text-muted-foreground"
-                                        )}
-                                    >
-                                        {record.active ? "On" : "Off"}
-                                    </span>
-                                    {record.isDefault ? (
-                                        <span className="text-muted-foreground text-xs">ticked for new monitors</span>
-                                    ) : null}
-                                    <span className="text-muted-foreground text-xs tabular-nums">
-                                        chat {String(record.config.telegramChatID ?? "—")}
-                                    </span>
-                                    <button
-                                        type="button"
-                                        className="text-muted-foreground hover:text-foreground ml-auto text-xs tabular-nums"
-                                        aria-expanded={expanded}
-                                        disabled={used.length === 0}
-                                        onClick={() =>
-                                            setOpen((prev) => {
-                                                const next = new Set(prev);
-                                                if (next.has(record.id)) {
-                                                    next.delete(record.id);
-                                                } else {
-                                                    next.add(record.id);
-                                                }
-                                                return next;
-                                            })
-                                        }
-                                    >
-                                        {used.length === 0
-                                            ? "Used by no monitors"
-                                            : `Used by ${used.length} monitor${used.length === 1 ? "" : "s"}`}
-                                    </button>
-                                    <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon-xs"
-                                                aria-label={`Actions for ${record.name}`}
-                                            >
-                                                <Ellipsis />
-                                            </Button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end">
-                                            <DropdownMenuItem onSelect={() => setEditing({ record })}>
-                                                Edit…
-                                            </DropdownMenuItem>
-                                            <DropdownMenuSeparator />
-                                            <DropdownMenuItem
-                                                variant="destructive"
-                                                onSelect={() => {
-                                                    setDeleting(record);
-                                                    setDeleteOpen(true);
-                                                }}
-                                            >
-                                                Delete…
-                                            </DropdownMenuItem>
-                                        </DropdownMenuContent>
-                                    </DropdownMenu>
-                                </div>
-                                {expanded ? (
-                                    <ul
-                                        className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"
-                                        aria-label={`Monitors using ${record.name}`}
-                                    >
-                                        {used.map((id) => (
-                                            <li key={id}>
-                                                <Link href={`/monitors/${id}`} className="hover:underline">
-                                                    {names.get(id) ?? `#${id}`}
-                                                </Link>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                ) : null}
-                            </li>
-                        );
-                    })}
-                </ul>
+                <Table caption="Notification list">
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="max-sm:hidden">Chat</TableHead>
+                            <TableHead>Used by</TableHead>
+                            <TableHead className="w-12">
+                                <span className="sr-only">Actions</span>
+                            </TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {records === null ? (
+                            <TableEmpty colSpan={5}>Loading…</TableEmpty>
+                        ) : (
+                            records.map((record) => {
+                                const used = record.monitorIds;
+                                const expanded = open.has(record.id);
+                                return (
+                                    <Fragment key={record.id}>
+                                        <TableRow data-notification-id={record.id}>
+                                            <TableRowHeader>
+                                                <div className="flex min-w-0 items-center gap-2">
+                                                    <span className="max-w-72 truncate font-medium">{record.name}</span>
+                                                    {record.isDefault ? (
+                                                        <Badge tone="outline" title="Ticked for new monitors">
+                                                            Default
+                                                        </Badge>
+                                                    ) : null}
+                                                </div>
+                                            </TableRowHeader>
+                                            <TableCell>
+                                                <Badge tone={record.active ? "success" : "neutral"}>
+                                                    {record.active ? "On" : "Off"}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell muted className="tabular-nums max-sm:hidden">
+                                                {String(record.config.telegramChatID ?? "—")}
+                                            </TableCell>
+                                            <TableCell muted>
+                                                {used.length === 0 ? (
+                                                    "No monitors"
+                                                ) : (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="text-muted hover:text-text -ml-3 tabular-nums"
+                                                        aria-expanded={expanded}
+                                                        onClick={() => toggleOpen(record.id)}
+                                                    >
+                                                        {expanded ? <ChevronDown /> : <ChevronRight />}
+                                                        {used.length} monitor{used.length === 1 ? "" : "s"}
+                                                    </Button>
+                                                )}
+                                            </TableCell>
+                                            <TableCell align="right">
+                                                <Menu>
+                                                    <MenuTrigger asChild>
+                                                        <IconButton
+                                                            label={`Actions for ${record.name}`}
+                                                            icon={<MoreHorizontal />}
+                                                        />
+                                                    </MenuTrigger>
+                                                    <MenuContent align="end">
+                                                        <MenuItem
+                                                            icon={<Pencil />}
+                                                            onSelect={() => setEditing({ record })}
+                                                        >
+                                                            Edit…
+                                                        </MenuItem>
+                                                        <MenuSeparator />
+                                                        <MenuItem
+                                                            danger
+                                                            icon={<Trash2 />}
+                                                            onSelect={() => {
+                                                                setDeleting(record);
+                                                                setDeleteOpen(true);
+                                                            }}
+                                                        >
+                                                            Delete…
+                                                        </MenuItem>
+                                                    </MenuContent>
+                                                </Menu>
+                                            </TableCell>
+                                        </TableRow>
+                                        {expanded ? (
+                                            <TableRow className="h-auto">
+                                                <TableCell colSpan={5} className="pt-0 pb-3">
+                                                    <ul
+                                                        className="text-sub flex flex-wrap gap-x-4 gap-y-1"
+                                                        aria-label={`Monitors using ${record.name}`}
+                                                    >
+                                                        {used.map((id) => (
+                                                            <li key={id}>
+                                                                <Link
+                                                                    href={`/monitors/${id}`}
+                                                                    className="text-accent hover:underline"
+                                                                >
+                                                                    {names.get(id) ?? `#${id}`}
+                                                                </Link>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : null}
+                                    </Fragment>
+                                );
+                            })
+                        )}
+                    </TableBody>
+                </Table>
             )}
             {editing ? (
                 <NotificationDialog
@@ -193,26 +227,23 @@ export function NotificationsList() {
                     }}
                 />
             ) : null}
-            <Dialog open={deleteOpen} onOpenChange={(o) => !o && setDeleteOpen(false)}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>Delete {deleting?.name}?</DialogTitle>
-                        <DialogDescription>
-                            {deleting && deleting.monitorIds.length > 0
-                                ? `These monitors stop alerting through it: ${deleting.monitorIds.map((id) => names.get(id) ?? `#${id}`).join(", ")}.`
-                                : "No monitor uses it."}
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                        <Button variant="ghost" onClick={() => setDeleteOpen(false)} disabled={busy}>
-                            Cancel
-                        </Button>
-                        <Button variant="destructive" disabled={busy} onClick={() => deleting && void remove(deleting)}>
-                            Delete
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+            <ConfirmDialog
+                open={deleteOpen}
+                onOpenChange={setDeleteOpen}
+                danger
+                title={`Delete “${deleting?.name ?? ""}”?`}
+                description={
+                    deleting && deleting.monitorIds.length > 0
+                        ? `These monitors stop alerting through it: ${deleting.monitorIds.map((id) => names.get(id) ?? `#${id}`).join(", ")}.`
+                        : "No monitor uses it."
+                }
+                confirmLabel="Delete"
+                onConfirm={async () => {
+                    if (deleting) {
+                        await remove(deleting);
+                    }
+                }}
+            />
         </section>
     );
 }

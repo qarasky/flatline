@@ -7,40 +7,53 @@ import {
     type MonitorEntry,
     type StatusPageData,
 } from "@flatline/shared";
+import { Badge, Card, StatusDot, type Status } from "@qarasky/kore-ui";
 
 /**
  * Public status page rendering.
  *
- * Ported from the standalone Next.js status site (v2 consolidation): same
- * markup and CSS, now a client component in the dashboard SPA. The page is
- * noindex everywhere, so the loss of server rendering costs only the first
- * paint; the data fetch still hits the password-gated API, and the unlock
- * cookie travels with it.
- *
- * Scoped under `.status-page` so its tokens and classes cannot collide with
- * the dashboard's.
+ * Ported from the standalone status site (v2 consolidation), now on kore-ui
+ * tokens and parts. Its own full-screen layout (no app shell) lives in
+ * globals.css under "Public status pages". Two colour systems stay apart:
+ * the client's accent only re-tints kore-ui's accent (chrome: focus rings,
+ * links), while up / degraded / outage use the fixed status tokens, so they
+ * mean the same thing on every client page.
  */
 
 /** How many recent beats to draw per monitor. */
 const BEAT_COUNT = 45;
 
 /**
- * Expose the client accent as a CSS custom property.
+ * Expose the client accent as kore-ui's accent for this page.
  * @param accent Hex accent from the page
- * @returns Style carrying --brand
+ * @returns Style overriding --color-accent, or nothing for the default
  */
-function brandVars(accent: string | null | undefined): React.CSSProperties {
-    // The default is Flatline's accent (blue): never a colour that could read as a status.
-    return { "--brand": accent ?? "#5b8def" } as React.CSSProperties;
+function brandVars(accent: string | null | undefined): React.CSSProperties | undefined {
+    // The default stays kore-ui's blue accent: never a colour that could read as a status.
+    return accent ? ({ "--color-accent": accent } as React.CSSProperties) : undefined;
 }
 
+/** Monitor status (heartbeat code) -> beat / severity key. */
+function beatKey(status: number): "up" | "down" | "maintenance" | "pending" {
+    return status === 1 ? "up" : status === 0 ? "down" : status === 3 ? "maintenance" : "pending";
+}
+
+/** Page or monitor severity -> kore-ui StatusDot state. */
+const SEVERITY_DOT: Record<string, Status> = {
+    up: "up",
+    down: "down",
+    degraded: "warn",
+    maintenance: "maint",
+    pending: "warn",
+};
+
 /**
- * Beat bar for a single monitor. Divs rather than a canvas: legible in a
+ * Beat bar for a single monitor. Spans rather than a canvas: legible in a
  * monochrome renderer, cheap at 45 spans.
  */
 function Beats({ beats }: { beats: Heartbeat[] }) {
     if (!beats || beats.length === 0) {
-        return <div className="beats" aria-hidden="true" />;
+        return <div className="status-beats" aria-hidden="true" />;
     }
 
     // Oldest first so the newest beat is on the right, matching the trend.
@@ -49,47 +62,52 @@ function Beats({ beats }: { beats: Heartbeat[] }) {
 
     return (
         <>
-            <div className="beats" aria-hidden="true">
+            <div className="status-beats" aria-hidden="true">
                 {recent.map((beat, i) => (
-                    <span
-                        key={i}
-                        title={beat.time}
-                        className={`beat ${
-                            beat.status === 1
-                                ? "up"
-                                : beat.status === 0
-                                  ? "down"
-                                  : beat.status === 3
-                                    ? "maintenance"
-                                    : "pending"
-                        }`}
-                    />
+                    <span key={i} title={beat.time} className="status-beat" data-s={beatKey(beat.status)} />
                 ))}
             </div>
-            <span className="beat-time" aria-hidden="true">
+            <span className="status-beat-time tnum" aria-hidden="true">
                 {lastCheck ? formatDate(lastCheck).slice(11) : `${beats.length} checks`}
             </span>
         </>
     );
 }
 
-/** One monitor row. */
+/** One monitor row: name, the state in words with its dot, recent beats. */
 function MonitorRow({ monitor, state }: { monitor: MonitorEntry; state: { status: number; beats: Heartbeat[] } }) {
-    const severity =
-        state.status === 1 ? "up" : state.status === 0 ? "down" : state.status === 3 ? "maintenance" : "degraded";
-
     return (
-        <div className="monitor">
-            <span className="monitor-name">
-                <span>{monitor.name}</span>
-            </span>
-            <span className={`pill ${severity}`}>
-                <span className="dot" />
-                {stateLabel(state.status)}
-            </span>
+        <div className="status-monitor">
+            <span className="min-w-0 flex-auto truncate text-sub">{monitor.name}</span>
+            <StatusDot
+                status={SEVERITY_DOT[beatKey(state.status)] ?? "off"}
+                label={stateLabel(state.status)}
+                className="shrink-0 font-medium"
+            />
             <Beats beats={state.beats} />
         </div>
     );
+}
+
+/** One incident card; the left edge carries its style (warn, danger, info). */
+function IncidentCard({ incident, resolved }: { incident: Incident; resolved: boolean }) {
+    return (
+        <Card className="status-incident mb-2.5 px-4.5 py-4" data-style={incident.style}>
+            <div className="mb-2 flex items-start justify-between gap-3">
+                <h3 className="text-heading font-semibold">{incident.title}</h3>
+                <Badge tone={resolved ? "neutral" : "accent"}>{resolved ? "Resolved" : "Investigating"}</Badge>
+            </div>
+            <p className="text-sub text-muted">{stripTags(incident.content)}</p>
+            {incident.createdDate ? (
+                <p className="mt-2.5 text-2xs text-muted">{formatDate(incident.createdDate)}</p>
+            ) : null}
+        </Card>
+    );
+}
+
+/** Section heading on the status page ("Active incidents", a group's name). */
+function SectionTitle({ children }: { children: React.ReactNode }) {
+    return <h2 className="mb-3 text-meta font-semibold tracking-[0.07em] text-muted uppercase">{children}</h2>;
 }
 
 /**
@@ -120,7 +138,7 @@ export function StatusPageView({
     const monitorCount = states.length;
 
     // StatusPage.getIcon() returns "/icon.svg" when no logo is set: the web
-    // app serves the Flatline mark (the cream pulse) there.
+    // app serves the KoreMonitor mark (the cream pulse) there.
     const logoUrl = data.config.icon || "/icon.svg";
 
     // data.incidents holds pinned *active* incidents only; resolved ones come
@@ -130,53 +148,52 @@ export function StatusPageView({
 
     return (
         <div className="status-page" style={brandVars(data.config.accentColor)}>
-            <div className="wrap">
-                <header className="site-header">
-                    <img className="site-logo" src={logoUrl} alt="" />
-                    <div>
-                        <h1 className="site-title">{data.config.title}</h1>
-                        {data.config.description ? <p className="site-description">{data.config.description}</p> : null}
+            <div className="status-wrap">
+                <header className="flex items-center gap-3 pt-5 pb-7">
+                    <img
+                        className="size-[34px] shrink-0 rounded-overlay bg-surface object-contain"
+                        src={logoUrl}
+                        alt=""
+                    />
+                    <div className="min-w-0">
+                        <h1 className="text-[21px] font-semibold tracking-[-0.01em]">{data.config.title}</h1>
+                        {data.config.description ? (
+                            <p className="mt-1.5 max-w-[60ch] text-sub text-muted">{data.config.description}</p>
+                        ) : null}
                     </div>
                 </header>
 
                 {notice}
 
-                <section className={`hero ${severity}`}>
-                    <div className="hero-row">
-                        <span className="hero-dot" />
-                        <span className="hero-label">{heroLabel(severity)}</span>
+                <section className="status-hero" data-severity={severity}>
+                    <div className="inline-flex items-center gap-3">
+                        <StatusDot
+                            status={SEVERITY_DOT[severity] ?? "off"}
+                            aria-hidden="true"
+                            className="status-hero-dot"
+                        />
+                        <span className="status-hero-label">{heroLabel(severity)}</span>
                     </div>
                     {monitorCount > 0 ? (
-                        <div className="hero-meta">
+                        <div className="mt-1.5 text-meta text-muted">
                             {monitorCount} {monitorCount === 1 ? "service" : "services"}
                         </div>
                     ) : null}
                 </section>
 
                 {activeIncidents.length > 0 ? (
-                    <section className="section">
-                        <h2 className="section-title">Active incidents</h2>
+                    <section className="mb-8">
+                        <SectionTitle>Active incidents</SectionTitle>
                         {activeIncidents.map((incident) => (
-                            <article className={`incident ${incident.style}`} key={incident.id}>
-                                <div className="incident-head">
-                                    <h3 className="incident-title">{incident.title}</h3>
-                                    <span className="incident-badge">Investigating</span>
-                                </div>
-                                <div className="incident-body">
-                                    <p>{stripTags(incident.content)}</p>
-                                </div>
-                                {incident.createdDate ? (
-                                    <div className="incident-time">{formatDate(incident.createdDate)}</div>
-                                ) : null}
-                            </article>
+                            <IncidentCard key={incident.id} incident={incident} resolved={false} />
                         ))}
                     </section>
                 ) : null}
 
                 {data.publicGroupList.map((group) => (
-                    <section className="section" key={group.id}>
-                        <h2 className="section-title">{group.name}</h2>
-                        <div className="group">
+                    <section className="mb-8" key={group.id}>
+                        <SectionTitle>{group.name}</SectionTitle>
+                        <Card className="overflow-hidden">
                             {(group.monitorList ?? []).map((monitor) => {
                                 const entry = byMonitor.get(monitor.id);
                                 return (
@@ -187,26 +204,15 @@ export function StatusPageView({
                                     />
                                 );
                             })}
-                        </div>
+                        </Card>
                     </section>
                 ))}
 
                 {pastIncidents.length > 0 ? (
-                    <section className="section">
-                        <h2 className="section-title">Recent incidents</h2>
+                    <section className="mb-8">
+                        <SectionTitle>Recent incidents</SectionTitle>
                         {pastIncidents.map((incident) => (
-                            <article className={`incident ${incident.style}`} key={incident.id}>
-                                <div className="incident-head">
-                                    <h3 className="incident-title">{incident.title}</h3>
-                                    <span className="incident-badge incident-badge-resolved">Resolved</span>
-                                </div>
-                                <div className="incident-body">
-                                    <p>{stripTags(incident.content)}</p>
-                                </div>
-                                {incident.createdDate ? (
-                                    <div className="incident-time">{formatDate(incident.createdDate)}</div>
-                                ) : null}
-                            </article>
+                            <IncidentCard key={incident.id} incident={incident} resolved />
                         ))}
                     </section>
                 ) : null}
@@ -215,8 +221,8 @@ export function StatusPageView({
                     "updated at" line is noise on a page whose whole point is
                     showing current state. */}
                 {data.config.showPoweredBy ? (
-                    <footer className="footer">
-                        <span>Status by Flatline</span>
+                    <footer className="mt-11 border-t border-border pt-5.5 text-meta text-muted">
+                        <span>Status by KoreMonitor</span>
                     </footer>
                 ) : null}
             </div>

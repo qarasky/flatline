@@ -1,33 +1,32 @@
 "use client";
 
+import {
+    Button,
+    Dialog,
+    DialogBody,
+    DialogContent,
+    DialogFooter,
+    DialogTrigger,
+    Field,
+    Input,
+    Select,
+} from "@qarasky/kore-ui";
 import { Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { useBoardData } from "@/components/board/board-data";
-import { Button } from "@/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { createBackupAgent } from "@/lib/backups-api";
 
+import { NOT_LINKED, serverId, serverOptions } from "./server-options";
 import { TokenDialog } from "./token-dialog";
 
 /** Register a backup agent; its token is shown once afterwards. */
 export function NewAgentDialog() {
     const { monitors, reload } = useBoardData();
-    const servers = monitors.filter((m) => m.type === "push");
+    const options = serverOptions(monitors);
     const [open, setOpen] = useState(false);
     const [name, setName] = useState("");
-    const [server, setServer] = useState("");
+    const [server, setServer] = useState(NOT_LINKED);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [issued, setIssued] = useState<{ name: string; token: string } | null>(null);
@@ -37,10 +36,10 @@ export function NewAgentDialog() {
         setBusy(true);
         setError(null);
         try {
-            const answer = await createBackupAgent({ name: name.trim(), monitorId: server ? Number(server) : null });
+            const answer = await createBackupAgent({ name: name.trim(), monitorId: serverId(server) });
             setOpen(false);
             setName("");
-            setServer("");
+            setServer(NOT_LINKED);
             setIssued({ name: answer.agent.name, token: answer.token });
             await reload();
         } catch (e) {
@@ -54,55 +53,34 @@ export function NewAgentDialog() {
         <>
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogTrigger asChild>
-                    <Button size="sm">
+                    <Button variant="primary" size="sm">
                         <Plus />
                         Register agent
                     </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-md">
-                    <form onSubmit={(e) => void submit(e)} className="grid gap-4">
-                        <DialogHeader>
-                            <DialogTitle>Register a backup agent</DialogTitle>
-                            <DialogDescription>
-                                One agent per thing backed up, each with its own token.
-                            </DialogDescription>
-                        </DialogHeader>
-                        <div className="grid gap-1.5">
-                            <Label htmlFor="agent-name">Name</Label>
-                            <Input
-                                id="agent-name"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                required
-                                maxLength={100}
-                            />
-                        </div>
-                        <div className="grid gap-1.5">
-                            <Label htmlFor="agent-server">Server</Label>
-                            <NativeSelect
-                                id="agent-server"
-                                className="w-full"
-                                value={server}
-                                onChange={(e) => setServer(e.target.value)}
-                            >
-                                <NativeSelectOption value="">— not linked</NativeSelectOption>
-                                {servers.map((s) => (
-                                    <NativeSelectOption key={s.id} value={String(s.id)}>
-                                        {s.name}
-                                    </NativeSelectOption>
-                                ))}
-                            </NativeSelect>
-                        </div>
-                        {error ? (
-                            <p role="alert" className="text-bad text-xs">
-                                {error}
-                            </p>
-                        ) : null}
+                <DialogContent
+                    title="Register a backup agent"
+                    description="One agent per thing backed up, each with its own token."
+                >
+                    <form onSubmit={(e) => void submit(e)} className="flex min-h-0 flex-col">
+                        <DialogBody className="grid gap-4">
+                            <Field label="Name" required>
+                                <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} />
+                            </Field>
+                            <Field label="Server">
+                                <Select value={server} onValueChange={setServer} options={options} />
+                            </Field>
+                            {error ? (
+                                <p role="alert" className="text-meta text-danger">
+                                    {error}
+                                </p>
+                            ) : null}
+                        </DialogBody>
                         <DialogFooter>
-                            <Button type="button" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
+                            <Button onClick={() => setOpen(false)} disabled={busy}>
                                 Cancel
                             </Button>
-                            <Button type="submit" disabled={busy || !name.trim()}>
+                            <Button type="submit" variant="primary" loading={busy} disabled={!name.trim()}>
                                 {busy ? "Registering…" : "Register"}
                             </Button>
                         </DialogFooter>

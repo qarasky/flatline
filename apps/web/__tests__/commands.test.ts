@@ -26,7 +26,7 @@ function monitor(over: Partial<MonitorSummary>): MonitorSummary {
 
 const account: Me = {
     principal: "account",
-    account: { id: 1, email: "a@b.kz", name: "Ana", mustChangePassword: false },
+    account: { id: 1, email: "a@b.kz", name: "Ana", sso: true },
 };
 const token: Me = { principal: "token", token: { id: 1, name: "wall tv" } };
 
@@ -63,11 +63,6 @@ describe("buildCommands", () => {
         const keywords = group("Monitors").find((c) => c.label === "api.kz")?.keywords ?? [];
         expect(keywords).toContain("https://api.kz/health");
         expect(keywords).toContain("Work");
-    });
-
-    it("offers Change password to an account only", () => {
-        expect(group("Actions").map((c) => c.id)).toContain("change-password");
-        expect(group("Actions", token).map((c) => c.id)).not.toContain("change-password");
     });
 
     it("always offers New monitor and Sign out", () => {
