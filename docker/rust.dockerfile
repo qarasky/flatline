@@ -3,6 +3,9 @@
 # The web app is its own image (docker/web.dockerfile) behind Caddy
 # (docker/caddy.dockerfile); see compose.yaml.
 #
+# CI (.github/workflows/images.yml) builds this for linux/amd64 and
+# linux/arm64 on native runners and publishes ghcr.io/<owner>/flatline-backend.
+#
 # Build from the repository root (linux/amd64 for the office server):
 #   docker build --platform linux/amd64 -f docker/rust.dockerfile \
 #       -t artchsh/flatline-rust:office-live .
@@ -12,8 +15,10 @@
 ############################################
 
 # Agent build: the Go binary served under /agent/* for installs and updates.
-# Static (CGO off) so it runs on any glibc/musl host. VERSION is what
-# `superboard version` prints; sha256sums is what install.sh verifies.
+# Static (CGO off) so it runs on any glibc/musl host. Both architectures are
+# cross-built whatever the builder is; VERSION comes from the one that matches
+# the builder, since an arm64 runner cannot execute the amd64 binary. VERSION
+# is what `superboard version` prints; sha256sums is what install.sh verifies.
 FROM golang:1.27-trixie AS agent
 WORKDIR /src
 
@@ -25,7 +30,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" \
         -o /out/superboard-linux-amd64 . \
     && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" \
         -o /out/superboard-linux-arm64 . \
-    && /out/superboard-linux-amd64 version | cut -d' ' -f2 > /out/VERSION \
+    && "/out/superboard-linux-$(go env GOARCH)" version | cut -d' ' -f2 > /out/VERSION \
     && cd /out && sha256sum superboard-linux-amd64 superboard-linux-arm64 > sha256sums
 
 # Backup agent build: a separate Go module and binary family. These live
@@ -42,7 +47,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" \
         -o /out/flatline-backup-linux-amd64 . \
     && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" \
         -o /out/flatline-backup-linux-arm64 . \
-    && /out/flatline-backup-linux-amd64 version | cut -d' ' -f2 > /out/VERSION-BACKUP \
+    && "/out/flatline-backup-linux-$(go env GOARCH)" version | cut -d' ' -f2 > /out/VERSION-BACKUP \
     && cd /out && sha256sum flatline-backup-linux-amd64 flatline-backup-linux-arm64 > sha256sums-backup
 
 # Rust build. Dependencies are cached against a dummy crate so source edits

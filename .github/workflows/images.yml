@@ -1,0 +1,268 @@
+# Builds the backend, web and Caddy images for linux/amd64 and linux/arm64
+# (each on a native runner) and, on master or a release tag, publishes them
+# to ghcr.io:
+#
+#   push to master    ->  :edge and :sha-<short>
+#   tag v1.2.3        ->  :1.2.3 :1.2 :1 :latest   (v0.x.y: no :0; v1.0.0-rc.1: no :latest)
+#
+# Pull requests only build (nothing is pushed). A tag also creates the
+# GitHub release. Images are named ghcr.io/<owner>/<IMAGE_PREFIX>-<component>;
+# change IMAGE_PREFIX (and FLATLINE_IMAGE_PREFIX in compose.yaml) when the
+# project is renamed.
+name: images
+
+on:
+  pull_request:
+    paths:
+      - backend-rs/**
+      - apps/web/**
+      - packages/shared/**
+      - superboard/**
+      - backup-agent/**
+      - docker/**
+      - docs/provisioning.md
+      - agent-install.sh
+      - .dockerignore
+      - .github/workflows/images.yml
+  push:
+    branches: [master, main]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  REGISTRY: ghcr.io
+  # Rename point: becomes `koremonitor` with the project.
+  IMAGE_PREFIX: flatline
+
+jobs:
+  # Pull requests get ci.yml on their own; master and tags must pass it
+  # before anything is published.
+  ci:
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: [ci]
+    if: ${{ !cancelled() && !failure() }}
+    name: ${{ matrix.component }} (${{ matrix.arch }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - {
+              component: backend,
+              file: docker/rust.dockerfile,
+              target: release,
+              platform: linux/amd64,
+              arch: amd64,
+              runner: ubuntu-24.04
+            }
+          - {
+              component: backend,
+              file: docker/rust.dockerfile,
+              target: release,
+              platform: linux/arm64,
+              arch: arm64,
+              runner: ubuntu-24.04-arm
+            }
+          - {
+              component: web,
+              file: docker/web.dockerfile,
+              target: release,
+              platform: linux/amd64,
+              arch: amd64,
+              runner: ubuntu-24.04
+            }
+          - {
+              component: web,
+              file: docker/web.dockerfile,
+              target: release,
+              platform: linux/arm64,
+              arch: arm64,
+              runner: ubuntu-24.04-arm
+            }
+          - {
+              component: caddy,
+              file: docker/caddy.dockerfile,
+              target: "",
+              platform: linux/amd64,
+              arch: amd64,
+              runner: ubuntu-24.04
+            }
+          - {
+              component: caddy,
+              file: docker/caddy.dockerfile,
+              target: "",
+              platform: linux/arm64,
+              arch: arm64,
+              runner: ubuntu-24.04-arm
+            }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Image name
+        run: echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_PREFIX}-${{ matrix.component }}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          labels: |
+            org.opencontainers.image.title=${{ env.IMAGE_PREFIX }}-${{ matrix.component }}
+            org.opencontainers.image.description=${{ env.IMAGE_PREFIX }} ${{ matrix.component }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          platforms: ${{ matrix.platform }}
+          # The web app compares this against /build to notice a deploy.
+          build-args: |
+            FLATLINE_BUILD_ID=${{ github.sha }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.arch }}
+      - name: Export the digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${RUNNER_TEMP}/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
+        with:
+          name: digests-${{ matrix.component }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # One multi-arch tag per component, from the two per-architecture images.
+  merge:
+    if: github.event_name != 'pull_request'
+    needs: [build]
+    name: publish ${{ matrix.component }}
+    strategy:
+      matrix:
+        component: [backend, web, caddy]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Image name
+        run: echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_PREFIX}-${{ matrix.component }}" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-${{ matrix.component }}-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            type=edge,branch=master
+            type=edge,branch=main
+            type=sha,prefix=sha-,enable=${{ github.ref_type == 'branch' }}
+          # `latest` only for a non-pre-release version tag.
+          flavor: latest=auto
+      - name: Create the multi-arch manifest
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          # shellcheck disable=SC2046  # both substitutions are meant to split into arguments
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
+      - id: inspect
+        run: |
+          tag="$(jq -r '.tags[0]' <<<"$DOCKER_METADATA_OUTPUT_JSON")"
+          docker buildx imagetools inspect "$tag"
+          echo "digest=$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest}}' | jq -r .digest)" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
+
+  # Run the published backend the way an operator does: start it on an empty
+  # data volume and wait for /healthz.
+  smoke:
+    needs: [merge]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test the published backend
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then tag="${GITHUB_REF_NAME#v}"; else tag=edge; fi
+          image="${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_PREFIX}-backend:${tag}"
+          docker run -d --name smoke -p 3001:3001 "$image"
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3001/healthz >/dev/null; then echo "healthy"; exit 0; fi
+            sleep 2
+          done
+          docker logs smoke
+          exit 1
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          pre=""; case "$v" in *-*) pre="--prerelease" ;; esac
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="${GITHUB_REF_NAME}" --jq .body > generated.md
+          {
+            echo "## Images"
+            echo
+            echo '```'
+            for c in backend web caddy; do echo "${REGISTRY}/${owner}/${IMAGE_PREFIX}-${c}:${v}"; done
+            echo '```'
+            echo
+            echo "Linux amd64 and arm64. To run it: set \`FLATLINE_VERSION=${v}\` in \`.env\` and \`docker compose pull && docker compose up -d\` (see docs/deployment.md)."
+            echo
+            cat generated.md
+          } > notes.md
+          gh release create "${GITHUB_REF_NAME}" --verify-tag --title "${IMAGE_PREFIX} ${v}" --notes-file notes.md $pre

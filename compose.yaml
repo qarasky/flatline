@@ -5,7 +5,12 @@
 #   flatline  the Rust backend: API, check engine, agent downloads
 #   web       the Next.js web app: operator UI, Superboard, status pages
 #
-#   docker compose up -d --build
+#   docker compose pull && docker compose up -d     published images (ghcr.io)
+#   docker compose up -d --build                    build from this checkout
+#
+# Images are ghcr.io/qarasky/flatline-{backend,web,caddy}:${FLATLINE_VERSION:-edge},
+# published by .github/workflows/images.yml. FLATLINE_IMAGE_PREFIX (the part
+# before "-backend") and FLATLINE_VERSION override them; see .env.example.
 #
 # First run: the operator token is written to ./data/initial-token.txt
 # (mode 0600); sign in with it and create the first account. There is no
@@ -28,7 +33,7 @@ services:
     build:
       context: .
       dockerfile: docker/caddy.dockerfile
-    image: artchsh/flatline-caddy:2
+    image: ${FLATLINE_IMAGE_PREFIX:-ghcr.io/qarasky/flatline}-caddy:${FLATLINE_VERSION:-edge}
     restart: unless-stopped
     ports:
       - "${FLATLINE_BIND:-0.0.0.0}:${FLATLINE_PORT:-3001}:80"
@@ -71,8 +76,24 @@ services:
       context: .
       dockerfile: docker/rust.dockerfile
       target: release
-    image: artchsh/flatline:2
+    image: ${FLATLINE_IMAGE_PREFIX:-ghcr.io/qarasky/flatline}-backend:${FLATLINE_VERSION:-edge}
     restart: unless-stopped
+    environment:
+      # Absolute public origin (https://uptime.example): used in provisioning
+      # scripts and as the base of the Kore ID callback address.
+      FLATLINE_PUBLIC_URL: ${FLATLINE_PUBLIC_URL:-}
+      # Kore ID single sign-on (docs/sso.md). Off while KORE_ID_ISSUER is empty.
+      KORE_ID_ISSUER: ${KORE_ID_ISSUER:-}
+      KORE_ID_CLIENT_ID: ${KORE_ID_CLIENT_ID:-flatline}
+      KORE_ID_CLIENT_SECRET: ${KORE_ID_CLIENT_SECRET:-}
+      KORE_ID_CLIENT_AUTH: ${KORE_ID_CLIENT_AUTH:-basic}
+      KORE_ID_REDIRECT_URI: ${KORE_ID_REDIRECT_URI:-}
+      KORE_ID_POST_LOGOUT_REDIRECT_URI: ${KORE_ID_POST_LOGOUT_REDIRECT_URI:-}
+      KORE_ID_ALLOWED_EMAILS: ${KORE_ID_ALLOWED_EMAILS:-}
+      KORE_ID_ALLOWED_SUBS: ${KORE_ID_ALLOWED_SUBS:-}
+      # Set to false to turn email/password (or operator-token) sign-in off.
+      FLATLINE_LOCAL_LOGIN: ${FLATLINE_LOCAL_LOGIN:-true}
+      FLATLINE_TOKEN_LOGIN: ${FLATLINE_TOKEN_LOGIN:-true}
     volumes:
       - ./data:/app/data
     # Not published: Caddy reaches it over `internal`; `egress` is for the
@@ -96,7 +117,7 @@ services:
     build:
       context: .
       dockerfile: docker/web.dockerfile
-    image: artchsh/flatline-web:2
+    image: ${FLATLINE_IMAGE_PREFIX:-ghcr.io/qarasky/flatline}-web:${FLATLINE_VERSION:-edge}
     restart: unless-stopped
     environment:
       API_URL: http://flatline:3001
