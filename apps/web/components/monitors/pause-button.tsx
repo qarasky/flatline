@@ -3,7 +3,7 @@
 import { Pause, Play } from "lucide-react";
 
 import { useBoardData } from "@/components/board/board-data";
-import { Button } from "@/components/ui/button";
+import { Button } from "@qarasky/kore-ui";
 
 /** Pause live updates (WCAG 2.2.2): changes wait until Resume. */
 export function PauseButton() {

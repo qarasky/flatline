@@ -1,5 +1,3 @@
-import "./legacy.css";
-
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -38,21 +36,21 @@ export default async function Root({
     if (host.kind === "mapped") {
         const initial = await readStatusPage(host.slug);
         return (
-            <div className="legacy-theme">
+            <>
                 {initial.kind === "notfound" ? (
                     <StatusNotice>No status page found.</StatusNotice>
                 ) : (
                     <StatusPageApp slug={host.slug} initial={initial} renderedAt={Date.now()} />
                 )}
                 <UpdateWatcher mode="reload" />
-            </div>
+            </>
         );
     }
     return (
-        <div className="legacy-theme">
+        <>
             {/* Try again on its own: an unattended screen may be showing this. */}
             <meta httpEquiv="refresh" content="30" />
-            <StatusNotice>Could not reach the status server. Retrying…</StatusNotice>
-        </div>
+            <StatusNotice>Couldn't reach the status server. Retrying…</StatusNotice>
+        </>
     );
 }

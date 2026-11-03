@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { AuthScreen, Button, Field, Input } from "@qarasky/kore-ui";
+
 import { isApiError } from "@/lib/api";
 import {
     approveDeviceRequest,
@@ -13,6 +13,7 @@ import {
     type DeviceRequestInfo,
 } from "@/lib/device-api";
 import { codeFromHash, hostMismatch, isSignedOut } from "@/lib/device-auth";
+import { KORE_APP, KORE_NAMES } from "@/lib/kore";
 
 type View =
     | { kind: "loading" }
@@ -28,7 +29,7 @@ function failure(e: unknown): string {
     if (isApiError(e, 404) || isApiError(e, 409)) {
         return "This request has expired or was already answered. Ask the screen to show a new QR code.";
     }
-    return e instanceof Error ? e.message : "Could not reach the Flatline server.";
+    return e instanceof Error ? e.message : "Couldn't reach the Flatline server. Check your connection and try again.";
 }
 
 /** Signed out: sign in, then come back here with the code. */
@@ -109,59 +110,48 @@ export function DeviceApprove() {
     }
 
     return (
-        <div className="flex min-h-svh items-center justify-center p-6">
-            <div className="bg-card w-full max-w-sm rounded-lg border p-6">
-                <h1 className="text-base font-semibold">Approve this screen?</h1>
-                {view.kind === "loading" ? <p className="text-muted-foreground mt-3">Loading…</p> : null}
-                {view.kind === "done" || view.kind === "failed" ? (
-                    <p className={`mt-3 ${view.kind === "failed" ? "text-status-down" : ""}`} role="status">
-                        {view.message}
+        <AuthScreen
+            app={KORE_APP}
+            names={KORE_NAMES}
+            title="Approve this screen?"
+            description={view.kind === "ready" ? "A screen is asking to sign in to Flatline." : undefined}
+            error={view.kind === "failed" ? view.message : null}
+        >
+            {view.kind === "loading" ? <p className="text-muted">Loading…</p> : null}
+            {view.kind === "done" ? <p role="status">{view.message}</p> : null}
+            {view.kind === "ready" ? (
+                <>
+                    <Field id="device-name" label="Name this screen">
+                        <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
+                    </Field>
+                    <p className="text-meta text-muted">
+                        {view.info.userAgent || "Unknown browser"} · requested {describeAge(view.info.ageSeconds)}
+                        <br />
+                        Same access as you. Never expires. Revoke it any time in Tokens.
                     </p>
-                ) : null}
-                {view.kind === "ready" ? (
-                    <>
-                        <p className="text-muted-foreground mt-1 mb-4 text-xs">
-                            A screen is asking to sign in to Flatline.
+                    {hostMismatch(view.info.publicUrl, window.location.origin) ? (
+                        <p className="text-meta bg-warning/10 text-warning rounded-ui px-3 py-2">
+                            You opened this page at a different address than the one this server publishes (
+                            {view.info.publicUrl}). If the screen can&apos;t reach that address, check it before
+                            approving.
                         </p>
-                        <label className="mb-3 block">
-                            <span className="text-muted-foreground mb-1 block text-xs">Name this screen</span>
-                            <Input
-                                id="device-name"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                maxLength={60}
-                            />
-                        </label>
-                        <p className="text-muted-foreground mb-3 text-xs">
-                            {view.info.userAgent || "Unknown browser"} · requested {describeAge(view.info.ageSeconds)}
-                            <br />
-                            Same access as you. Never expires. Revoke it any time in Tokens.
-                        </p>
-                        {hostMismatch(view.info.publicUrl, window.location.origin) ? (
-                            <p className="bg-status-down/10 text-status-down mb-3 rounded-md px-2.5 py-2 text-xs">
-                                You opened this page at a different address than the one this server publishes (
-                                {view.info.publicUrl}). If the screen cannot reach that address, check it before
-                                approving.
-                            </p>
-                        ) : null}
+                    ) : null}
+                    <div className="flex flex-col gap-2">
                         <Button
-                            className="w-full"
-                            disabled={busy || name.trim() === ""}
+                            variant="primary"
+                            fullWidth
+                            loading={busy}
+                            disabled={name.trim() === ""}
                             onClick={() => void answer(true)}
                         >
                             Approve
                         </Button>
-                        <Button
-                            variant="ghost"
-                            className="mt-2 w-full"
-                            disabled={busy}
-                            onClick={() => void answer(false)}
-                        >
+                        <Button variant="ghost" fullWidth disabled={busy} onClick={() => void answer(false)}>
                             Deny
                         </Button>
-                    </>
-                ) : null}
-            </div>
-        </div>
+                    </div>
+                </>
+            ) : null}
+        </AuthScreen>
     );
 }

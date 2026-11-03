@@ -2,7 +2,8 @@
 export type Me =
     | {
           principal: "account";
-          account: { id: number; email: string; name: string; mustChangePassword: boolean };
+          /** `sso`: the account signs in with Kore ID (it has no password of its own). */
+          account: { id: number; email: string; name: string; mustChangePassword: boolean; sso: boolean };
       }
     | { principal: "token"; token: { id: number; name: string } };
 
@@ -17,6 +18,7 @@ export function toMe(body: Record<string, unknown>): Me {
                 email: account.email,
                 name: account.name,
                 mustChangePassword: account.mustChangePassword,
+                sso: account.sso === true,
             },
         };
     }
@@ -28,16 +30,4 @@ export function toMe(body: Record<string, unknown>): Me {
 export function displayName(me: Me): string {
     const name = me.principal === "account" ? me.account.name : me.token.name;
     return name.trim() || "Operator";
-}
-
-/** Up to two letters for the avatar: the first two words' first letters. */
-export function initials(name: string): string {
-    const letters = name
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((word) => Array.from(word)[0]!.toUpperCase())
-        .join("");
-    return letters || "?";
 }

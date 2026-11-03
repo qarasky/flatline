@@ -1,20 +1,43 @@
 import { api } from "@/lib/api";
 
-/** What the sign-in page offers, from `GET /api/v1/auth/sso/config`. */
+/**
+ * What the sign-in page offers, from `GET /api/v1/auth/sso/config`, and for
+ * the account menu the Kore ID account page and the other Kore apps.
+ */
 export interface SignInMethods {
     sso: boolean;
     localLogin: boolean;
     tokenLogin: boolean;
+    /** Kore ID's account page (with Kore ID on). */
+    accountUrl: string | null;
+    /** The other Kore apps' URLs for the app switcher, by app id. */
+    apps: Partial<Record<KoreAppId, string>>;
 }
 
+/** The Kore apps the switcher knows (kore-ui's `AppId`). */
+export type KoreAppId = "kore" | "koremind" | "korecalendar" | "flatline";
+const APP_IDS: readonly KoreAppId[] = ["kore", "koremind", "korecalendar", "flatline"];
+
 /** Local sign-in only, for a backend that does not answer. */
-export const LOCAL_ONLY: SignInMethods = { sso: false, localLogin: true, tokenLogin: true };
+export const LOCAL_ONLY: SignInMethods = { sso: false, localLogin: true, tokenLogin: true, accountUrl: null, apps: {} };
 
 export function toMethods(body: Record<string, unknown>): SignInMethods {
+    const apps: SignInMethods["apps"] = {};
+    const raw = body.apps && typeof body.apps === "object" ? (body.apps as Record<string, unknown>) : {};
+    for (const id of APP_IDS) {
+        const url = raw[id];
+        if (typeof url === "string" && /^https?:\/\//.test(url)) {
+            apps[id] = url;
+        }
+    }
+    const accountUrl =
+        typeof body.accountUrl === "string" && /^https?:\/\//.test(body.accountUrl) ? body.accountUrl : null;
     return {
         sso: body.sso === true,
         localLogin: body.localLogin !== false,
         tokenLogin: body.tokenLogin !== false,
+        accountUrl,
+        apps,
     };
 }
 
@@ -26,7 +49,7 @@ export function ssoStartHref(next: string | null): string {
 }
 
 const SSO_ERRORS: Record<string, string> = {
-    denied: "This Kore ID account is not allowed to use Flatline. Ask an operator to add it.",
+    denied: "This Kore ID account doesn't have access to Flatline. Ask your Kore ID admin to give you access.",
     state: "That sign-in link expired or was opened in another browser. Try again.",
     token: "Kore ID returned a token Flatline could not verify. Try again.",
     provider: "Kore ID did not complete the sign-in. Try again.",

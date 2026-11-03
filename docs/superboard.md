@@ -2,8 +2,8 @@
 
 The wall board: one card per server that pushes telemetry, sized and coloured to
 be read from across the room. It is a route in the [web app](dashboard.md)
-(`apps/web/`), not a separate application, and keeps the old dashboard's look
-(`app/legacy.css`).
+(`apps/web/`), not a separate application, with its own full-screen layout on
+kore-ui components and tokens.
 
 | Route               | Chrome                 | Use                 |
 | ------------------- | ---------------------- | ------------------- |

@@ -10,6 +10,7 @@ const base = {
     tokenCount: 0,
     mustChangePassword: false,
     startingPasswordExpired: false,
+    sso: false,
 } satisfies Member;
 
 describe("memberStatus", () => {

@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { Button, EmptyState } from "@qarasky/kore-ui";
 
 /** Static placeholder while the roster loads: no shimmer on a screen that is watched all day. */
 export function BoardSkeleton({ rows = 8 }: { rows?: number }) {
@@ -19,38 +19,45 @@ export function BoardSkeleton({ rows = 8 }: { rows?: number }) {
 
 export function EmptyBoard({ onNewMonitor }: { onNewMonitor: () => void }) {
     return (
-        <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
-            <p className="font-medium">No monitors yet</p>
-            <p className="text-muted-foreground max-w-sm text-xs">
-                Add an HTTP, ping or push monitor, or a group to organise them.
-            </p>
-            <Button size="sm" onClick={onNewMonitor}>
-                New monitor
-            </Button>
-        </div>
+        <EmptyState
+            className="py-16"
+            title="No monitors yet"
+            description="Add an HTTP, ping or push monitor, or a group to organise them."
+            action={
+                <Button variant="primary" onClick={onNewMonitor}>
+                    New monitor
+                </Button>
+            }
+        />
     );
 }
 
 export function NoMatches({ onClear }: { onClear: () => void }) {
     return (
-        <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
-            <p className="font-medium">Nothing matches</p>
-            <p className="text-muted-foreground text-xs">No monitor fits the current search and filters.</p>
-            <Button size="sm" variant="outline" onClick={onClear}>
-                Clear search and filters
-            </Button>
-        </div>
+        <EmptyState
+            className="py-16"
+            title="Nothing matches"
+            description="No monitor fits the current search and filters."
+            action={
+                <Button size="sm" onClick={onClear}>
+                    Clear search and filters
+                </Button>
+            }
+        />
     );
 }
 
 export function LoadFailed({ message, onRetry }: { message: string; onRetry: () => void }) {
     return (
-        <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
-            <p className="font-medium">Could not load the monitors</p>
-            <p className="text-status-down max-w-md text-xs">{message}</p>
-            <Button size="sm" variant="outline" onClick={onRetry}>
-                Try again
-            </Button>
-        </div>
+        <EmptyState
+            className="py-16"
+            title="Couldn't load the monitors"
+            description={<span className="text-danger">{message}</span>}
+            action={
+                <Button size="sm" onClick={onRetry}>
+                    Try again
+                </Button>
+            }
+        />
     );
 }

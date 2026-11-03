@@ -3,11 +3,12 @@
 import { ChevronRight } from "lucide-react";
 import { memo, type CSSProperties } from "react";
 
+import { cn } from "@qarasky/kore-ui";
+
 import { STATUS_LABEL } from "@/lib/board-format";
 import type { GroupNode } from "@/lib/board-model";
 import { isCovered } from "@/lib/mute";
 import { groupMenuItems } from "@/lib/row-menu";
-import { cn } from "@/lib/utils";
 
 import { useBoardActions } from "./board-context";
 import { RowContextMenu, RowMenuButton } from "./row-menu";
@@ -25,12 +26,12 @@ function Counts({ totals }: { totals: GroupNode["totals"] }) {
     if (totals.maintenance > 0) {
         parts.push({ text: `${totals.maintenance} maintenance`, tone: "text-status-maint" });
     }
-    parts.push({ text: `${totals.up} up`, tone: "text-muted-foreground" });
+    parts.push({ text: `${totals.up} up`, tone: "text-muted" });
     if (totals.paused > 0) {
-        parts.push({ text: `${totals.paused} paused`, tone: "text-muted-foreground" });
+        parts.push({ text: `${totals.paused} paused`, tone: "text-muted" });
     }
     return (
-        <span className="flex shrink-0 justify-end gap-x-2 text-xs whitespace-nowrap tabular-nums">
+        <span className="text-meta flex shrink-0 justify-end gap-x-2 whitespace-nowrap tabular-nums">
             {parts.map((part) => (
                 <span key={part.text} className={part.tone}>
                     {part.text}
@@ -41,11 +42,11 @@ function Counts({ totals }: { totals: GroupNode["totals"] }) {
 }
 
 const SEGMENTS: { key: keyof GroupNode["totals"]; color: string; label: string }[] = [
-    { key: "down", color: "var(--status-down)", label: "down" },
-    { key: "pending", color: "var(--status-warn)", label: "pending" },
-    { key: "maintenance", color: "var(--status-maint)", label: "in maintenance" },
-    { key: "up", color: "color-mix(in srgb, var(--status-up) 70%, transparent)", label: "up" },
-    { key: "paused", color: "var(--border)", label: "paused" },
+    { key: "down", color: "var(--color-status-down)", label: "down" },
+    { key: "pending", color: "var(--color-status-warn)", label: "pending" },
+    { key: "maintenance", color: "var(--color-status-maint)", label: "in maintenance" },
+    { key: "up", color: "color-mix(in srgb, var(--color-status-up) 70%, transparent)", label: "up" },
+    { key: "paused", color: "var(--color-border)", label: "paused" },
 ];
 
 /** Members as proportional segments; the numbers beside it stay for exactness. */
@@ -102,7 +103,7 @@ export const GroupRow = memo(function GroupRow({
                     aria-expanded={expanded}
                     aria-label={`${expanded ? "Collapse" : "Expand"} ${group.monitor.name}`}
                     onClick={() => actions.toggleGroup(group.id)}
-                    className="text-muted-foreground hover:text-foreground flex size-5 items-center justify-center rounded"
+                    className="text-muted hover:text-text flex size-5 items-center justify-center rounded-ui"
                 >
                     <ChevronRight
                         aria-hidden
@@ -117,16 +118,16 @@ export const GroupRow = memo(function GroupRow({
                     <span className={cn("truncate", depth === 0 ? "font-semibold" : "font-medium")}>
                         {group.monitor.name}
                     </span>
-                    <span className="text-muted-foreground shrink-0 text-xs tabular-nums">{group.totals.total}</span>
+                    <span className="text-muted text-meta shrink-0 tabular-nums">{group.totals.total}</span>
                 </div>
                 <span
                     className={cn(
-                        "board-row-word text-xs",
+                        "board-row-word text-meta",
                         group.worst === "up"
-                            ? "text-muted-foreground"
+                            ? "text-muted"
                             : group.worst === "down"
                               ? "text-status-down font-medium"
-                              : "text-muted-foreground"
+                              : "text-muted"
                     )}
                 >
                     {group.totals.total === 0 ? "Empty" : group.worst === "up" ? "" : STATUS_LABEL[group.worst]}

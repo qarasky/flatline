@@ -1,5 +1,3 @@
-import "../legacy.css";
-
 import type { Metadata } from "next";
 
 import { UpdateWatcher } from "@/components/update-watcher";
@@ -9,12 +7,12 @@ export const metadata: Metadata = {
     robots: { index: false, follow: false, noarchive: true, nosnippet: true },
 };
 
-/** Public status pages keep the old look; nothing from the admin area is loaded here. */
+/** Public status pages: their own full-screen layout on kore-ui tokens; nothing from the admin area is loaded here. */
 export default function StatusLayout({ children }: { children: React.ReactNode }) {
     return (
-        <div className="legacy-theme">
+        <>
             {children}
             <UpdateWatcher mode="reload" />
-        </div>
+        </>
     );
 }

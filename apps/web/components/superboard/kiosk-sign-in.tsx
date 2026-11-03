@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { AuthScreen, Spinner } from "@qarasky/kore-ui";
 
 import { api } from "@/lib/api";
 import { pollDeviceSignIn, startDeviceSignIn } from "@/lib/device-api";
@@ -8,6 +9,7 @@ import { qrSvg } from "@/lib/device-auth";
 import { exchangeTokenForSession } from "@/lib/kiosk-exchange";
 import { createSession, keepMigrating } from "@/lib/legacy-token";
 import { abortableWait, runDeviceSignIn, type DeviceSignInStatus } from "@/lib/device-poll";
+import { KORE_APP, KORE_NAMES } from "@/lib/kore";
 
 function formatRemaining(ms: number): string {
     const seconds = Math.max(0, Math.ceil(ms / 1000));
@@ -89,28 +91,29 @@ export function KioskSignIn() {
     );
 
     return (
-        <div className="flex min-h-svh items-center justify-center p-6">
-            <div className="w-full max-w-sm text-center">
-                <h1 className="mb-1 text-lg font-semibold">Sign in to Flatline</h1>
-                <p className="mb-4 text-xs text-muted-foreground">This screen signs in with a phone.</p>
-                <div className="mx-auto mb-3 flex size-44 items-center justify-center rounded-md bg-white">
-                    {image ? <img src={image} alt="QR code to sign this screen in" className="size-full" /> : null}
+        <AuthScreen app={KORE_APP} names={KORE_NAMES} title="Sign in" description="This screen signs in with a phone.">
+            <div className="flex flex-col items-center gap-3 text-center">
+                {/* The QR keeps a white quiet zone so any phone camera reads it. */}
+                <div className="flex size-48 items-center justify-center rounded-ui bg-white p-2">
+                    {image ? (
+                        <img src={image} alt="QR code to sign this screen in" className="size-full" />
+                    ) : (
+                        <Spinner size={24} className="text-black/40" />
+                    )}
                 </div>
-                <p className="m-0 text-sm">
-                    {migrating ? "Signing in…" : "Scan with your phone, where you\u2019re already signed in"}
-                </p>
-                <p className="mt-1 mb-0 text-xs text-muted-foreground" role="status">
+                <p>{migrating ? "Signing in…" : "Scan with your phone, where you\u2019re already signed in"}</p>
+                <p className="text-meta text-muted" role="status">
                     {failed
                         ? "Approved, but this screen could not sign in. Showing a new code in 30 seconds…"
                         : status === "denied"
                           ? "Request denied. Showing a new code…"
                           : status === "error"
-                            ? "Can't reach the server. Retrying…"
+                            ? "Couldn't reach the server. Retrying…"
                             : code
                               ? `Waiting for approval… code expires in ${formatRemaining(code.expiresAt - now)}`
                               : "Preparing a code…"}
                 </p>
             </div>
-        </div>
+        </AuthScreen>
     );
 }

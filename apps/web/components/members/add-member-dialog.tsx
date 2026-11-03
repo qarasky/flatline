@@ -4,18 +4,7 @@ import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Button, Dialog, DialogBody, DialogContent, DialogFooter, DialogTrigger, Field, Input } from "@qarasky/kore-ui";
 import { api } from "@/lib/api";
 import { signInMessage as failureMessage } from "@/lib/legacy-token";
 import { passwordProblem } from "@/lib/password";
@@ -65,71 +54,65 @@ export function AddMemberDialog() {
         }
     }
 
+    const invalid = error ? true : undefined;
+
     return (
         <Dialog open={open} onOpenChange={reset}>
             <DialogTrigger asChild>
-                <Button size="sm">
+                <Button variant="primary" size="sm">
                     <Plus />
                     Add member
                 </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-                <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
-                    <DialogHeader>
-                        <DialogTitle>Add member</DialogTitle>
-                        <DialogDescription>
-                            Give them the starting password yourself. They choose their own the first time they sign in;
-                            an unused starting password expires after 7 days.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="flex flex-col gap-2">
-                        <Label htmlFor="member-name">Name</Label>
-                        <Input
-                            id="member-name"
-                            autoComplete="off"
-                            value={name}
-                            onChange={(event) => setName(event.target.value)}
-                        />
-                    </div>
-                    <div className="flex flex-col gap-2">
-                        <Label htmlFor="member-email">Email</Label>
-                        <Input
-                            id="member-email"
-                            type="email"
-                            autoComplete="off"
-                            value={email}
-                            onChange={(event) => setEmail(event.target.value)}
-                        />
-                    </div>
-                    <div className="flex flex-col gap-2">
-                        <Label htmlFor="member-password">Starting password</Label>
-                        <Input
-                            id="member-password"
-                            type="password"
-                            autoComplete="new-password"
-                            value={password}
-                            onChange={(event) => setPassword(event.target.value)}
-                        />
-                    </div>
-                    <div className="flex flex-col gap-2">
-                        <Label htmlFor="member-confirm">Repeat starting password</Label>
-                        <Input
-                            id="member-confirm"
-                            type="password"
-                            autoComplete="new-password"
-                            value={confirm}
-                            onChange={(event) => setConfirm(event.target.value)}
-                        />
-                    </div>
-                    {error && (
-                        <p role="alert" className="text-status-down">
-                            {error}
-                        </p>
-                    )}
+            <DialogContent
+                title="Add member"
+                description="Give them the starting password yourself. They choose their own the first time they sign in; an unused starting password expires after 7 days."
+            >
+                <form onSubmit={submit} noValidate className="flex min-h-0 flex-col">
+                    <DialogBody className="flex flex-col gap-4">
+                        <Field label="Name">
+                            <Input autoComplete="off" value={name} onChange={(event) => setName(event.target.value)} />
+                        </Field>
+                        <Field label="Email">
+                            <Input
+                                type="email"
+                                autoComplete="off"
+                                placeholder="ana@example.com"
+                                value={email}
+                                onChange={(event) => setEmail(event.target.value)}
+                            />
+                        </Field>
+                        <Field label="Starting password" hint="At least 10 characters.">
+                            <Input
+                                type="password"
+                                autoComplete="new-password"
+                                value={password}
+                                onChange={(event) => setPassword(event.target.value)}
+                                aria-invalid={invalid}
+                            />
+                        </Field>
+                        <Field label="Repeat starting password">
+                            <Input
+                                type="password"
+                                autoComplete="new-password"
+                                value={confirm}
+                                onChange={(event) => setConfirm(event.target.value)}
+                                aria-invalid={invalid}
+                            />
+                        </Field>
+                        {error && (
+                            <p role="alert" className="text-meta text-danger">
+                                {error}
+                            </p>
+                        )}
+                    </DialogBody>
                     <DialogFooter>
+                        <Button onClick={() => reset(false)}>Cancel</Button>
                         <Button
                             type="submit"
-                            disabled={busy || name.trim() === "" || email.trim() === "" || password === ""}
+                            variant="primary"
+                            loading={busy}
+                            disabled={name.trim() === "" || email.trim() === "" || password === ""}
                         >
                             {busy ? "Adding…" : "Add member"}
                         </Button>

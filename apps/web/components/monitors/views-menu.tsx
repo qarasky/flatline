@@ -3,12 +3,10 @@
 import { Bookmark, Star, X } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Button, IconButton, Input, Popover, PopoverContent, PopoverTrigger, cn } from "@qarasky/kore-ui";
+
 import { isFilterActive, type FilterState, type SortKey } from "@/lib/board-model";
 import { addView, removeView, setDefaultView, type SavedView, type SavedViews } from "@/lib/board-url";
-import { cn } from "@/lib/utils";
 
 /**
  * Saved views: named filter and sort combinations kept in this browser, one
@@ -33,17 +31,17 @@ export function ViewsMenu({
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
-                <Button variant="outline" size="sm">
+                <Button size="sm">
                     <Bookmark />
                     Views
                     {state.views.length > 0 ? (
-                        <span className="text-muted-foreground tabular-nums">{state.views.length}</span>
+                        <span className="text-muted tabular-nums">{state.views.length}</span>
                     ) : null}
                 </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-72">
                 {state.views.length === 0 ? (
-                    <p className="text-muted-foreground mb-3 text-xs">
+                    <p className="text-muted text-meta mb-3">
                         Save a filter and sort combination to come back to it later. Views live in this browser.
                     </p>
                 ) : (
@@ -58,36 +56,28 @@ export function ViewsMenu({
                                             onApply(view);
                                             setOpen(false);
                                         }}
-                                        className="hover:bg-accent min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left"
+                                        className="min-h-control-sm min-w-0 flex-1 truncate rounded-ui px-2 text-left transition-colors hover:bg-white/5"
                                     >
                                         {view.name}
                                     </button>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon-xs"
+                                    <IconButton
                                         aria-pressed={isDefault}
-                                        aria-label={`${isDefault ? "Unset" : "Set"} ${view.name} as default view`}
-                                        title={isDefault ? "Default view (click to unset)" : "Make default"}
+                                        label={`${isDefault ? "Unset" : "Set"} ${view.name} as default view`}
+                                        icon={<Star className={cn(isDefault && "fill-accent text-accent")} />}
                                         onClick={() => onChange(setDefaultView(state, isDefault ? null : view.id))}
-                                    >
-                                        <Star className={cn(isDefault && "fill-primary text-primary")} />
-                                    </Button>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon-xs"
-                                        aria-label={`Delete view ${view.name}`}
-                                        title="Delete view"
+                                    />
+                                    <IconButton
+                                        label={`Delete view ${view.name}`}
+                                        icon={<X />}
                                         onClick={() => onChange(removeView(state, view.id))}
-                                    >
-                                        <X />
-                                    </Button>
+                                    />
                                 </li>
                             );
                         })}
                     </ul>
                 )}
                 <form
-                    className="flex gap-2 border-t pt-3"
+                    className="flex gap-2 border-t border-border pt-3"
                     onSubmit={(event) => {
                         event.preventDefault();
                         if (!name.trim() || !canSave) {
@@ -104,9 +94,10 @@ export function ViewsMenu({
                         disabled={!canSave}
                         aria-label="View name"
                         maxLength={40}
-                        className="h-8 min-w-0 flex-1"
+                        size="sm"
+                        className="min-w-0 flex-1"
                     />
-                    <Button type="submit" size="sm" disabled={!name.trim() || !canSave}>
+                    <Button type="submit" variant="primary" size="sm" disabled={!name.trim() || !canSave}>
                         Save
                     </Button>
                 </form>

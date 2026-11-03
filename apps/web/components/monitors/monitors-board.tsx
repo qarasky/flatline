@@ -5,10 +5,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Search } from "lucide-react";
 
+import { Input } from "@qarasky/kore-ui";
+
 import { useBoardData } from "@/components/board/board-data";
 import { PausedBanner } from "@/components/board/paused-banner";
 import { useAttention } from "@/components/board/use-attention";
-import { Input } from "@/components/ui/input";
 import { useIdleCalm } from "@/hooks/use-idle-calm";
 import { attentionMonitorIds } from "@/lib/attention";
 import {
@@ -359,7 +360,7 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
             const action = boardKey({
                 key: event.key,
                 target: keyTarget(event.target),
-                overlayOpen: document.querySelector('[role="dialog"],[role="menu"]') !== null,
+                overlayOpen: document.querySelector('[role="dialog"],[role="alertdialog"],[role="menu"]') !== null,
                 modifier: event.metaKey || event.ctrlKey || event.altKey,
             });
             if (action === null) {
@@ -451,8 +452,9 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
 
     return (
         <div className="flex min-h-0 flex-1">
-            <div className="flex min-w-0 flex-1 flex-col">
-                <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                {/* The toolbar keeps its height (it wraps on narrow panels); only the list scrolls. */}
+                <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-2">
                     {rosterLoaded ? (
                         <StatusSummary
                             totals={totals}
@@ -462,19 +464,18 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
                             changed={data.cue.group && !calm ? data.cue.changed : 0}
                         />
                     ) : null}
-                    <div className="ml-auto flex items-center gap-2">
-                        <div className="relative">
-                            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-                            <Input
-                                id="board-search"
-                                type="search"
-                                value={filter.q}
-                                onChange={(event) => setFilter((prev) => ({ ...prev, q: event.target.value }))}
-                                placeholder="Search  /"
-                                aria-label="Search monitors"
-                                className="h-8 w-56 pl-8"
-                            />
-                        </div>
+                    <div className="ml-auto flex max-w-full flex-wrap items-center gap-2">
+                        <Input
+                            id="board-search"
+                            type="search"
+                            size="sm"
+                            leadingIcon={<Search />}
+                            value={filter.q}
+                            onChange={(event) => setFilter((prev) => ({ ...prev, q: event.target.value }))}
+                            placeholder="Search  /"
+                            aria-label="Search monitors"
+                            className="w-56 max-sm:w-[calc(100vw-80px)]"
+                        />
                         <FilterMenu
                             filter={filter}
                             onChange={setFilter}
@@ -494,7 +495,7 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
                 </div>
                 <PausedBanner />
                 {data.error && rosterLoaded ? (
-                    <p role="status" className="text-status-warn px-4 py-1.5 text-xs">
+                    <p role="status" className="text-warning text-meta shrink-0 px-4 py-1.5">
                         {data.error}
                     </p>
                 ) : null}
@@ -502,7 +503,7 @@ export function MonitorsBoard({ initialQuery }: { initialQuery: BoardQuery & { h
                     <BoardViewContext.Provider value={view}>
                         <section
                             aria-label="Monitors"
-                            className="board-list"
+                            className="board-list min-h-0 flex-1 overflow-y-auto pb-20"
                             data-density={density}
                             data-strips={data.strips.size > 0 ? "on" : "off"}
                             data-selecting={selected.size > 0 || undefined}

@@ -4,17 +4,18 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { useBoardData } from "@/components/board/board-data";
+import { Dialog, DialogContent } from "@qarasky/kore-ui";
+
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { buildCommands, type Command as PaletteCommand } from "@/lib/commands";
 import type { Me } from "@/lib/me";
 import { endSession } from "@/lib/sso";
 import { SIGN_IN_PATH } from "@/lib/session";
 
-/** Window event the sidebar's search button sends to open the palette. */
+/** Window event the top bar's search button sends to open the palette. */
 export const OPEN_PALETTE_EVENT = "flatline:command-palette";
 
-/** Open the palette from anywhere (the sidebar button). */
+/** Open the palette from anywhere (the top bar's search button). */
 export function openCommandPalette(): void {
     window.dispatchEvent(new Event(OPEN_PALETTE_EVENT));
 }
@@ -92,18 +93,26 @@ export function CommandPalette({ me }: { me: Me }) {
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogContent data-command-palette className="overflow-hidden p-0 sm:max-w-xl" showCloseButton={false}>
-                <DialogTitle className="sr-only">Command palette</DialogTitle>
-                <DialogDescription className="sr-only">
-                    Jump to a section, monitor or server, or run an action.
-                </DialogDescription>
-                <Command className="[&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group]]:px-1.5">
+            <DialogContent
+                data-command-palette
+                title="Search"
+                description="Jump to a section, monitor or server, or run an action."
+                size="lg"
+                className="pb-1"
+                showClose={false}
+                onOpenAutoFocus={(event) => {
+                    // The search field, not the first button, takes focus.
+                    event.preventDefault();
+                    (event.currentTarget as HTMLElement).querySelector<HTMLInputElement>("[cmdk-input]")?.focus();
+                }}
+            >
+                <Command>
                     <CommandInput
                         value={query}
                         onValueChange={setQuery}
                         placeholder="Jump to a monitor, server or section…"
                     />
-                    <CommandList className="max-h-[60svh]">
+                    <CommandList className="max-h-[min(60svh,480px)]">
                         <CommandEmpty>Nothing matches.</CommandEmpty>
                         {groups.map((group) =>
                             group.commands.length > 0 ? (
@@ -117,7 +126,7 @@ export function CommandPalette({ me }: { me: Me }) {
                                         >
                                             <span className="truncate">{command.label}</span>
                                             {command.keywords[0] && group.heading !== "Actions" ? (
-                                                <span className="text-muted-foreground ml-auto truncate text-xs">
+                                                <span className="ml-auto truncate text-meta text-muted">
                                                     {command.keywords[0]}
                                                 </span>
                                             ) : null}

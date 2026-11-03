@@ -2,19 +2,14 @@
 
 import { useState, type FormEvent } from "react";
 
-import { Button } from "@/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Button, Dialog, DialogBody, DialogContent, DialogFooter, Field, Select } from "@qarasky/kore-ui";
+
 import { groupOptions } from "@/lib/groups";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { updateMonitor } from "@/lib/monitors-api";
+
+/** Radix Select cannot hold an empty value: this stands for "top level". */
+const TOP_LEVEL = "none";
 
 /** Move a monitor or group to another group (never into its own subtree). */
 export function MoveDialog({
@@ -29,7 +24,7 @@ export function MoveDialog({
     onDone: () => void;
 }) {
     const options = groupOptions(monitors, monitor.type === "group" ? monitor.id : null);
-    const [parent, setParent] = useState(monitor.parent != null ? String(monitor.parent) : "");
+    const [parent, setParent] = useState(monitor.parent != null ? String(monitor.parent) : TOP_LEVEL);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -38,7 +33,7 @@ export function MoveDialog({
         setSaving(true);
         setError(null);
         try {
-            await updateMonitor(monitor.id, { parent: parent ? Number(parent) : null });
+            await updateMonitor(monitor.id, { parent: parent !== TOP_LEVEL ? Number(parent) : null });
             onDone();
         } catch (e) {
             setError(e instanceof Error ? e.message : "Move failed.");
@@ -48,36 +43,30 @@ export function MoveDialog({
 
     return (
         <Dialog open onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="sm:max-w-md">
-                <form onSubmit={(e) => void save(e)} className="grid gap-4">
-                    <DialogHeader>
-                        <DialogTitle>Move to group</DialogTitle>
-                        <DialogDescription>Where should “{monitor.name}” live in the tree?</DialogDescription>
-                    </DialogHeader>
-                    <NativeSelect
-                        aria-label="Group"
-                        className="w-full"
-                        value={parent}
-                        disabled={saving}
-                        onChange={(e) => setParent(e.target.value)}
-                    >
-                        <NativeSelectOption value="">— none (top level)</NativeSelectOption>
-                        {options.map((o) => (
-                            <NativeSelectOption key={o.value} value={o.value}>
-                                {o.label}
-                            </NativeSelectOption>
-                        ))}
-                    </NativeSelect>
-                    {error ? (
-                        <p role="alert" className="text-status-down text-xs">
-                            {error}
-                        </p>
-                    ) : null}
+            <DialogContent
+                size="sm"
+                title="Move to group"
+                description={`Where should “${monitor.name}” live in the tree?`}
+            >
+                <form onSubmit={(e) => void save(e)} className="flex min-h-0 flex-col">
+                    <DialogBody>
+                        <Field label="Group" error={error}>
+                            <Select
+                                value={parent}
+                                disabled={saving}
+                                onValueChange={setParent}
+                                options={[
+                                    { value: TOP_LEVEL, label: "None (top level)" },
+                                    ...options.map((o) => ({ value: String(o.value), label: o.label })),
+                                ]}
+                            />
+                        </Field>
+                    </DialogBody>
                     <DialogFooter>
-                        <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
+                        <Button onClick={onClose} disabled={saving}>
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={saving}>
+                        <Button type="submit" variant="primary" loading={saving}>
                             {saving ? "Moving…" : "Move"}
                         </Button>
                     </DialogFooter>

@@ -2,26 +2,26 @@
 
 import { memo, type CSSProperties } from "react";
 
+import { Checkbox, cn } from "@qarasky/kore-ui";
+
 import { STATUS_LABEL, checkedAgo, formatPing, formatUptime, monitorTarget } from "@/lib/board-format";
 import { statusKeyOf } from "@/lib/board-model";
 import type { Strip } from "@/lib/heartbeat-strip";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { isCovered } from "@/lib/mute";
 import { monitorMenuItems } from "@/lib/row-menu";
-import { cn } from "@/lib/utils";
 
 import { useBoardActions } from "./board-context";
-import { Checkbox } from "@/components/ui/checkbox";
 
 import { HeartbeatStrip } from "./heartbeat-strip";
 import { RowContextMenu, RowMenuButton } from "./row-menu";
 import { StatusDot, statusTone } from "./status-dot";
 
 const FLASH: Record<string, string> = {
-    down: "color-mix(in srgb, var(--status-down) 22%, transparent)",
-    up: "color-mix(in srgb, var(--status-up) 16%, transparent)",
-    pending: "color-mix(in srgb, var(--status-warn) 18%, transparent)",
-    maintenance: "color-mix(in srgb, var(--status-maint) 18%, transparent)",
+    down: "color-mix(in srgb, var(--color-status-down) 22%, transparent)",
+    up: "color-mix(in srgb, var(--color-status-up) 16%, transparent)",
+    pending: "color-mix(in srgb, var(--color-status-warn) 18%, transparent)",
+    maintenance: "color-mix(in srgb, var(--color-status-maint) 18%, transparent)",
     paused: "transparent",
 };
 
@@ -99,22 +99,22 @@ export const MonitorRow = memo(function MonitorRow({
                         data-row-main={monitor.id}
                         onClick={() => actions.openMonitor(monitor.id)}
                         aria-current={isOpen || undefined}
-                        className="text-foreground min-w-0 truncate text-left font-medium focus-visible:outline-offset-4"
+                        className="text-text min-w-0 truncate text-left font-medium focus-visible:outline-offset-4"
                     >
                         {monitor.name}
                     </button>
-                    <span className="board-meta text-xs">
-                        <span className="board-meta-rest text-muted-foreground/80">{monitorTarget(monitor)}</span>
-                        <span className="board-meta-detail text-muted-foreground tabular-nums">
+                    <span className="board-meta text-meta">
+                        <span className="board-meta-rest text-muted/80">{monitorTarget(monitor)}</span>
+                        <span className="board-meta-detail text-muted tabular-nums">
                             {monitor.type} · {formatPing(monitor.ping)} · checked {checkedAgo(monitor.lastCheck, now)}
                         </span>
                     </span>
                 </div>
                 <span
                     className={cn(
-                        "board-row-word text-xs",
+                        "board-row-word text-meta",
                         status === "up"
-                            ? "text-muted-foreground"
+                            ? "text-muted"
                             : muted
                               ? "text-status-muted font-medium"
                               : `${statusTone(status)} font-medium`
@@ -123,9 +123,7 @@ export const MonitorRow = memo(function MonitorRow({
                     {status === "up" ? "" : label}
                 </span>
                 <HeartbeatStrip strip={strip} name={monitor.name} now={now} calm={calm} />
-                <span className="text-muted-foreground text-right text-xs tabular-nums">
-                    {formatUptime(monitor.uptime24h)}
-                </span>
+                <span className="text-muted text-meta text-right tabular-nums">{formatUptime(monitor.uptime24h)}</span>
                 <RowMenuButton name={monitor.name} monitorId={monitor.id} items={items} />
             </div>
         </RowContextMenu>

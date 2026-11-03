@@ -4,7 +4,6 @@ import {
     agentWarningCounts,
     agentWarnings,
     boardRouteFrom,
-    clampMenuPosition,
     cleanMonitorName,
     containerIssue,
     containerStatsSummary,
@@ -131,13 +130,10 @@ test("group slugs match names case-insensitively; servers can never match", () =
     assert.deepEqual(matchGroups(roster, "nope"), []);
     assert.deepEqual(matchGroups(roster, ""), []);
 });
-test("rename input trims, caps, and rejects empties; menus stay on-screen", () => {
+test("rename input trims, caps, and rejects empties", () => {
     assert.equal(cleanMonitorName("  db-01  "), "db-01");
     assert.equal(cleanMonitorName("   "), null);
     assert.equal(cleanMonitorName("x".repeat(300))?.length, 255);
-    assert.deepEqual(clampMenuPosition(10, 10, 176, 40, 1920, 1080), { x: 10, y: 10 });
-    assert.deepEqual(clampMenuPosition(1900, 1060, 176, 40, 1920, 1080), { x: 1736, y: 1032 });
-    assert.deepEqual(clampMenuPosition(-50, -50, 176, 40, 1920, 1080), { x: 8, y: 8 });
 });
 test("agent warnings stay quiet when clean and exclude docker (shown elsewhere)", () => {
     assert.equal(agentWarnings(undefined), null);

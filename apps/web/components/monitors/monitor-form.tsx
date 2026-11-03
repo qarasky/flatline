@@ -2,12 +2,9 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
+import { Button, Checkbox, Field, Input, Select, Textarea } from "@qarasky/kore-ui";
+
 import { useBoardData } from "@/components/board/board-data";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
 import { groupOptions } from "@/lib/groups";
 import { buildLinkCandidates } from "@/lib/links";
@@ -40,14 +37,10 @@ const CUSTOM_PROVIDER = "__custom__";
 
 export type FormInitial = Partial<MonitorSummary> & Record<string, unknown>;
 
-function Label({ htmlFor, children, required }: { htmlFor: string; children: React.ReactNode; required?: boolean }) {
-    return (
-        <label htmlFor={htmlFor} className="text-muted-foreground mb-1 block text-xs font-medium">
-            {children}
-            {required ? <span className="text-status-down"> *</span> : null}
-        </label>
-    );
-}
+/** Radix Select cannot hold an empty value: an empty option ("none") travels as this. */
+const EMPTY_OPTION = "__none__";
+const toSelect = (value: string) => (value === "" ? EMPTY_OPTION : value);
+const fromSelect = (value: string) => (value === EMPTY_OPTION ? "" : value);
 
 function FieldInput({
     field,
@@ -61,44 +54,35 @@ function FieldInput({
     const id = `field-${field.key}`;
     if (field.kind === "boolean") {
         return (
-            <label className="flex items-center gap-2">
-                <Checkbox id={id} checked={Boolean(value ?? false)} onCheckedChange={(c) => onChange(c === true)} />
-                <span>{field.label}</span>
-            </label>
+            <Checkbox
+                id={id}
+                checked={Boolean(value ?? false)}
+                onCheckedChange={(c) => onChange(c === true)}
+                label={field.label}
+            />
         );
     }
     if (field.kind === "select") {
         return (
-            <div>
-                <Label htmlFor={id}>{field.label}</Label>
-                <NativeSelect
-                    id={id}
-                    className="w-full"
-                    value={String(value ?? field.default ?? "")}
-                    onChange={(e) => onChange(e.target.value)}
-                >
-                    {(field.options ?? []).map((o) => (
-                        <NativeSelectOption key={String(o.value)} value={String(o.value)}>
-                            {o.label}
-                        </NativeSelectOption>
-                    ))}
-                </NativeSelect>
-                {field.help ? <span className="text-muted-foreground mt-1 block text-[11px]">{field.help}</span> : null}
-            </div>
+            <Field id={id} label={field.label} hint={field.help}>
+                <Select
+                    value={toSelect(String(value ?? field.default ?? ""))}
+                    onValueChange={(next) => onChange(fromSelect(next))}
+                    options={(field.options ?? []).map((o) => ({ value: toSelect(String(o.value)), label: o.label }))}
+                />
+            </Field>
         );
     }
     if (field.kind === "textarea") {
         return (
-            <div>
-                <Label htmlFor={id}>{field.label}</Label>
+            <Field id={id} label={field.label} hint={field.help}>
                 <Textarea
-                    id={id}
                     value={typeof value === "string" ? value : Array.isArray(value) ? value.join("\n") : ""}
                     onChange={(e) => onChange(e.target.value)}
                     placeholder={field.placeholder}
                     rows={3}
                 />
-            </div>
+            </Field>
         );
     }
     const inputType =
@@ -121,16 +105,11 @@ function FieldInput({
               ? String(value)
               : ((value as string) ?? "");
     return (
-        <div>
-            <Label htmlFor={id} required={field.required}>
-                {field.label}
-            </Label>
+        <Field id={id} label={field.label} hint={field.help} required={field.required}>
             <Input
-                id={id}
                 type={inputType}
                 value={shown}
                 placeholder={field.placeholder}
-                required={field.required}
                 onChange={(e) => {
                     if (field.kind === "number") {
                         onChange(e.target.value === "" ? undefined : Number(e.target.value));
@@ -146,8 +125,7 @@ function FieldInput({
                     }
                 }}
             />
-            {field.help ? <span className="text-muted-foreground mt-1 block text-[11px]">{field.help}</span> : null}
-        </div>
+        </Field>
     );
 }
 
@@ -163,35 +141,31 @@ function ProviderField({ value, onChange }: { value: unknown; onChange: (value: 
     const [customMode, setCustomMode] = useState(current !== "" && knownId === "");
     const [custom, setCustom] = useState(customMode ? current : "");
     return (
-        <div>
-            <Label htmlFor="field-provider">Provider</Label>
+        <Field id="field-provider" label="Provider" hint="Shown before the name on Superboard cards.">
             <div className="flex gap-2">
-                <NativeSelect
-                    id="field-provider"
-                    value={customMode ? CUSTOM_PROVIDER : knownId}
-                    onChange={(e) => {
-                        const next = e.target.value;
+                <Select
+                    value={customMode ? CUSTOM_PROVIDER : toSelect(knownId)}
+                    onValueChange={(next) => {
                         if (next === CUSTOM_PROVIDER) {
                             setCustomMode(true);
                             onChange(custom === "" ? null : custom);
                         } else {
                             setCustomMode(false);
-                            onChange(next === "" ? null : next);
+                            const id = fromSelect(next);
+                            onChange(id === "" ? null : id);
                         }
                     }}
-                >
-                    <NativeSelectOption value="">— none —</NativeSelectOption>
-                    {PROVIDERS.map((p) => (
-                        <NativeSelectOption key={p.id} value={p.id}>
-                            {p.label}
-                        </NativeSelectOption>
-                    ))}
-                    <NativeSelectOption value={CUSTOM_PROVIDER}>Other…</NativeSelectOption>
-                </NativeSelect>
+                    options={[
+                        { value: EMPTY_OPTION, label: "None" },
+                        ...PROVIDERS.map((p) => ({ value: p.id, label: p.label })),
+                        { value: CUSTOM_PROVIDER, label: "Other…" },
+                    ]}
+                />
                 {customMode ? (
                     <Input
+                        id="field-provider-custom"
                         value={custom}
-                        placeholder="domain, e.g. vultr.com"
+                        placeholder="vultr.com"
                         aria-label="Custom provider domain"
                         onChange={(e) => {
                             setCustom(e.target.value);
@@ -200,10 +174,7 @@ function ProviderField({ value, onChange }: { value: unknown; onChange: (value: 
                     />
                 ) : null}
             </div>
-            <span className="text-muted-foreground mt-1 block text-[11px]">
-                Shown before the name on Superboard cards.
-            </span>
-        </div>
+        </Field>
     );
 }
 
@@ -220,29 +191,27 @@ function NotificationsPicker({
     onToggle: (id: number) => void;
 }) {
     return (
-        <fieldset className="rounded-md border p-3">
-            <legend className="text-muted-foreground px-1 text-xs font-semibold tracking-wide uppercase">
-                Notifications
-            </legend>
+        <fieldset className="rounded-ui border border-border p-3">
+            <legend className="text-muted text-meta px-1 font-medium">Notifications</legend>
             {error ? (
-                <p role="alert" className="text-status-warn text-xs">
+                <p role="alert" className="text-warning text-meta">
                     {error} Saving leaves this monitor&apos;s notifications as they are.
                 </p>
             ) : list === null ? (
-                <p className="text-muted-foreground text-xs">Loading…</p>
+                <p className="text-muted text-meta">Loading…</p>
             ) : list.length === 0 ? (
-                <p className="text-muted-foreground text-xs">No notifications are set up yet.</p>
+                <p className="text-muted text-meta">No notifications are set up yet.</p>
             ) : (
                 <div className="flex flex-col gap-1.5">
                     {list.map((n) => (
-                        <label key={n.id} className="flex items-center gap-2">
+                        <label key={n.id} className="flex cursor-pointer items-center gap-2">
                             <Checkbox
                                 checked={chosen.has(n.id)}
                                 onCheckedChange={() => onToggle(n.id)}
                                 aria-label={`Notify through ${n.name}`}
                             />
                             <span className="min-w-0 flex-1 truncate">{n.name}</span>
-                            <span className="text-muted-foreground text-[11px]">
+                            <span className="text-muted text-2xs">
                                 {n.type}
                                 {n.active ? "" : " · off"}
                             </span>
@@ -441,7 +410,7 @@ export function MonitorForm({
                   ...field,
                   kind: "select" as const,
                   help: "The group this monitor sits in.",
-                  options: [{ value: "", label: "— none (top level)" }, ...groupChoices],
+                  options: [{ value: "", label: "None (top level)" }, ...groupChoices],
               }
             : field
     );
@@ -451,23 +420,15 @@ export function MonitorForm({
     return (
         <form onSubmit={submit} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
-                <div>
-                    <Label htmlFor="field-type">Type</Label>
-                    <NativeSelect
-                        id="field-type"
-                        className="w-full"
+                <Field id="field-type" label="Type">
+                    <Select
                         value={type}
                         disabled={isEdit}
-                        onChange={(e) => handleTypeChange(e.target.value)}
-                    >
-                        {typeOptions.map((t) => (
-                            <NativeSelectOption key={t} value={t}>
-                                {TYPE_SCHEMAS[t]?.label ?? t}
-                            </NativeSelectOption>
-                        ))}
-                    </NativeSelect>
-                </div>
-                <p className="text-muted-foreground flex items-end pb-1 text-xs">{schema.summary}</p>
+                        onValueChange={handleTypeChange}
+                        options={typeOptions.map((t) => ({ value: t, label: TYPE_SCHEMAS[t]?.label ?? t }))}
+                    />
+                </Field>
+                <p className="text-muted text-meta flex items-end pb-2">{schema.summary}</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
                 {COMMON_FIELDS.map((f) => (
@@ -488,7 +449,7 @@ export function MonitorForm({
                 </div>
             ) : null}
             {type === "push" ? (
-                <p className="text-muted-foreground text-xs">
+                <p className="text-muted text-meta">
                     For an agent host, set the interval to at least 3× the agent&apos;s push interval, with 2 retries
                     every 180 s, so a network blip reads as pending instead of paging.
                 </p>
@@ -502,34 +463,32 @@ export function MonitorForm({
                 />
             ) : null}
             {linkable ? (
-                <fieldset className="rounded-md border p-3">
-                    <legend className="text-muted-foreground px-1 text-xs font-semibold tracking-wide uppercase">
-                        Linked websites
-                    </legend>
+                <fieldset className="rounded-ui border border-border p-3">
+                    <legend className="text-muted text-meta px-1 font-medium">Linked websites</legend>
                     <LinkPicker
                         candidates={linkCandidates}
                         selected={linkSelection}
                         disabled={saving}
                         onToggle={(id) => setLinkSelection((prev) => toggled(prev, id))}
                     />
-                    <p className="text-muted-foreground mt-2 text-xs">
+                    <p className="text-muted text-meta mt-2">
                         Their status appears on this server&apos;s Superboard card. A group includes every website in
                         it.
                     </p>
                     {linkError ? (
-                        <p className="text-status-down mt-2 text-xs" role="alert">
+                        <p className="text-danger text-meta mt-2" role="alert">
                             {linkError} Saving leaves the linked websites as they are.
                         </p>
                     ) : null}
                 </fieldset>
             ) : null}
             <div>
-                <Button type="button" variant="ghost" size="sm" onClick={() => setShowAdvanced((v) => !v)}>
+                <Button variant="ghost" size="sm" onClick={() => setShowAdvanced((v) => !v)}>
                     {showAdvanced ? "Hide advanced" : "Show advanced"}
                 </Button>
                 {showAdvanced ? (
                     <>
-                        <div className="mt-3 grid grid-cols-1 gap-3 rounded-md border p-3 md:grid-cols-2">
+                        <div className="mt-3 grid grid-cols-1 gap-3 rounded-ui border border-border p-3 md:grid-cols-2">
                             {advanced.map((f) => (
                                 <FieldInput
                                     key={f.key}
@@ -549,10 +508,8 @@ export function MonitorForm({
                                     />
                                 ))}
                         </div>
-                        <div className="mt-3 rounded-md border p-3">
-                            <p className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
-                                Metric alert thresholds
-                            </p>
+                        <div className="mt-3 rounded-ui border border-border p-3">
+                            <p className="text-muted text-meta mb-2 font-medium">Metric alert thresholds</p>
                             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                 {ALERT_THRESHOLD_FIELDS.map((f) => (
                                     <FieldInput
@@ -563,7 +520,7 @@ export function MonitorForm({
                                     />
                                 ))}
                             </div>
-                            <p className="text-muted-foreground mt-2 text-xs">
+                            <p className="text-muted text-meta mt-2">
                                 Push agents only. The server alerts when a value stays at or above its threshold for 60
                                 s, repeats at most every 30 minutes, and declares recovery 5 points below. Empty
                                 disables.
@@ -573,17 +530,18 @@ export function MonitorForm({
                 ) : null}
             </div>
             {ignored.length > 0 ? (
-                <p className="bg-status-warn/10 text-status-warn rounded-md px-2.5 py-2 text-xs">
+                <p className="bg-warning/10 text-warning text-meta rounded-ui px-2.5 py-2">
                     The server ignored unknown fields: {ignored.join(", ")}
                 </p>
             ) : null}
             {error ? (
-                <p role="alert" className="bg-status-down/10 text-status-down rounded-md px-2.5 py-2 text-xs">
+                <p role="alert" className="bg-danger/10 text-danger text-meta rounded-ui px-2.5 py-2">
                     {error}
                 </p>
             ) : null}
-            <div className="flex gap-2">
-                <Button type="submit" disabled={saving}>
+            <div className="flex justify-end gap-2">
+                <Button onClick={onCancel}>Cancel</Button>
+                <Button type="submit" variant="primary" loading={saving}>
                     {saving
                         ? "Saving…"
                         : isEdit
@@ -591,9 +549,6 @@ export function MonitorForm({
                           : type === "group"
                             ? "Create group"
                             : "Create monitor"}
-                </Button>
-                <Button type="button" variant="outline" onClick={onCancel}>
-                    Cancel
                 </Button>
             </div>
         </form>

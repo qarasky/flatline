@@ -2,23 +2,43 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { SyntheticEvent } from "react";
+import {
+    Button,
+    Checkbox,
+    Dialog,
+    DialogBody,
+    DialogContent,
+    DialogFooter,
+    Input,
+    StatusDot,
+    Spinner,
+    type Status,
+} from "@qarasky/kore-ui";
+import { Search } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { fetchAllMonitors, fetchMonitorLinks, replaceMonitorLinks } from "@/lib/monitors-api";
 import { buildLinkCandidates, linkTone, type LinkCandidate } from "@/lib/links";
-import { Input } from "@/components/legacy-ui/input";
-import { Checkbox } from "@/components/legacy-ui/checkbox";
 
-/** Colored dot for a monitor status, shared with the card chips. */
+/** Link tone -> kore-ui StatusDot state. */
+const LINK_DOT: Record<ReturnType<typeof linkTone>, Status> = {
+    up: "up",
+    bad: "down",
+    pending: "warn",
+    maintenance: "maint",
+    neutral: "off",
+};
+
+/** Status mark for a monitor status, shared with the card chips. Decorative: the name or a word goes with it. */
 export function LinkStatusDot({ status }: { status: number }) {
-    return <span aria-hidden="true" className="fleet-link-dot" data-tone={linkTone(status)} />;
+    return <StatusDot status={LINK_DOT[linkTone(status)]} aria-hidden="true" className="shrink-0" />;
 }
 
 /**
  * Searchable checklist of groups and monitors to link to a server.
  *
- * Reused by the card dialog and the monitor edit form; it holds no data of
- * its own, only the search box, so both callers own the selection state.
+ * It holds no data of its own, only the search box, so the caller owns the
+ * selection state.
  */
 export function LinkPicker({
     candidates,
@@ -42,39 +62,37 @@ export function LinkPicker({
     }, [candidates, query]);
 
     return (
-        <div>
+        <div className="flex flex-col gap-2">
             <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 disabled={disabled}
+                leadingIcon={<Search />}
                 placeholder="Filter websites and groups…"
                 aria-label="Filter websites and groups"
                 autoComplete="off"
-                className="mb-2 h-9"
             />
             <div
-                className="max-h-60 overflow-y-auto rounded-md border border-border"
+                className="max-h-72 overflow-y-auto rounded-ui border border-border"
                 role="group"
                 aria-label="Websites and groups"
             >
                 {filtered.length === 0 ? (
-                    <p className="px-3 py-3 text-xs text-quiet">No matches.</p>
+                    <p className="px-3 py-3 text-meta text-muted">No matches.</p>
                 ) : (
                     filtered.map((candidate) => (
                         <label
                             key={candidate.id}
-                            className="flex cursor-pointer items-center gap-2 border-b border-border/60 px-3 py-1.5 text-sm last:border-0 hover:bg-surface"
+                            className="flex min-h-control cursor-pointer items-center gap-3 border-b border-border px-3 last:border-0 hover:bg-white/5"
                         >
                             <Checkbox
                                 checked={selected.has(candidate.id)}
                                 disabled={disabled}
-                                onChange={() => onToggle(candidate.id)}
+                                onCheckedChange={() => onToggle(candidate.id)}
                             />
                             <LinkStatusDot status={candidate.status} />
                             <span className="min-w-0 flex-1 truncate">{candidate.label}</span>
-                            <span className="shrink-0 text-[11px] uppercase tracking-wide text-quiet">
-                                {candidate.kind}
-                            </span>
+                            <span className="shrink-0 text-2xs text-muted">{candidate.kind}</span>
                         </label>
                     ))
                 )}
@@ -86,9 +104,9 @@ export function LinkPicker({
 /**
  * Link the websites hosted on a server.
  *
- * Opened from a Superboard card's context menu. Saving replaces the whole
- * link set and publishes an invalidate, so every open board resnapshots and
- * the new chips land on their own.
+ * Opened from a Superboard card's menu. Saving replaces the whole link set
+ * and publishes an invalidate, so every open board resnapshots and the new
+ * chips land on their own.
  */
 export function WebsiteLinkDialog({ server, onClose }: { server: MonitorSummary; onClose: () => void }) {
     const [candidates, setCandidates] = useState<LinkCandidate[] | null>(null);
@@ -109,7 +127,7 @@ export function WebsiteLinkDialog({ server, onClose }: { server: MonitorSummary;
                 setSelected(new Set(links.raw.map((link) => link.linkedMonitorId)));
             } catch (e) {
                 if (!cancelled) {
-                    setError(e instanceof Error ? e.message : "Could not load links.");
+                    setError(e instanceof Error ? e.message : "Couldn't load the links. Close this and try again.");
                 }
             }
         }
@@ -119,16 +137,6 @@ export function WebsiteLinkDialog({ server, onClose }: { server: MonitorSummary;
             cancelled = true;
         };
     }, [server.id]);
-
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape") {
-                onClose();
-            }
-        };
-        window.addEventListener("keydown", onKey);
-        return () => window.removeEventListener("keydown", onKey);
-    }, [onClose]);
 
     function toggle(id: number) {
         setSelected((prev) => {
@@ -152,72 +160,62 @@ export function WebsiteLinkDialog({ server, onClose }: { server: MonitorSummary;
         } catch (e) {
             setError(
                 e instanceof ApiError && e.status === 403
-                    ? "This board token can't change links (needs write scope)."
+                    ? "This board token can't change links. Sign in with a token that has write scope."
                     : e instanceof Error
                       ? e.message
-                      : "Save failed."
+                      : "Couldn't save the links. Try again."
             );
             setSaving(false);
         }
     }
 
     return (
-        <div
-            className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4"
-            onPointerDown={(e) => {
-                if (e.target === e.currentTarget) {
+        <Dialog
+            open
+            onOpenChange={(open) => {
+                if (!open && !saving) {
                     onClose();
                 }
             }}
         >
-            <form
-                role="dialog"
-                aria-modal="true"
-                aria-label={`Websites on ${server.name}`}
-                className="mt-8 w-full max-w-lg rounded-lg border border-border bg-card p-5"
-                onSubmit={(e) => void save(e)}
+            <DialogContent
+                title={`Websites on “${server.name}”`}
+                description="Link the website monitors this server hosts. Pick a group to include every website inside it, including ones added later. Their status appears on the server's card."
             >
-                <h2 className="mb-1 text-base font-semibold">Websites on “{server.name}”</h2>
-                <p className="mb-3 text-xs text-quiet">
-                    Link the website monitors this server hosts. Pick a group to include every website inside it,
-                    including ones added later. Their status appears on the server's card.
-                </p>
-
-                {candidates === null && !error ? (
-                    <p className="py-6 text-sm text-quiet">Loading…</p>
-                ) : (
-                    <LinkPicker candidates={candidates ?? []} selected={selected} onToggle={toggle} disabled={saving} />
-                )}
-
-                {error ? (
-                    <p className="mt-3 text-xs text-bad" role="alert">
-                        {error}
-                    </p>
-                ) : null}
-
-                <div className="mt-4 flex items-center justify-between gap-2">
-                    <span className="text-xs text-quiet">
-                        <span className="tnum">{selected.size}</span> {selected.size === 1 ? "link" : "links"} selected
-                    </span>
-                    <div className="flex gap-2">
-                        <button
-                            type="button"
-                            disabled={saving}
-                            onClick={onClose}
-                            className="rounded-md px-3 py-1.5 text-sm text-quiet hover:text-primary"
-                        >
+                <form className="flex min-h-0 flex-col" onSubmit={(e) => void save(e)}>
+                    <DialogBody>
+                        {candidates === null && !error ? (
+                            <p className="flex items-center gap-2 py-6 text-muted" role="status">
+                                <Spinner /> Loading…
+                            </p>
+                        ) : (
+                            <LinkPicker
+                                candidates={candidates ?? []}
+                                selected={selected}
+                                onToggle={toggle}
+                                disabled={saving}
+                            />
+                        )}
+                        {error ? (
+                            <p className="mt-3 text-meta text-danger" role="alert">
+                                {error}
+                            </p>
+                        ) : null}
+                    </DialogBody>
+                    <DialogFooter className="sm:items-center">
+                        <span className="mr-auto text-meta text-muted">
+                            <span className="tnum">{selected.size}</span> {selected.size === 1 ? "link" : "links"}{" "}
+                            selected
+                        </span>
+                        <Button disabled={saving} onClick={onClose}>
                             Cancel
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={saving || candidates === null}
-                            className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground disabled:opacity-50"
-                        >
+                        </Button>
+                        <Button type="submit" variant="primary" loading={saving} disabled={candidates === null}>
                             {saving ? "Saving…" : "Save links"}
-                        </button>
-                    </div>
-                </div>
-            </form>
-        </div>
+                        </Button>
+                    </DialogFooter>
+                </form>
+            </DialogContent>
+        </Dialog>
     );
 }

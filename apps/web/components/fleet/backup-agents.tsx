@@ -8,24 +8,9 @@ import {
     restoreLabel,
     verificationLabel,
 } from "@/lib/backup-presentation";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Button, StatusDot, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@qarasky/kore-ui";
 
-const TONE: Record<string, string> = {
-    up: "border-ok/40 text-ok",
-    down: "border-bad/40 text-bad",
-    degraded: "border-warn/40 text-warn",
-    neutral: "border-border text-quiet",
-};
-
-/** A health word in its status colour, with a dot: never colour alone. */
-function Badge({ tone, children }: { tone: string; children: React.ReactNode }) {
-    return (
-        <span className={cn("inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-xs", TONE[tone])}>
-            {children}
-        </span>
-    );
-}
+import { backupStatus } from "./backup-status";
 
 /**
  * Dense backup section for a monitor detail view. Each agent is independent:
@@ -49,24 +34,29 @@ export function BackupAgents({
     }
 
     return (
-        <section className="mb-4">
-            <h2 className="mb-2 text-[11px] uppercase tracking-wide text-quiet">Backups</h2>
-            {error ? <p className="mb-2 text-xs text-destructive">{error}</p> : null}
-            <div className="overflow-x-auto rounded-md border border-border bg-card">
-                <table className="w-full border-collapse text-sm">
-                    <thead>
-                        <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                            <th className="py-2 pl-3 pr-4 font-medium">Agent</th>
-                            <th className="w-24 py-2 font-medium">Health</th>
-                            <th className="py-2 pr-4 font-medium">Latest completed</th>
-                            <th className="w-24 py-2 font-medium">Duration</th>
-                            <th className="w-24 py-2 font-medium">Bytes</th>
-                            <th className="py-2 font-medium">Source</th>
-                            <th className="py-2 font-medium">Verification</th>
-                            <th className="w-24 py-2 pr-3 font-medium" />
-                        </tr>
-                    </thead>
-                    <tbody>
+        <div className="grid gap-2">
+            {error ? (
+                <p role="alert" className="text-meta text-danger">
+                    {error}
+                </p>
+            ) : null}
+            {agents.length ? (
+                <Table caption="Backup agents on this server">
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Agent</TableHead>
+                            <TableHead>Health</TableHead>
+                            <TableHead>Latest completed</TableHead>
+                            <TableHead>Duration</TableHead>
+                            <TableHead align="right">Size</TableHead>
+                            <TableHead>Source</TableHead>
+                            <TableHead>Verification</TableHead>
+                            <TableHead>
+                                <span className="sr-only">Actions</span>
+                            </TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
                         {agents.map((agent) => {
                             const health = backupHealth(agent);
                             const run = agent.latestRun;
@@ -79,14 +69,14 @@ export function BackupAgents({
                             const transfer = transferRun ? verificationLabel(transferRun) : "Not completed";
                             const restore = restoreLabel(agent);
                             return (
-                                <tr key={agent.id} className="border-b border-border/60 last:border-0">
-                                    <td className="py-2 pl-3 pr-4">
+                                <TableRow key={agent.id} data-agent-id={agent.id}>
+                                    <TableCell>
                                         <div className="font-medium">{agent.name}</div>
-                                        <div className="text-[11px] text-quiet">
-                                            {agent.enabled ? "daily" : "disabled"} · keep {agent.retentionCount}
+                                        <div className="text-meta text-muted">
+                                            {agent.enabled ? "Daily" : "Disabled"} · keep {agent.retentionCount}
                                         </div>
                                         {runs?.[agent.id]?.length ? (
-                                            <div className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] text-quiet">
+                                            <div className="mt-0.5 flex flex-wrap gap-x-2 text-2xs text-muted">
                                                 {runs[agent.id].slice(0, 5).map((history) => (
                                                     <span key={history.id} className="tnum">
                                                         {history.status} {backupTime(history.exportFinishedAt)}
@@ -94,43 +84,40 @@ export function BackupAgents({
                                                 ))}
                                             </div>
                                         ) : null}
-                                    </td>
-                                    <td className="py-2">
-                                        <Badge tone={health.tone}>
-                                            <span className="size-1.5 rounded-full bg-current" />
-                                            {health.label}
-                                        </Badge>
-                                    </td>
-                                    <td className="tnum py-2 pr-4 whitespace-nowrap text-xs">
+                                    </TableCell>
+                                    <TableCell>
+                                        <StatusDot status={backupStatus(health.tone)} label={health.label} />
+                                    </TableCell>
+                                    <TableCell className="tnum text-sub whitespace-nowrap">
                                         {backupTime(completed?.exportFinishedAt ?? completed?.completedAt ?? null)}
-                                    </td>
-                                    <td className="tnum py-2 text-xs">{backupDuration(completed ?? run)}</td>
-                                    <td className="tnum py-2 text-xs">
+                                    </TableCell>
+                                    <TableCell className="tnum text-sub">{backupDuration(completed ?? run)}</TableCell>
+                                    <TableCell align="right" className="text-sub">
                                         {formatBytes(completed?.totalBytes ?? run?.totalBytes ?? 0)}
-                                    </td>
-                                    <td className="max-w-64 truncate py-2 text-xs text-quiet">
+                                    </TableCell>
+                                    <TableCell muted className="max-w-64 truncate text-sub">
                                         {backupSourceSummary(completed ?? run)}
-                                    </td>
-                                    <td className="py-2 text-xs">
+                                    </TableCell>
+                                    <TableCell className="text-sub">
                                         <div>{transfer}</div>
-                                        <div className="text-[11px] text-quiet">{restore}</div>
+                                        <div className="text-meta text-muted">{restore}</div>
                                         {run?.errorCode ? (
-                                            <div className="text-[11px] text-destructive">{run.errorCode}</div>
+                                            <div className="text-meta text-status-down">{run.errorCode}</div>
                                         ) : null}
-                                    </td>
-                                    <td className="py-2 pr-3 text-right">
+                                    </TableCell>
+                                    <TableCell align="right">
                                         {completed && onDownload ? (
-                                            <Button variant="outline" size="sm" onClick={() => onDownload(completed)}>
+                                            <Button size="sm" onClick={() => onDownload(completed)}>
                                                 Download
                                             </Button>
                                         ) : null}
-                                    </td>
-                                </tr>
+                                    </TableCell>
+                                </TableRow>
                             );
                         })}
-                    </tbody>
-                </table>
-            </div>
-        </section>
+                    </TableBody>
+                </Table>
+            ) : null}
+        </div>
     );
 }

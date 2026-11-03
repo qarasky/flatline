@@ -1,10 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+    Button,
+    Dialog,
+    DialogBody,
+    DialogContent,
+    DialogFooter,
+    Field,
+    Input,
+    Menu,
+    MenuContent,
+    MenuItem as KoreMenuItem,
+    MenuSeparator,
+    MenuTrigger,
+} from "@qarasky/kore-ui";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { updateMonitor } from "@/lib/monitors-api";
-import { clampMenuPosition, cleanMonitorName } from "@/lib/fleet-presentation";
-import { Input } from "@/components/legacy-ui/input";
+import { cleanMonitorName } from "@/lib/fleet-presentation";
 
 export interface MenuAnchor {
     x: number;
@@ -15,77 +28,79 @@ export interface MenuAnchor {
 export interface MenuItem {
     label: string;
     onSelect: () => void;
-    /** Destructive actions read red. */
+    /** Destructive actions read red and go last, after a separator. */
     danger?: boolean;
 }
 
 /**
- * Custom right-click/⋯ menu for cards, monitor rows and group headers. The
- * caller supplies the items; the menu only handles anchoring, dismissal and
- * keyboard focus.
+ * Right-click / "More actions" menu for a server card: kore-ui's Menu,
+ * anchored at a point (the pointer, or the card's ⋯ button). The caller
+ * supplies the items; the menu only handles anchoring and dismissal.
  *
- * Closes on Escape, outside pointer, scroll or resize. Focus lands on the
- * first item when the menu opens so keyboard operators are not stranded.
+ * Radix closes it on Escape and outside pointer; scroll and resize close it
+ * too, since the anchor point would no longer match. Focus lands on the
+ * first item when it opens so keyboard operators are not stranded.
  */
 export function ServerMenu({ anchor, items, onClose }: { anchor: MenuAnchor; items: MenuItem[]; onClose: () => void }) {
-    const ref = useRef<HTMLDivElement>(null);
-    const [pos, setPos] = useState({ x: anchor.x, y: anchor.y });
+    const content = useRef<HTMLDivElement>(null);
+
+    // Radix focuses the panel itself; put focus on the first item, as a
+    // keyboard-opened menu does, once it has mounted.
+    useEffect(() => {
+        const frame = window.requestAnimationFrame(() =>
+            content.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+        );
+        return () => window.cancelAnimationFrame(frame);
+    }, [anchor]);
 
     useEffect(() => {
-        const el = ref.current;
-        if (el) {
-            const rect = el.getBoundingClientRect();
-            setPos(
-                clampMenuPosition(anchor.x, anchor.y, rect.width, rect.height, window.innerWidth, window.innerHeight)
-            );
-            el.querySelector("button")?.focus();
-        }
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape") {
-                onClose();
-            }
-        };
-        const onPointer = (e: PointerEvent) => {
-            if (ref.current && !ref.current.contains(e.target as Node)) {
-                onClose();
-            }
-        };
         const onDismiss = () => onClose();
-        window.addEventListener("keydown", onKey);
-        window.addEventListener("pointerdown", onPointer);
         window.addEventListener("scroll", onDismiss, true);
         window.addEventListener("resize", onDismiss);
         return () => {
-            window.removeEventListener("keydown", onKey);
-            window.removeEventListener("pointerdown", onPointer);
             window.removeEventListener("scroll", onDismiss, true);
             window.removeEventListener("resize", onDismiss);
         };
-    }, [anchor, onClose]);
+    }, [onClose]);
+
+    const regular = items.filter((item) => !item.danger);
+    const destructive = items.filter((item) => item.danger);
+    const render = (item: MenuItem) => (
+        <KoreMenuItem key={item.label} danger={item.danger} onSelect={() => item.onSelect()}>
+            {item.label}
+        </KoreMenuItem>
+    );
 
     return (
-        <div
-            ref={ref}
-            role="menu"
-            aria-label={`Actions for ${anchor.monitor.name || "server"}`}
-            className="fixed z-50 min-w-44 rounded-md border border-border bg-card p-1 shadow-xl"
-            style={{ left: pos.x, top: pos.y }}
-            onContextMenu={(e) => e.preventDefault()}
+        <Menu
+            open
+            modal={false}
+            onOpenChange={(open) => {
+                if (!open) {
+                    onClose();
+                }
+            }}
         >
-            {items.map((item) => (
-                <button
-                    key={item.label}
-                    type="button"
-                    role="menuitem"
-                    className={`flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm hover:bg-surface ${
-                        item.danger ? "text-destructive hover:text-destructive" : "hover:text-primary"
-                    }`}
-                    onClick={() => item.onSelect()}
-                >
-                    {item.label}
-                </button>
-            ))}
-        </div>
+            {/* A zero-size point the menu anchors to; Radix keeps it on screen. */}
+            <MenuTrigger asChild>
+                <span
+                    aria-hidden="true"
+                    className="pointer-events-none fixed size-0"
+                    style={{ left: anchor.x, top: anchor.y }}
+                />
+            </MenuTrigger>
+            <MenuContent
+                aria-label={`Actions for ${anchor.monitor.name || "server"}`}
+                onContextMenu={(e) => e.preventDefault()}
+                ref={content}
+                // The anchor is not focusable: leave focus where the operator was.
+                onCloseAutoFocus={(e) => e.preventDefault()}
+            >
+                {regular.map(render)}
+                {regular.length > 0 && destructive.length > 0 ? <MenuSeparator /> : null}
+                {destructive.map(render)}
+            </MenuContent>
+        </Menu>
     );
 }
 
@@ -115,7 +130,7 @@ export function RenameDialog({
         e?.preventDefault();
         const next = cleanMonitorName(name);
         if (!next) {
-            setError("Name can't be empty.");
+            setError("Enter a name.");
             return;
         }
         if (next === currentName) {
@@ -128,75 +143,48 @@ export function RenameDialog({
             await updateMonitor(monitor.id, { name: next });
             onClose();
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Rename failed.");
+            setError(err instanceof Error ? err.message : "Couldn't rename the server. Try again.");
             setSaving(false);
         }
     }
 
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape") {
-                onClose();
-            }
-        };
-        window.addEventListener("keydown", onKey);
-        return () => window.removeEventListener("keydown", onKey);
-    }, [onClose]);
-
     return (
-        <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-            onPointerDown={(e) => {
-                if (e.target === e.currentTarget) {
+        <Dialog
+            open
+            onOpenChange={(open) => {
+                if (!open && !saving) {
                     onClose();
                 }
             }}
         >
-            <form
-                role="dialog"
-                aria-modal="true"
-                aria-label={`Rename ${currentName}`}
-                className="w-full max-w-sm rounded-lg border border-border bg-card p-5"
-                onSubmit={(e) => void save(e)}
+            <DialogContent
+                size="sm"
+                title={`Rename “${currentName}”`}
+                description="Card titles prefer this over the agent-reported hostname."
             >
-                <h2 className="mb-1 text-base font-semibold">Rename server</h2>
-                <p className="mb-3 text-xs text-quiet">Card titles prefer this over the agent-reported hostname.</p>
-                <label className="mb-1 block text-xs text-quiet" htmlFor="server-rename-input">
-                    Display name
-                </label>
-                <Input
-                    id="server-rename-input"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    disabled={saving}
-                    maxLength={255}
-                    autoFocus
-                    autoComplete="off"
-                    className="mb-3 h-9"
-                />
-                {error ? (
-                    <p className="mb-3 text-xs text-bad" role="alert">
-                        {error}
-                    </p>
-                ) : null}
-                <div className="flex justify-end gap-2">
-                    <button
-                        type="button"
-                        disabled={saving}
-                        onClick={onClose}
-                        className="rounded-md px-3 py-1.5 text-sm text-quiet hover:text-primary"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        type="submit"
-                        disabled={saving}
-                        className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground disabled:opacity-50"
-                    >
-                        {saving ? "Saving…" : "Save"}
-                    </button>
-                </div>
-            </form>
-        </div>
+                <form className="flex min-h-0 flex-col" onSubmit={(e) => void save(e)}>
+                    <DialogBody>
+                        <Field label="Display name" error={error}>
+                            <Input
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                disabled={saving}
+                                maxLength={255}
+                                autoFocus
+                                autoComplete="off"
+                            />
+                        </Field>
+                    </DialogBody>
+                    <DialogFooter>
+                        <Button disabled={saving} onClick={onClose}>
+                            Cancel
+                        </Button>
+                        <Button type="submit" variant="primary" loading={saving}>
+                            {saving ? "Saving…" : "Save"}
+                        </Button>
+                    </DialogFooter>
+                </form>
+            </DialogContent>
+        </Dialog>
     );
 }

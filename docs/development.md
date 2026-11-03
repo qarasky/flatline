@@ -91,7 +91,7 @@ verified with.
 | `superboard/`              | The Go agent (`mockagent/` is the dev fleet).                          |
 | `backup-agent/`            | The separate backup agent and its offline/restore tests.               |
 | `apps/web/app/`            | Next.js routes: the admin sections, Superboard, status pages, sign-in. |
-| `apps/web/components/`     | UI components; `components/ui/` holds the shadcn primitives.           |
+| `apps/web/components/`     | UI components, built from kore-ui (`@qarasky/kore-ui`).                |
 | `apps/web/lib/`            | Pure logic and API clients that the tests cover.                       |
 | `apps/web/__tests__/`      | Vitest tests; `ported/` holds the old dashboard's tests.               |
 | `packages/shared/`         | The status-page client and types the web app uses.                     |
@@ -103,8 +103,8 @@ verified with.
 `apps/web/` is the operator UI, the Superboard and the status pages
 ([design](superpowers/specs/2026-10-28-admin-panel-rewrite-design.md);
 [web app](dashboard.md) for how it is built). It
-uses the App Router with server rendering, Tailwind CSS 4 and shadcn
-components (`components/ui/`, themed in `app/globals.css`). Signed-in pages
+uses the App Router with server rendering, Tailwind CSS 4 and the Kore design
+system `@qarasky/kore-ui` (tokens via `app/globals.css`). Signed-in pages
 forward the `fl_session` session cookie from the server to the backend at
 `API_URL` (default `http://127.0.0.1:3001`); in the browser they call the same
 origin, which Caddy routes to the backend in production and `next.config.ts`
@@ -148,9 +148,8 @@ signs it out.
 
 The **Superboard** (`/superboard`, `/superboard/<scope>`, `/superboard/kiosk…`),
 the phone's approve page (`/device`) and public **status pages**
-(`/status/<slug>`, and `/` on a mapped client domain) are ported as they were,
-in the old look (`app/legacy.css`, scoped to `.legacy-theme`) with the new
-accent. Status pages render on the server and load no admin code; a signed-out
+(`/status/<slug>`, and `/` on a mapped client domain) have their own full-screen
+layouts on kore-ui components and tokens. Status pages render on the server and load no admin code; a signed-out
 kiosk shows its QR sign-in. Open tabs notice a deploy through `GET /build`
 (the build id): the kiosk and status pages reload, admin pages offer Reload.
 For local status pages, add rows to `status_pages` (there is no API to create

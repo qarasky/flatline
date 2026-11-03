@@ -3,17 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Button, Dialog, DialogBody, DialogContent, DialogFooter, Field, Input } from "@qarasky/kore-ui";
 import { api } from "@/lib/api";
 import { signInMessage as failureMessage } from "@/lib/legacy-token";
 import type { Member } from "@/lib/members";
@@ -48,46 +38,40 @@ export function ResetPasswordDialog({ member, onClose }: { member: Member; onClo
 
     return (
         <Dialog open onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="sm:max-w-md">
-                <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
-                    <DialogHeader>
-                        <DialogTitle>Reset {member.name}&apos;s password</DialogTitle>
-                        <DialogDescription>
-                            They are signed out everywhere now and choose their own password the next time they sign in
-                            with this one.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="flex flex-col gap-2">
-                        <Label htmlFor="reset-password">New starting password</Label>
-                        <Input
-                            id="reset-password"
-                            type="password"
-                            autoComplete="new-password"
-                            autoFocus
-                            value={password}
-                            onChange={(event) => setPassword(event.target.value)}
-                        />
-                    </div>
-                    <div className="flex flex-col gap-2">
-                        <Label htmlFor="reset-confirm">Repeat it</Label>
-                        <Input
-                            id="reset-confirm"
-                            type="password"
-                            autoComplete="new-password"
-                            value={confirm}
-                            onChange={(event) => setConfirm(event.target.value)}
-                        />
-                    </div>
-                    {error && (
-                        <p role="alert" className="text-status-down">
-                            {error}
-                        </p>
-                    )}
+            <DialogContent
+                title={`Reset ${member.name}’s password`}
+                description="They are signed out everywhere now and choose their own password the next time they sign in with this one."
+            >
+                <form onSubmit={submit} noValidate className="flex min-h-0 flex-col">
+                    <DialogBody className="flex flex-col gap-4">
+                        <Field label="New starting password" hint="At least 10 characters.">
+                            <Input
+                                type="password"
+                                autoComplete="new-password"
+                                autoFocus
+                                value={password}
+                                onChange={(event) => setPassword(event.target.value)}
+                                aria-invalid={error ? true : undefined}
+                            />
+                        </Field>
+                        <Field label="Repeat it">
+                            <Input
+                                type="password"
+                                autoComplete="new-password"
+                                value={confirm}
+                                onChange={(event) => setConfirm(event.target.value)}
+                                aria-invalid={error ? true : undefined}
+                            />
+                        </Field>
+                        {error && (
+                            <p role="alert" className="text-meta text-danger">
+                                {error}
+                            </p>
+                        )}
+                    </DialogBody>
                     <DialogFooter>
-                        <Button type="button" variant="ghost" onClick={onClose}>
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={busy || password === ""}>
+                        <Button onClick={onClose}>Cancel</Button>
+                        <Button type="submit" variant="primary" loading={busy} disabled={password === ""}>
                             {busy ? "Resetting…" : "Reset password"}
                         </Button>
                     </DialogFooter>

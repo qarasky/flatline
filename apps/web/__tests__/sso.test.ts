@@ -4,14 +4,32 @@ import { ssoErrorMessage, ssoStartHref, toMethods } from "@/lib/sso";
 
 describe("sign-in methods", () => {
     it("defaults to the local methods for an old backend", () => {
-        expect(toMethods({ ok: true })).toEqual({ sso: false, localLogin: true, tokenLogin: true });
+        expect(toMethods({ ok: true })).toEqual({
+            sso: false,
+            localLogin: true,
+            tokenLogin: true,
+            accountUrl: null,
+            apps: {},
+        });
     });
     it("reads the switches", () => {
         expect(toMethods({ sso: true, localLogin: false, tokenLogin: false })).toEqual({
             sso: true,
             localLogin: false,
             tokenLogin: false,
+            accountUrl: null,
+            apps: {},
         });
+    });
+    it("keeps the Kore ID account page and known http(s) app URLs only", () => {
+        const methods = toMethods({
+            sso: true,
+            accountUrl: "https://id.example/account",
+            apps: { kore: "https://files.example", koremind: "javascript:alert(1)", other: "https://x.example" },
+        });
+        expect(methods.accountUrl).toBe("https://id.example/account");
+        expect(methods.apps).toEqual({ kore: "https://files.example" });
+        expect(toMethods({ accountUrl: "javascript:alert(1)" }).accountUrl).toBeNull();
     });
 });
 
@@ -27,7 +45,7 @@ describe("ssoStartHref", () => {
 
 describe("ssoErrorMessage", () => {
     it("explains known codes and falls back for unknown ones", () => {
-        expect(ssoErrorMessage("denied")).toMatch(/not allowed/);
+        expect(ssoErrorMessage("denied")).toMatch(/access/);
         expect(ssoErrorMessage("whatever")).toMatch(/failed/);
         expect(ssoErrorMessage(null)).toBeNull();
     });

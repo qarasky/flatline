@@ -1,9 +1,10 @@
 "use client";
 
+import { cn } from "@qarasky/kore-ui";
+
 import type { AttentionItem } from "@/lib/attention";
 import { STATUS_LABEL, summarySentence } from "@/lib/board-format";
 import { STATUS_KEYS, type StatusKey, type Totals } from "@/lib/board-model";
-import { cn } from "@/lib/utils";
 
 import { StatusDot } from "./status-dot";
 
@@ -12,7 +13,7 @@ const TONE_TEXT = {
     warn: "text-status-warn",
     bad: "text-status-down",
     maint: "text-status-maint",
-    quiet: "text-muted-foreground",
+    quiet: "text-muted",
 };
 const TONE_DOT: Record<string, StatusKey> = {
     ok: "up",
@@ -44,11 +45,9 @@ export function StatusSummary({
     return (
         <section aria-label="Fleet status" className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
             <div className="flex min-w-0 items-center gap-2" role="status">
-                <StatusDot status={TONE_DOT[summary.tone]} size={12} />
+                <StatusDot status={TONE_DOT[summary.tone]} />
                 <span className={cn("font-medium", TONE_TEXT[summary.tone])}>{summary.text}</span>
-                {changed > 0 ? (
-                    <span className="text-muted-foreground text-xs tabular-nums">{changed} just changed</span>
-                ) : null}
+                {changed > 0 ? <span className="text-muted text-meta tabular-nums">{changed} just changed</span> : null}
             </div>
             <div className="flex flex-wrap items-center gap-1">
                 {STATUS_KEYS.map((key) => {
@@ -62,13 +61,13 @@ export function StatusSummary({
                             disabled={count === 0 && !pressed}
                             onClick={() => onToggleStatus(key)}
                             className={cn(
-                                "hover:bg-accent flex h-6 items-center gap-1.5 rounded-md border border-transparent px-2 text-xs disabled:opacity-40",
-                                pressed && "border-primary/60 bg-primary/10"
+                                "text-meta flex h-7 items-center gap-1.5 rounded-ui border border-transparent px-2 transition-colors hover:bg-white/5 disabled:opacity-40 disabled:hover:bg-transparent",
+                                pressed && "border-accent/60 bg-accent/10"
                             )}
                         >
-                            <StatusDot status={key} size={10} />
-                            <span className="text-foreground font-semibold tabular-nums">{count}</span>
-                            <span className="text-muted-foreground">{STATUS_LABEL[key].toLowerCase()}</span>
+                            <StatusDot status={key} />
+                            <span className="text-text font-semibold tabular-nums">{count}</span>
+                            <span className="text-muted">{STATUS_LABEL[key].toLowerCase()}</span>
                         </button>
                     );
                 })}

@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { MonitorDetail } from "@/components/monitors/monitor-detail";
-import { PageHeader } from "@/components/page-header";
+import { PageBody, PageHeader } from "@qarasky/kore-ui";
 import { isApiError } from "@/lib/api";
-import { monitorCrumbs } from "@/lib/monitor-crumbs";
+import { monitorHeader } from "@/lib/monitor-crumbs";
 import { BEAT_LIMIT, fetchAllMonitors, fetchHeartbeats, fetchMonitor } from "@/lib/monitors-api";
 
 export const metadata: Metadata = { title: "Monitor · Flatline" };
@@ -24,8 +24,10 @@ export default async function MonitorPage({ params }: { params: Promise<{ id: st
         ]);
         return (
             <>
-                <PageHeader crumbs={monitorCrumbs(roster, id)} />
-                <MonitorDetail id={id} initial={{ monitor, beats: log.heartbeats, total: log.total }} />
+                <PageHeader {...monitorHeader(roster, id)} />
+                <PageBody>
+                    <MonitorDetail id={id} initial={{ monitor, beats: log.heartbeats, total: log.total }} />
+                </PageBody>
             </>
         );
     } catch (error) {

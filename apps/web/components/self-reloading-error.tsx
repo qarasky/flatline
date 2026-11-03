@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@qarasky/kore-ui";
 import { useEffect } from "react";
 
 /** How long an unattended screen shows an error before reloading itself. */
@@ -16,9 +17,8 @@ export function SelfReloadingError({ what }: { what: string }) {
         return () => window.clearTimeout(timer);
     }, []);
     return (
-        <div role="alert" className="flex min-h-svh flex-col items-center justify-center gap-2 p-10 text-center">
-            <p className="font-medium">{what} could not be shown.</p>
-            <p className="text-quiet text-sm">Reloading in 30 seconds…</p>
+        <div role="alert" className="bg-bg text-text flex min-h-svh items-center justify-center">
+            <EmptyState title={`${what} couldn't be shown.`} description="Reloading in 30 seconds…" />
         </div>
     );
 }

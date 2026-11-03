@@ -1,9 +1,10 @@
 "use client";
 
+import { Button, EmptyState } from "@qarasky/kore-ui";
+import { RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { startTransition, useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import { retryDelayMs } from "@/lib/retry";
 
 /**
@@ -31,12 +32,13 @@ export default function AdminError({ reset }: { error: Error & { digest?: string
     }, [attempt]);
 
     return (
-        <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
-            <p className="font-medium">Could not load this page.</p>
-            <p className="text-muted-foreground">Flatline may be restarting. Retrying on its own…</p>
-            <Button variant="secondary" onClick={retry}>
-                Try again now
-            </Button>
+        <div role="alert" className="flex min-h-[60vh] flex-1 items-center justify-center">
+            <EmptyState
+                icon={<RefreshCw />}
+                title="Couldn't load this page"
+                description="Flatline may be restarting. Retrying on its own…"
+                action={<Button onClick={retry}>Try again now</Button>}
+            />
         </div>
     );
 }

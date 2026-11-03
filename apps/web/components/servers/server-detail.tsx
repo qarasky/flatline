@@ -1,5 +1,16 @@
 "use client";
 
+import {
+    Button,
+    Card,
+    cn,
+    Dialog,
+    DialogBody,
+    DialogContent,
+    DialogFooter,
+    PageBody,
+    SectionHeader,
+} from "@qarasky/kore-ui";
 import { Activity, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -10,21 +21,12 @@ import { BackupAgents } from "@/components/fleet/backup-agents";
 import { ContainerRows } from "@/components/fleet/container-rows";
 import { CoreSquares } from "@/components/fleet/core-squares";
 import { LoadHistory } from "@/components/fleet/load-history";
-import { UsageBar } from "@/components/fleet/metric-bar";
+import { UsageMeter } from "@/components/fleet/metric-bar";
 import { ProviderLogo } from "@/components/fleet/provider-logo";
 import { LinkPicker } from "@/components/monitors/link-picker";
 import { MonitorForm, type FormInitial } from "@/components/monitors/monitor-form";
 import { StatusDot, statusTone } from "@/components/monitors/status-dot";
-import { Button } from "@/components/ui/button";
 import { useClock } from "@/hooks/use-clock";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
 import { backupFileName } from "@/lib/backup-presentation";
 import { STATUS_LABEL } from "@/lib/board-format";
 import { statusKeyOf } from "@/lib/board-model";
@@ -50,91 +52,79 @@ import {
 } from "@/lib/monitors-api";
 import { isCovered } from "@/lib/mute";
 import type { ServerSample } from "@/lib/server-row";
-import { cn } from "@/lib/utils";
 
 import { useFleetMetrics } from "./use-fleet-metrics";
 
 const TONE_TEXT: Record<string, string> = {
-    up: "text-ok",
-    bad: "text-bad",
-    pending: "text-warn",
-    maintenance: "text-maint",
-    neutral: "text-quiet",
-    ok: "text-ok",
-    warn: "text-warn",
-    quiet: "text-quiet",
-    critical: "text-bad",
-    reboot: "text-warn",
+    up: "text-status-up",
+    bad: "text-status-down",
+    pending: "text-status-warn",
+    maintenance: "text-status-maint",
+    neutral: "text-muted",
+    ok: "text-status-up",
+    warn: "text-status-warn",
+    quiet: "text-muted",
+    critical: "text-status-down",
+    reboot: "text-status-warn",
 };
 
-function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
+/** One block of the page: a heading, then its content in a Card (or bare, when the content brings its own frames). */
+function Section({
+    title,
+    children,
+    action,
+    framed = true,
+}: {
+    title: string;
+    children: React.ReactNode;
+    action?: React.ReactNode;
+    framed?: boolean;
+}) {
     return (
-        <section className="border-b px-4 py-4">
-            <div className="mb-3 flex items-center gap-2">
-                <h2 className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">{title}</h2>
-                {action ? <div className="ml-auto">{action}</div> : null}
-            </div>
-            {children}
+        <section>
+            <SectionHeader title={title} actions={action} className="mb-3" />
+            {framed ? <Card className="p-4">{children}</Card> : children}
         </section>
-    );
-}
-
-function Meter({ label, percent, detail }: { label: string; percent: number | undefined; detail?: string | null }) {
-    return (
-        <div className="min-w-0">
-            <div className="flex items-baseline justify-between gap-2 text-xs">
-                <span className="text-muted-foreground truncate">{label}</span>
-                <span className="tnum">
-                    {percentage(percent)}
-                    {detail ? <span className="text-muted-foreground"> · {detail}</span> : null}
-                </span>
-            </div>
-            <div className="mt-1">
-                <UsageBar percent={percent} label={label} />
-            </div>
-        </div>
     );
 }
 
 /** Live numbers from the latest sample: CPU with its cores, memory, every disk, GPUs. */
 function LiveMetrics({ sample, interval, now }: { sample: ServerSample | undefined; interval: number; now: number }) {
     if (!sample) {
-        return (
-            <p className="text-muted-foreground">No metrics yet. They appear once the agent pushes its first sample.</p>
-        );
+        return <p className="text-muted">No metrics yet. They appear once the agent pushes its first sample.</p>;
     }
     const { metrics, time } = sample;
     const stale = isSampleStale(metrics, time, interval, now);
     const gpus = metrics.gpu?.gpus?.length ? metrics.gpu.gpus : metrics.gpu?.available ? [metrics.gpu] : [];
     return (
         <div className="grid gap-4">
-            <p className={cn("text-xs", stale ? "text-warn" : "text-muted-foreground")}>
+            <p className={cn("text-meta", stale ? "text-status-warn" : "text-muted")}>
                 {stale ? `Stale: last sample ${ageOf(time, now)} ago` : `Updated ${ageOf(time, now)} ago`}
                 {metrics.host?.hostname ? ` · ${metrics.host.hostname}` : ""}
                 {metrics.load?.avg1 !== undefined ? ` · load ${metrics.load.avg1.toFixed(2)}` : ""}
             </p>
             <div className="grid gap-4 md:grid-cols-2">
                 <div className="grid gap-2">
-                    <Meter
+                    <UsageMeter
                         label={`CPU${metrics.cpu?.cores ? ` · ${metrics.cpu.cores} cores` : ""}`}
                         percent={metrics.cpu?.percent}
                         detail={metrics.cpu?.temp ? `${Math.round(metrics.cpu.temp)}°C` : null}
                     />
                     <CoreSquares values={metrics.cpu?.perCore} label="Core" />
                     {sample.cpuPeak10m ? (
-                        <p className="text-muted-foreground text-xs tnum">
+                        <p className="text-meta text-muted tnum">
                             Peak in the last 10 minutes: {percentage(sample.cpuPeak10m.percent)}
                         </p>
                     ) : null}
                 </div>
                 <div className="grid content-start gap-3">
-                    <Meter
+                    <UsageMeter
                         label="Memory"
                         percent={metrics.mem?.percent}
                         detail={formatBytesPair(metrics.mem?.used, metrics.mem?.total)}
                     />
                     {(metrics.disk ?? []).map((disk) => (
-                        <Meter
+                        <UsageMeter
                             key={disk.mount}
                             label={`Disk ${disk.mount ?? ""}`}
                             percent={disk.percent}
@@ -142,7 +132,7 @@ function LiveMetrics({ sample, interval, now }: { sample: ServerSample | undefin
                         />
                     ))}
                     {gpus.map((gpu, i) => (
-                        <Meter
+                        <UsageMeter
                             key={`gpu-${i}`}
                             label={`GPU ${gpu.name ?? i}`}
                             percent={gpu.util}
@@ -184,36 +174,40 @@ function AgentReport({
         }
     }
     return (
-        <dl className="grid grid-cols-[140px_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
-            <dt className="text-muted-foreground">Agent</dt>
+        <dl className="grid grid-cols-[140px_minmax(0,1fr)] gap-x-4 gap-y-2 text-sub">
+            <dt className="text-muted">Agent</dt>
             <dd className="tnum">{metrics?.agent?.version ?? "—"}</dd>
-            <dt className="text-muted-foreground">Updates</dt>
-            <dd className={updates ? TONE_TEXT[updates.tone] : "text-quiet"} title={updates?.title}>
+            <dt className="text-muted">Updates</dt>
+            <dd className={updates ? TONE_TEXT[updates.tone] : "text-muted"} title={updates?.title}>
                 {updates?.label ?? "Unknown"}
             </dd>
             {smart ? (
                 <>
-                    <dt className="text-muted-foreground">Disk health</dt>
+                    <dt className="text-muted">Disk health</dt>
                     <dd className={TONE_TEXT[smart.tone]} title={smart.title}>
                         {smart.text}
                     </dd>
                 </>
             ) : null}
-            <dt className="text-muted-foreground">Warnings</dt>
+            <dt className="text-muted">Warnings</dt>
             <dd>
                 {warning ? (
                     <span className="flex flex-wrap items-center gap-2">
-                        <span className="text-warn" title={warning.title} data-agent-warning>
+                        <span className="text-status-warn" title={warning.title} data-agent-warning>
                             {warning.text}
                         </span>
-                        <Button variant="outline" size="xs" disabled={busy} onClick={() => void clear()}>
+                        <Button size="sm" loading={busy} onClick={() => void clear()}>
                             Clear warnings
                         </Button>
                     </span>
                 ) : (
-                    <span className="text-quiet">None</span>
+                    <span className="text-muted">None</span>
                 )}
-                {error ? <span className="text-bad block text-xs">{error}</span> : null}
+                {error ? (
+                    <span role="alert" className="block text-meta text-danger">
+                        {error}
+                    </span>
+                ) : null}
             </dd>
         </dl>
     );
@@ -258,8 +252,7 @@ function LinkedWebsites({ monitor, monitors }: { monitor: MonitorSummary; monito
             title="Linked websites"
             action={
                 <Button
-                    variant="outline"
-                    size="xs"
+                    size="sm"
                     disabled={links === null}
                     onClick={() => {
                         setSelection(new Set(links?.raw.map((l) => l.linkedMonitorId) ?? []));
@@ -271,20 +264,24 @@ function LinkedWebsites({ monitor, monitors }: { monitor: MonitorSummary; monito
                 </Button>
             }
         >
-            {error ? <p className="text-bad text-xs">{error}</p> : null}
+            {error ? (
+                <p role="alert" className="mb-2 text-meta text-danger">
+                    {error}
+                </p>
+            ) : null}
             {links === null ? null : links.resolved.length === 0 ? (
-                <p className="text-muted-foreground">
+                <p className="text-muted">
                     No websites linked. Their status would show here and on the Superboard card.
                 </p>
             ) : (
                 <ul className="grid gap-1" aria-label="Linked websites">
                     {sortLinks(links.resolved).map((link) => (
                         <li key={link.id} className="flex items-center gap-2">
-                            <StatusDot status={statusKeyOf({ active: true, status: link.status })} size={10} />
+                            <StatusDot status={statusKeyOf({ active: true, status: link.status })} />
                             <Link href={`/monitors/${link.id}`} className="min-w-0 truncate hover:underline">
                                 {link.name}
                             </Link>
-                            <span className={cn("text-xs", TONE_TEXT[linkTone(link.status)])}>
+                            <span className={cn("text-meta", TONE_TEXT[linkTone(link.status)])}>
                                 {linkStatusLabel(link.status)}
                             </span>
                         </li>
@@ -292,34 +289,34 @@ function LinkedWebsites({ monitor, monitors }: { monitor: MonitorSummary; monito
                 </ul>
             )}
             <Dialog open={editing} onOpenChange={setEditing}>
-                <DialogContent className="sm:max-w-lg">
-                    <DialogHeader>
-                        <DialogTitle>Linked websites</DialogTitle>
-                        <DialogDescription>
-                            The websites {monitor.name} hosts. A group includes every website inside it.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <LinkPicker
-                        candidates={candidates}
-                        selected={selection}
-                        disabled={saving}
-                        onToggle={(id) =>
-                            setSelection((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(id)) {
-                                    next.delete(id);
-                                } else {
-                                    next.add(id);
-                                }
-                                return next;
-                            })
-                        }
-                    />
+                <DialogContent
+                    title="Linked websites"
+                    description={`The websites “${monitor.name}” hosts. A group includes every website inside it.`}
+                    size="lg"
+                >
+                    <DialogBody>
+                        <LinkPicker
+                            candidates={candidates}
+                            selected={selection}
+                            disabled={saving}
+                            onToggle={(id) =>
+                                setSelection((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(id)) {
+                                        next.delete(id);
+                                    } else {
+                                        next.add(id);
+                                    }
+                                    return next;
+                                })
+                            }
+                        />
+                    </DialogBody>
                     <DialogFooter>
-                        <Button variant="ghost" onClick={() => setEditing(false)} disabled={saving}>
+                        <Button onClick={() => setEditing(false)} disabled={saving}>
                             Cancel
                         </Button>
-                        <Button onClick={() => void save()} disabled={saving}>
+                        <Button variant="primary" onClick={() => void save()} loading={saving}>
                             {saving ? "Saving…" : "Save links"}
                         </Button>
                     </DialogFooter>
@@ -360,7 +357,7 @@ function ServerBackups({ monitorId }: { monitorId: number }) {
         return null;
     }
     return (
-        <Section title="Backups">
+        <Section title="Backups" framed={false}>
             <BackupAgents
                 agents={agents}
                 runs={runs}
@@ -371,13 +368,9 @@ function ServerBackups({ monitorId }: { monitorId: number }) {
                     )
                 }
             />
-            <p className="mt-2 text-xs">
+            <p className="mt-2 text-meta">
                 {agents.map((agent) => (
-                    <Link
-                        key={agent.id}
-                        href={`/backups/${agent.id}`}
-                        className="text-muted-foreground mr-3 hover:underline"
-                    >
+                    <Link key={agent.id} href={`/backups/${agent.id}`} className="mr-3 text-accent hover:underline">
                         Manage {agent.name} →
                     </Link>
                 ))}
@@ -420,92 +413,96 @@ export function ServerDetail({
     }
 
     return (
-        <div className="flex flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col">
             <PausedBanner />
-            {live.failed ? (
-                <p role="status" className="text-warn border-b px-4 py-1.5 text-xs">
-                    Could not load the latest metrics; the numbers may be old.
-                </p>
-            ) : null}
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-3">
-                <ProviderLogo provider={monitor.provider} />
-                <h1 className="text-base font-semibold">{monitor.name}</h1>
-                <span className={cn("flex items-center gap-1.5 text-xs font-medium", statusTone(status))}>
-                    <StatusDot status={status} size={10} muted={covered} />
-                    {covered && status === "down" ? "Down · muted" : STATUS_LABEL[status]}
-                </span>
-                <div className="ml-auto flex items-center gap-1.5">
-                    {covered || monitor.status === 0 ? (
-                        <Button variant="outline" size="sm" onClick={() => void toggleMute()}>
-                            {covered ? "Unmute" : "Mute"}
+            <PageBody className="grid gap-6">
+                {live.failed ? (
+                    <p role="status" className="text-meta text-warning">
+                        Couldn&apos;t load the latest metrics; the numbers may be old.
+                    </p>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <ProviderLogo provider={monitor.provider} />
+                    <span className={cn("flex items-center gap-2 text-sub font-medium", statusTone(status))}>
+                        <StatusDot status={status} muted={covered} />
+                        {covered && status === "down" ? "Down · muted" : STATUS_LABEL[status]}
+                    </span>
+                    <div className="ml-auto flex items-center gap-2">
+                        <Button variant="ghost" size="sm" asChild>
+                            <Link href={`/monitors/${monitor.id}`}>
+                                <Activity />
+                                Checks
+                            </Link>
                         </Button>
+                        {covered || monitor.status === 0 ? (
+                            <Button size="sm" onClick={() => void toggleMute()}>
+                                {covered ? "Unmute" : "Mute"}
+                            </Button>
+                        ) : null}
+                        <Button
+                            size="sm"
+                            onClick={() => {
+                                if (editing) {
+                                    setEditing(null);
+                                    return;
+                                }
+                                fetchMonitor(monitor.id)
+                                    .then((answer) => setEditing(answer.monitor))
+                                    .catch((e) =>
+                                        setMuteError(e instanceof Error ? e.message : "Couldn't open the editor.")
+                                    );
+                            }}
+                        >
+                            {editing ? "Close editor" : "Edit"}
+                        </Button>
+                    </div>
+                    {muteError ? (
+                        <p role="alert" className="w-full text-meta text-danger">
+                            {muteError}
+                        </p>
                     ) : null}
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                            if (editing) {
+                </div>
+                {editing ? (
+                    <Card className="p-4">
+                        <MonitorForm
+                            initial={editing}
+                            onCancel={() => setEditing(null)}
+                            onSaved={() => {
                                 setEditing(null);
-                                return;
-                            }
-                            fetchMonitor(monitor.id)
-                                .then((answer) => setEditing(answer.monitor))
-                                .catch((e) =>
-                                    setMuteError(e instanceof Error ? e.message : "Could not open the editor.")
-                                );
-                        }}
-                    >
-                        {editing ? "Close editor" : "Edit"}
-                    </Button>
-                    <Button variant="ghost" size="sm" asChild>
-                        <Link href={`/monitors/${monitor.id}`}>
-                            <Activity />
-                            Checks
-                        </Link>
-                    </Button>
-                </div>
-                {muteError ? <p className="text-bad w-full text-xs">{muteError}</p> : null}
-            </div>
-            {editing ? (
-                <div className="border-b px-4 py-4">
-                    <MonitorForm
-                        initial={editing}
-                        onCancel={() => setEditing(null)}
-                        onSaved={() => {
-                            setEditing(null);
-                            void reload();
-                        }}
-                    />
-                </div>
-            ) : null}
-            <Section title="Now">
-                <LiveMetrics sample={sample} interval={monitor.interval} now={now} />
-            </Section>
-            <Section title="Agent">
-                <AgentReport monitor={monitor} sample={sample} onCleared={() => void reload()} />
-            </Section>
-            <Section title="Load history">
-                <LoadHistory monitorId={monitor.id} />
-            </Section>
-            {sample?.metrics.docker?.length ? (
-                <Section title={`Containers · ${sample.metrics.docker.length}`}>
-                    <ContainerRows containers={sample.metrics.docker} />
+                                void reload();
+                            }}
+                        />
+                    </Card>
+                ) : null}
+                <Section title="Now">
+                    <LiveMetrics sample={sample} interval={monitor.interval} now={now} />
                 </Section>
-            ) : null}
-            <LinkedWebsites monitor={monitor} monitors={monitors} />
-            <Section title="Alert thresholds">
-                <dl className="grid grid-cols-[140px_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm tnum">
-                    <dt className="text-muted-foreground">CPU</dt>
-                    <dd>{monitor.metricCpuThreshold != null ? `${monitor.metricCpuThreshold}%` : "Off"}</dd>
-                    <dt className="text-muted-foreground">RAM</dt>
-                    <dd>{monitor.metricRamThreshold != null ? `${monitor.metricRamThreshold}%` : "Off"}</dd>
-                    <dt className="text-muted-foreground">Disk</dt>
-                    <dd>{monitor.metricDiskThreshold != null ? `${monitor.metricDiskThreshold}%` : "Off"}</dd>
-                    <dt className="text-muted-foreground">Provider</dt>
-                    <dd>{monitor.provider ?? "—"}</dd>
-                </dl>
-            </Section>
-            <ServerBackups monitorId={monitor.id} />
+                <Section title="Agent">
+                    <AgentReport monitor={monitor} sample={sample} onCleared={() => void reload()} />
+                </Section>
+                <Section title="Load history" framed={false}>
+                    <LoadHistory monitorId={monitor.id} />
+                </Section>
+                {sample?.metrics.docker?.length ? (
+                    <Section title={`Containers · ${sample.metrics.docker.length}`}>
+                        <ContainerRows containers={sample.metrics.docker} />
+                    </Section>
+                ) : null}
+                <LinkedWebsites monitor={monitor} monitors={monitors} />
+                <Section title="Alert thresholds">
+                    <dl className="grid grid-cols-[140px_minmax(0,1fr)] gap-x-4 gap-y-1 text-sub tnum">
+                        <dt className="text-muted">CPU</dt>
+                        <dd>{monitor.metricCpuThreshold != null ? `${monitor.metricCpuThreshold}%` : "Off"}</dd>
+                        <dt className="text-muted">RAM</dt>
+                        <dd>{monitor.metricRamThreshold != null ? `${monitor.metricRamThreshold}%` : "Off"}</dd>
+                        <dt className="text-muted">Disk</dt>
+                        <dd>{monitor.metricDiskThreshold != null ? `${monitor.metricDiskThreshold}%` : "Off"}</dd>
+                        <dt className="text-muted">Provider</dt>
+                        <dd>{monitor.provider ?? "—"}</dd>
+                    </dl>
+                </Section>
+                <ServerBackups monitorId={monitor.id} />
+            </PageBody>
         </div>
     );
 }

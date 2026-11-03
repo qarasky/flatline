@@ -26,7 +26,7 @@ function monitor(over: Partial<MonitorSummary>): MonitorSummary {
 
 const account: Me = {
     principal: "account",
-    account: { id: 1, email: "a@b.kz", name: "Ana", mustChangePassword: false },
+    account: { id: 1, email: "a@b.kz", name: "Ana", mustChangePassword: false, sso: false },
 };
 const token: Me = { principal: "token", token: { id: 1, name: "wall tv" } };
 

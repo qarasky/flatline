@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { cn, Meter, type MeterTone } from "@qarasky/kore-ui";
 
 export type BarTone = "ok" | "warn" | "bad" | "muted";
 
@@ -26,10 +26,10 @@ export function usageTone(percent: number | undefined): BarTone {
 }
 
 const FILL: Record<BarTone, string> = {
-    ok: "bg-muted-foreground/60",
-    warn: "bg-warn",
-    bad: "bg-bad",
-    muted: "bg-quiet",
+    ok: "bg-muted/60",
+    warn: "bg-status-warn",
+    bad: "bg-status-down",
+    muted: "bg-muted",
 };
 
 /**
@@ -54,6 +54,45 @@ export function UsageBar({ percent, tone, label }: { percent: number | undefined
                 style={{ width: safe === null ? "0%" : `${safe}%` }}
             />
         </div>
+    );
+}
+
+const METER_TONE: Record<BarTone, MeterTone> = { ok: "accent", warn: "warning", bad: "danger", muted: "accent" };
+
+/**
+ * A usage percentage as a kore-ui Meter (Servers pages): label above, the
+ * bar, the number in words below. The tone follows usageTone, so the Servers
+ * pages and the Superboard agree on when a box is busy.
+ */
+export function UsageMeter({
+    label,
+    percent,
+    detail,
+    hideLabel = false,
+    className,
+}: {
+    label: string;
+    percent: number | undefined | null;
+    /** Extra words after the percentage ("3.1 GB of 8 GB"). */
+    detail?: string | null;
+    hideLabel?: boolean;
+    className?: string;
+}) {
+    const safe =
+        percent === undefined || percent === null || !Number.isFinite(percent)
+            ? null
+            : Math.max(0, Math.min(100, percent));
+    const text = safe === null ? "—" : `${safe.toFixed(safe < 10 ? 1 : 0)}%`;
+    return (
+        <Meter
+            label={label}
+            aria-label={label}
+            hideLabel={hideLabel}
+            value={safe ?? 0}
+            valueText={detail ? `${text} · ${detail}` : text}
+            tone={METER_TONE[usageTone(safe ?? undefined)]}
+            className={cn("min-w-0 gap-1.5 tabular-nums", className)}
+        />
     );
 }
 
@@ -82,7 +121,7 @@ export function MetricBar({
         <div className="metric-bar">
             <div className="flex items-baseline justify-between gap-2">
                 <span
-                    className="metric-label min-w-0 truncate text-xs font-medium tracking-wide text-muted-foreground uppercase"
+                    className="metric-label min-w-0 truncate text-xs font-medium tracking-wide text-muted uppercase"
                     title={label}
                 >
                     {label}
@@ -91,7 +130,7 @@ export function MetricBar({
                     {safe === null ? "—" : `${safe.toFixed(safe < 10 ? 1 : 0)}%`}
                 </span>
             </div>
-            {detail ? <p className="metric-detail mt-1 text-xs text-quiet">{detail}</p> : null}
+            {detail ? <p className="metric-detail mt-1 text-xs text-muted">{detail}</p> : null}
             <div className="metric-track mt-2 h-2 overflow-hidden rounded-full bg-white/10">
                 <div
                     className={cn(

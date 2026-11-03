@@ -1,11 +1,12 @@
 "use client";
 
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent } from "@qarasky/kore-ui";
+
 import { useMedia } from "@/hooks/use-media";
 
 import { MonitorDetail } from "./monitor-detail";
 
-/** At this width the peek sits beside the list; below it, it slides over as a sheet. */
+/** At this width the peek sits beside the list; below it, it opens over the list as a side dialog. */
 export const WIDE_QUERY = "(min-width: 1280px)";
 
 /**
@@ -37,18 +38,22 @@ export function PeekPanel({
         return (
             <aside
                 aria-label="Monitor details"
-                className="bg-background sticky top-12 h-[calc(100svh-3rem)] w-[480px] shrink-0 overflow-y-auto border-l"
+                className="bg-surface min-h-0 w-[480px] shrink-0 overflow-y-auto border-l"
             >
                 {detail}
             </aside>
         );
     }
+    // kore-ui has no sheet: a Dialog pinned to the right edge, full height.
     return (
-        <Sheet open onOpenChange={(open) => !open && onClose()}>
-            <SheetContent side="right" showCloseButton={false} className="w-full overflow-y-auto sm:max-w-xl">
-                <SheetTitle className="sr-only">Monitor details</SheetTitle>
-                {detail}
-            </SheetContent>
-        </Sheet>
+        <Dialog open onOpenChange={(open) => !open && onClose()}>
+            <DialogContent
+                title={<span className="sr-only">Monitor details</span>}
+                showClose={false}
+                className="top-0 right-0 left-auto h-dvh max-h-dvh w-full translate-x-0 translate-y-0 rounded-none border-y-0 border-r-0 sm:max-w-xl"
+            >
+                <div className="min-h-0 flex-1 overflow-y-auto">{detail}</div>
+            </DialogContent>
+        </Dialog>
     );
 }

@@ -1,39 +1,66 @@
 "use client";
 
+import {
+    EmptyState,
+    PageBody,
+    StatusDot,
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+    TableRowHeader,
+} from "@qarasky/kore-ui";
+import { Archive } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { useBoardData } from "@/components/board/board-data";
+import { backupStatus } from "@/components/fleet/backup-status";
 import { backupHealth, backupIsEncrypted, backupTime } from "@/lib/backup-presentation";
 import { ageOf } from "@/lib/fleet-presentation";
 import type { BackupAgentSummary } from "@/lib/monitor-types";
-import { cn } from "@/lib/utils";
-
-const TONE: Record<string, string> = { up: "text-ok", down: "text-bad", degraded: "text-warn", neutral: "text-quiet" };
 
 function Row({ agent, serverName, now }: { agent: BackupAgentSummary; serverName: string | null; now: number }) {
+    const router = useRouter();
     const health = backupHealth(agent);
     const last = agent.lastCompletedRun;
+    const href = `/backups/${agent.id}`;
     return (
-        <li>
-            <Link
-                href={`/backups/${agent.id}`}
-                data-agent-id={agent.id}
-                className="hover:bg-accent grid grid-cols-[minmax(0,1.2fr)_100px_minmax(0,1fr)_minmax(0,1.2fr)_90px_90px] items-center gap-4 border-b px-4 py-2.5"
-            >
-                <span className="truncate font-medium">{agent.name}</span>
-                <span className={cn("text-xs font-medium", TONE[health.tone])}>{health.label}</span>
-                <span className="text-muted-foreground truncate text-xs">{serverName ?? "not linked"}</span>
-                <span className="text-muted-foreground truncate text-xs tnum">
-                    {last
-                        ? `last ${backupTime(last.completedAt)} · ${ageOf(last.completedAt, now)} ago`
-                        : "no completed run yet"}
-                </span>
-                <span className="text-muted-foreground text-xs tnum">{agent.reportedVersion ?? "—"}</span>
-                <span className="text-muted-foreground text-xs">
-                    {last ? (backupIsEncrypted(last) ? "encrypted" : "plain") : "—"}
-                </span>
-            </Link>
-        </li>
+        <TableRow
+            interactive
+            data-agent-id={agent.id}
+            onClick={(event) => {
+                // The name is the real link; the rest of the row is a mouse shortcut to it.
+                if (!(event.target as HTMLElement).closest("a")) {
+                    router.push(href);
+                }
+            }}
+        >
+            <TableRowHeader className="max-w-64">
+                <Link href={href} className="block truncate font-medium hover:underline">
+                    {agent.name}
+                </Link>
+            </TableRowHeader>
+            <TableCell>
+                <StatusDot status={backupStatus(health.tone)} label={health.label} />
+            </TableCell>
+            <TableCell muted className="max-w-48 truncate">
+                {serverName ?? "Not linked"}
+            </TableCell>
+            <TableCell muted className="tnum text-sub">
+                {last
+                    ? `${backupTime(last.completedAt)} · ${ageOf(last.completedAt, now)} ago`
+                    : "No completed run yet"}
+            </TableCell>
+            <TableCell muted className="tnum text-sub">
+                {agent.reportedVersion ?? "—"}
+            </TableCell>
+            <TableCell muted className="text-sub">
+                {last ? (backupIsEncrypted(last) ? "Encrypted" : "Plain") : "—"}
+            </TableCell>
+        </TableRow>
     );
 }
 
@@ -41,29 +68,51 @@ function Row({ agent, serverName, now }: { agent: BackupAgentSummary; serverName
 export function BackupsList() {
     const { backups, monitors, rosterLoaded, now } = useBoardData();
     if (!rosterLoaded) {
-        return <p className="text-muted-foreground p-6">Loading…</p>;
+        return (
+            <PageBody>
+                <p className="text-muted">Loading…</p>
+            </PageBody>
+        );
     }
     const names = new Map(monitors.map((m) => [m.id, m.name]));
-    return backups.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center p-10">
-            <p className="text-muted-foreground max-w-sm text-center">
-                No backup agents yet. Register one, then install the backup agent on the host with its token.
-            </p>
-        </div>
-    ) : (
-        <ul aria-label="Backup agents">
-            {[...backups]
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map((agent) => (
-                    <Row
-                        key={agent.id}
-                        agent={agent}
-                        serverName={
-                            agent.monitorId !== null ? (names.get(agent.monitorId) ?? `#${agent.monitorId}`) : null
-                        }
-                        now={now}
-                    />
-                ))}
-        </ul>
+    return (
+        <PageBody>
+            {backups.length === 0 ? (
+                <EmptyState
+                    icon={<Archive />}
+                    title="No backup agents yet"
+                    description="Register one, then install the backup agent on the host with its token."
+                />
+            ) : (
+                <Table caption="Backup agents" aria-label="Backup agents">
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Agent</TableHead>
+                            <TableHead>Health</TableHead>
+                            <TableHead>Server</TableHead>
+                            <TableHead>Last completed</TableHead>
+                            <TableHead>Version</TableHead>
+                            <TableHead>Encryption</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {[...backups]
+                            .sort((a, b) => a.name.localeCompare(b.name))
+                            .map((agent) => (
+                                <Row
+                                    key={agent.id}
+                                    agent={agent}
+                                    serverName={
+                                        agent.monitorId !== null
+                                            ? (names.get(agent.monitorId) ?? `#${agent.monitorId}`)
+                                            : null
+                                    }
+                                    now={now}
+                                />
+                            ))}
+                    </TableBody>
+                </Table>
+            )}
+        </PageBody>
     );
 }

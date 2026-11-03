@@ -13,10 +13,22 @@ the Vite dashboard the app replaced, so links to it keep working.)
   with their data, then hydrate. The build is `output: "standalone"`, traced
   from the repository root so `packages/shared` (the status-page client and
   types) comes along.
-- **Tailwind CSS 4 and shadcn components** (`components/ui/`, on Radix), themed
-  once in `app/globals.css`: dark only, near-black cool surfaces and one blue
-  accent (`--primary`). Status colours are semantic and never derived from the
-  accent; maintenance is violet so it never reads as the accent.
+- **Tailwind CSS 4 and kore-ui** (`@qarasky/kore-ui`, pinned to a release
+  tarball in `apps/web/package.json`), the design system shared by every Kore
+  app. Its `DESIGN.md` is the source of truth for tokens, layout, components
+  and copy; Flatline follows it and documents only what is specific to
+  monitoring. `app/globals.css` imports `@qarasky/kore-ui/theme.css` and keeps
+  only monitoring CSS (the monitor board, heartbeat strips, fleet meters,
+  history charts, the wall board and status pages), written on kore-ui's
+  variables (`var(--color-*)`). Dark only; status colours are kore-ui's
+  `status-*` tokens, plus two app-only ones (`status-muted` for a muted down
+  monitor, `status-critical` for a critical resource level).
+- **The shell is kore-ui's:** `AppShell` with a collapsible sidebar (state in
+  the `sidebar_state` cookie, ⌘B toggles it), search in the top bar (⌘K), the
+  Kore app switcher and account menu (Kore ID account, other apps from
+  `KORE_APP_URLS`, sign out), `PageHeader` with breadcrumbs, and `AuthScreen`
+  for sign-in. The app is shown as "Flatline" until the KoreMonitor rename
+  (`names` override in `lib/kore.ts`).
 - **lucide** icons, **cmdk** for the ⌘K palette, `qrcode-generator` for the
   kiosk's QR code. Nothing loads from another host (Caddy's CSP forbids it):
   the font is bundled and the QR code is a `data:` image.
@@ -28,7 +40,7 @@ the Vite dashboard the app replaced, so links to it keep working.)
 | ------------------- | ---------------------------------------------------------------------------------------- |
 | `app/`              | Routes. `app/(admin)/` holds the signed-in sections under one layout.                    |
 | `components/`       | One folder per section (`monitors/`, `servers/`, …) plus shared pieces.                  |
-| `components/ui/`    | shadcn primitives. `components/legacy-ui/` holds the old look's controls.                |
+| `components/ui/`    | Only `command.tsx`: cmdk styled with kore-ui tokens (kore-ui has no command palette).    |
 | `lib/`              | Pure logic and the API clients (`lib/api.ts`, `lib/<section>-api.ts`); what tests cover. |
 | `hooks/`            | Small client hooks (clock, media queries, idle calm).                                    |
 | `proxy.ts`          | The optimistic sign-in gate (Next 16's "proxy", formerly middleware).                    |
@@ -252,14 +264,14 @@ Shortcuts never fire while typing in a field (`lib/board-keys.ts`).
 ### Superboard, the approve page and status pages
 
 The Superboard ([superboard](superboard.md)), `/device` and the status pages
-were ported as they were and keep the old dashboard's look: `app/legacy.css`,
-scoped to `.legacy-theme`, with the new blue accent. Status pages render on the
-server and load no admin code ([status pages](status-pages.md)).
+have their own full-screen layouts (no app shell) built from kore-ui
+components and tokens. Status pages render on the server and load no admin
+code ([status pages](status-pages.md)).
 
 ## Adding a section
 
 1. **The route:** `app/(admin)/<section>/page.tsx`, a server component that
-   renders `PageHeader` (breadcrumbs and actions) and the section's client
+   renders kore-ui's `PageHeader` (title, breadcrumbs, actions) and the section's client
    component. Under `(admin)` it gets the session check, the sidebar, the
    palette and the shared live data for free. Set `metadata.title`
    (`"<Section> · Flatline"`).
@@ -267,7 +279,9 @@ server and load no admin code ([status pages](status-pages.md)).
    section's endpoints, usable from server and client components. Live data
    comes from `useBoardData()` or a `subscribeLive` subscriber, not a second
    stream.
-3. **The components:** `components/<section>/`, built from `components/ui/`.
+3. **The components:** `components/<section>/`, built from kore-ui parts
+   (never a local copy of something kore-ui has; compose missing pieces from
+   its parts).
    Keep pure decisions (formatting, sorting, what a row says) in `lib/` so
    they test without a DOM.
 4. **Navigation:** add the section to `NAV_SECTIONS` in `lib/nav.ts`; the

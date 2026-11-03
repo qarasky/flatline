@@ -2,39 +2,10 @@
 
 import { useState, type FormEvent } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Button, Checkbox, Dialog, DialogBody, DialogContent, DialogFooter, Field, Input } from "@qarasky/kore-ui";
+
 import { notificationBody, notificationValues, type NotificationValues } from "@/lib/notification-form";
 import { createNotification, updateNotification, type NotificationRecord } from "@/lib/notifications-api";
-
-function Toggle({
-    id,
-    label,
-    checked,
-    onChange,
-}: {
-    id: string;
-    label: string;
-    checked: boolean;
-    onChange: (value: boolean) => void;
-}) {
-    return (
-        <label htmlFor={id} className="flex items-center gap-2">
-            <Checkbox id={id} checked={checked} onCheckedChange={(c) => onChange(c === true)} />
-            {label}
-        </label>
-    );
-}
 
 /** Create a Telegram notification, or edit one (an empty bot token keeps the stored one). */
 export function NotificationDialog({
@@ -67,7 +38,7 @@ export function NotificationDialog({
             }
             onSaved();
         } catch (e) {
-            setError(e instanceof Error ? e.message : "Could not save the notification.");
+            setError(e instanceof Error ? e.message : "Couldn't save the notification. Try again.");
             setBusy(false);
         }
     }
@@ -76,89 +47,76 @@ export function NotificationDialog({
         values.name.trim() !== "" && values.chatId.trim() !== "" && (editing || values.botToken.trim() !== "");
     return (
         <Dialog open onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="sm:max-w-lg">
-                <form onSubmit={(e) => void submit(e)} className="grid gap-4">
-                    <DialogHeader>
-                        <DialogTitle>{editing ? `Edit ${record.name}` : "New Telegram notification"}</DialogTitle>
-                        <DialogDescription>Alerts go to a Telegram chat through your bot.</DialogDescription>
-                    </DialogHeader>
-                    <div className="grid gap-1.5">
-                        <Label htmlFor="notification-name">Name</Label>
-                        <Input
-                            id="notification-name"
-                            value={values.name}
-                            onChange={(e) => set("name", e.target.value)}
-                            required
-                        />
-                    </div>
-                    <div className="grid gap-1.5">
-                        <Label htmlFor="notification-token">Bot token</Label>
-                        <Input
-                            id="notification-token"
-                            type="password"
-                            autoComplete="new-password"
-                            value={values.botToken}
-                            onChange={(e) => set("botToken", e.target.value)}
-                            placeholder={editing ? "Leave empty to keep the current token" : "123456:ABC…"}
-                        />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <div className="grid gap-1.5">
-                            <Label htmlFor="notification-chat">Chat id</Label>
+            <DialogContent
+                size="lg"
+                title={editing ? `Edit “${record.name}”` : "New Telegram notification"}
+                description="Alerts go to a Telegram chat through your bot."
+            >
+                <form onSubmit={(e) => void submit(e)} className="flex min-h-0 flex-col">
+                    <DialogBody className="flex flex-col gap-4">
+                        <Field label="Name" required>
+                            <Input value={values.name} onChange={(e) => set("name", e.target.value)} />
+                        </Field>
+                        <Field
+                            label="Bot token"
+                            required={!editing}
+                            hint={editing ? "Leave empty to keep the current token." : undefined}
+                        >
                             <Input
-                                id="notification-chat"
-                                value={values.chatId}
-                                onChange={(e) => set("chatId", e.target.value)}
-                                placeholder="-100…"
-                                required
+                                type="password"
+                                autoComplete="new-password"
+                                value={values.botToken}
+                                onChange={(e) => set("botToken", e.target.value)}
+                                placeholder={editing ? undefined : "123456:ABC…"}
+                            />
+                        </Field>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <Field label="Chat id" required>
+                                <Input
+                                    value={values.chatId}
+                                    onChange={(e) => set("chatId", e.target.value)}
+                                    placeholder="-100…"
+                                />
+                            </Field>
+                            <Field label="Topic id" hint="Optional.">
+                                <Input value={values.threadId} onChange={(e) => set("threadId", e.target.value)} />
+                            </Field>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <Checkbox
+                                label="Active"
+                                checked={values.active}
+                                onCheckedChange={(c) => set("active", c === true)}
+                            />
+                            <Checkbox
+                                label="Ticked for new monitors"
+                                checked={values.isDefault}
+                                onCheckedChange={(c) => set("isDefault", c === true)}
+                            />
+                            <Checkbox
+                                label="Send silently"
+                                checked={values.silent}
+                                onCheckedChange={(c) => set("silent", c === true)}
+                            />
+                            <Checkbox
+                                label="Protect content"
+                                description="Recipients can't forward or save the alerts."
+                                checked={values.protect}
+                                onCheckedChange={(c) => set("protect", c === true)}
                             />
                         </div>
-                        <div className="grid gap-1.5">
-                            <Label htmlFor="notification-thread">Topic id (optional)</Label>
-                            <Input
-                                id="notification-thread"
-                                value={values.threadId}
-                                onChange={(e) => set("threadId", e.target.value)}
-                            />
-                        </div>
-                    </div>
-                    <div className="grid gap-2">
-                        <Toggle
-                            id="notification-active"
-                            label="Active"
-                            checked={values.active}
-                            onChange={(v) => set("active", v)}
-                        />
-                        <Toggle
-                            id="notification-default"
-                            label="Ticked for new monitors"
-                            checked={values.isDefault}
-                            onChange={(v) => set("isDefault", v)}
-                        />
-                        <Toggle
-                            id="notification-silent"
-                            label="Send silently"
-                            checked={values.silent}
-                            onChange={(v) => set("silent", v)}
-                        />
-                        <Toggle
-                            id="notification-protect"
-                            label="Protect content (no forwarding)"
-                            checked={values.protect}
-                            onChange={(v) => set("protect", v)}
-                        />
-                    </div>
-                    {error ? (
-                        <p role="alert" className="text-status-down text-xs">
-                            {error}
-                        </p>
-                    ) : null}
+                        {error ? (
+                            <p role="alert" className="text-meta text-danger">
+                                {error}
+                            </p>
+                        ) : null}
+                    </DialogBody>
                     <DialogFooter>
-                        <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
+                        <Button onClick={onClose} disabled={busy}>
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={busy || !ready}>
-                            {busy ? "Saving…" : editing ? "Save" : "Create"}
+                        <Button type="submit" variant="primary" loading={busy} disabled={!ready}>
+                            {busy ? "Saving…" : editing ? "Save" : "Create notification"}
                         </Button>
                     </DialogFooter>
                 </form>

@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { AuthScreen, Button, Field, Input } from "@qarasky/kore-ui";
+
 import { api } from "@/lib/api";
+import { KORE_APP, KORE_NAMES } from "@/lib/kore";
 import { signInMessage } from "@/lib/legacy-token";
 import { passwordProblem } from "@/lib/password";
 import { endSession } from "@/lib/sso";
@@ -60,82 +60,67 @@ export function ChangePasswordForm({ email, required }: { email: string; require
     const invalid = error ? true : undefined;
 
     return (
-        <form onSubmit={submit} className="flex w-full max-w-sm flex-col gap-5" noValidate>
-            <div className="flex items-center gap-2.5">
-                <img src="/icon.svg" alt="" width={28} height={28} />
-                <span className="text-lg font-semibold tracking-tight">Change password</span>
-            </div>
-
-            <p className="text-muted-foreground">
-                {required ? "Choose your own password to continue." : "Your other browsers will be signed out."}
-            </p>
-
-            {/* Lets a password manager file the new password under the right account. */}
-            <input type="email" autoComplete="username" value={email} readOnly hidden />
-
-            <div className="flex flex-col gap-2">
-                <Label htmlFor="current">{required ? "Starting password" : "Current password"}</Label>
-                <Input
-                    id="current"
-                    type="password"
-                    autoComplete="current-password"
-                    autoFocus
-                    value={current}
-                    onChange={(event) => setCurrent(event.target.value)}
-                    aria-invalid={invalid}
-                    aria-describedby="form-help"
-                />
-            </div>
-            <div className="flex flex-col gap-2">
-                <Label htmlFor="new-password">New password</Label>
-                <Input
-                    id="new-password"
-                    type="password"
-                    autoComplete="new-password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    aria-invalid={invalid}
-                    aria-describedby="form-help"
-                />
-            </div>
-            <div className="flex flex-col gap-2">
-                <Label htmlFor="confirm">Repeat new password</Label>
-                <Input
-                    id="confirm"
-                    type="password"
-                    autoComplete="new-password"
-                    value={confirm}
-                    onChange={(event) => setConfirm(event.target.value)}
-                    aria-invalid={invalid}
-                    aria-describedby="form-help"
-                />
-            </div>
-
-            {error ? (
-                <p id="form-help" role="alert" className="text-status-down">
-                    {error}
-                </p>
-            ) : (
-                <p id="form-help" className="text-muted-foreground">
-                    At least 10 characters.
-                </p>
-            )}
-
-            <Button type="submit" disabled={busy || current === "" || password === ""}>
-                {busy ? "Saving…" : "Change password"}
-            </Button>
-
-            <div className="text-muted-foreground">
-                {required ? (
-                    <button type="button" className="hover:text-foreground" onClick={() => void signOut()}>
+        <AuthScreen
+            app={KORE_APP}
+            names={KORE_NAMES}
+            title="Change password"
+            description={required ? "Choose your own password to continue." : "Your other browsers will be signed out."}
+            error={error}
+            footer={
+                required ? (
+                    <Button variant="link" className="text-muted hover:text-text" onClick={() => void signOut()}>
                         Sign out
-                    </button>
+                    </Button>
                 ) : (
-                    <Link href={HOME_PATH} className="hover:text-foreground">
+                    <Link href={HOME_PATH} className="hover:text-text">
                         Back to Flatline
                     </Link>
-                )}
-            </div>
-        </form>
+                )
+            }
+        >
+            <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
+                {/* Lets a password manager file the new password under the right account. */}
+                <input type="email" autoComplete="username" value={email} readOnly hidden />
+
+                <Field id="current" label={required ? "Starting password" : "Current password"}>
+                    <Input
+                        type="password"
+                        autoComplete="current-password"
+                        autoFocus
+                        value={current}
+                        onChange={(event) => setCurrent(event.target.value)}
+                        aria-invalid={invalid}
+                    />
+                </Field>
+                <Field id="new-password" label="New password" hint="At least 10 characters.">
+                    <Input
+                        type="password"
+                        autoComplete="new-password"
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        aria-invalid={invalid}
+                    />
+                </Field>
+                <Field id="confirm" label="Repeat new password">
+                    <Input
+                        type="password"
+                        autoComplete="new-password"
+                        value={confirm}
+                        onChange={(event) => setConfirm(event.target.value)}
+                        aria-invalid={invalid}
+                    />
+                </Field>
+
+                <Button
+                    type="submit"
+                    variant="primary"
+                    fullWidth
+                    loading={busy}
+                    disabled={current === "" || password === ""}
+                >
+                    {busy ? "Saving…" : "Change password"}
+                </Button>
+            </form>
+        </AuthScreen>
     );
 }

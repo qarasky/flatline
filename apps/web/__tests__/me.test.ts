@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { displayName, initials, toMe } from "@/lib/me";
+import { displayName, toMe } from "@/lib/me";
 
 describe("displayName", () => {
     it("names an account by its name", () => {
         expect(
             displayName({
                 principal: "account",
-                account: { id: 1, email: "a@x.kz", name: "Ana Bek", mustChangePassword: false },
+                account: { id: 1, email: "a@x.kz", name: "Ana Bek", mustChangePassword: false, sso: false },
             })
         ).toBe("Ana Bek");
     });
@@ -18,18 +18,6 @@ describe("displayName", () => {
 
     it("falls back when a token has no name", () => {
         expect(displayName({ principal: "token", token: { id: 3, name: "" } })).toBe("Operator");
-    });
-});
-
-describe("initials", () => {
-    it("takes the first letters of the first two words", () => {
-        expect(initials("Ana Bek")).toBe("AB");
-        expect(initials("ana")).toBe("A");
-        expect(initials("Ana Maria Bek")).toBe("AM");
-    });
-
-    it("has a placeholder for an empty name", () => {
-        expect(initials("  ")).toBe("?");
     });
 });
 
@@ -44,7 +32,7 @@ describe("toMe", () => {
             })
         ).toEqual({
             principal: "account",
-            account: { id: 1, email: "a@x.kz", name: "Ana", mustChangePassword: true },
+            account: { id: 1, email: "a@x.kz", name: "Ana", mustChangePassword: true, sso: false },
         });
         expect(toMe({ ok: true, principal: "token", token: { id: 2, name: "admin" } })).toEqual({
             principal: "token",

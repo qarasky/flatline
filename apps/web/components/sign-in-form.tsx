@@ -3,10 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { AuthScreen, Button, Field, Input } from "@qarasky/kore-ui";
+
 import { api } from "@/lib/api";
+import { KORE_NAMES } from "@/lib/kore";
 import { createSession, keepMigrating, migrateLegacyToken, signInMessage } from "@/lib/legacy-token";
 import { passwordProblem } from "@/lib/password";
 import { safeNext } from "@/lib/safe-next";
@@ -116,6 +116,21 @@ export function SignInForm({
         };
     }, []);
 
+    /** The email + password form: kore-ui's AuthScreen runs it and shows "Signing in…". */
+    async function signInWithPassword(values: { email: string; password: string }) {
+        setError(null);
+        try {
+            const answer = await api<{ mustChangePassword: boolean }>("/api/v1/auth/session", {
+                method: "POST",
+                body: { email: values.email.trim(), password: values.password },
+            });
+            enter(answer.mustChangePassword);
+        } catch (failure) {
+            setError(signInMessage(failure));
+        }
+    }
+
+    /** The operator-token form and first-account setup. */
     async function submit(event: React.FormEvent) {
         event.preventDefault();
         if (mode === "setup") {
@@ -128,205 +143,141 @@ export function SignInForm({
         setBusy(true);
         setError(null);
         try {
-            if (mode === "password") {
-                const answer = await api<{ mustChangePassword: boolean }>("/api/v1/auth/session", {
-                    method: "POST",
-                    body: { email: email.trim(), password },
-                });
-                enter(answer.mustChangePassword);
-            } else if (mode === "token") {
+            if (mode === "token") {
                 await api("/api/v1/auth/session", { method: "POST", body: { token: token.trim() } });
-                enter();
             } else {
                 await api("/api/v1/auth/setup", {
                     method: "POST",
                     body: { token: token.trim(), name: name.trim(), email: email.trim(), password },
                 });
-                enter();
             }
+            enter();
         } catch (failure) {
             setError(signInMessage(failure));
             setBusy(false);
         }
     }
 
+    const shared = { app: "flatline" as const, names: KORE_NAMES };
+
     if (migrating || methods === null) {
-        return <p className="text-muted-foreground">Signing in…</p>;
+        return <AuthScreen {...shared} description="Signing in…" />;
     }
 
     const canPassword = methods.localLogin;
     const canToken = methods.tokenLogin;
-    const hasForm = canPassword || canToken;
     const ssoMessage = ssoErrorMessage(ssoError);
+    const sso = methods.sso ? { href: ssoStartHref(next) } : undefined;
+    const notice = expired ? "Your session ended. Sign in again." : undefined;
+    const noMethod = !methods.sso && !canPassword && !canToken;
 
-    // Kore ID only: no form at all.
-    if (!hasForm) {
+    const switches = (
+        <div className="flex flex-col items-center gap-1.5">
+            {mode === "password" && canToken ? (
+                <Button variant="link" onClick={() => switchTo("token")}>
+                    Use an operator token instead
+                </Button>
+            ) : mode !== "password" && canPassword ? (
+                <Button variant="link" onClick={() => switchTo("password")}>
+                    Sign in with email and password
+                </Button>
+            ) : null}
+            {setupNeeded && canPassword && mode !== "setup" ? (
+                <Button variant="link" onClick={() => switchTo("setup")}>
+                    Create the first account
+                </Button>
+            ) : null}
+        </div>
+    );
+
+    if (mode === "password" || noMethod) {
         return (
-            <div className="flex w-full max-w-sm flex-col gap-5">
-                <div className="flex items-center gap-2.5">
-                    <img src="/icon.svg" alt="" width={28} height={28} />
-                    <span className="text-lg font-semibold tracking-tight">Flatline</span>
-                </div>
-                {expired && <p className="text-muted-foreground">Your session ended. Sign in again.</p>}
-                {ssoMessage && (
-                    <p role="alert" className="text-status-down">
-                        {ssoMessage}
-                    </p>
-                )}
-                {methods.sso ? (
-                    <Button asChild>
-                        <a href={ssoStartHref(next)}>Continue with Kore ID</a>
-                    </Button>
-                ) : (
-                    <p role="alert" className="text-status-down">
-                        No sign-in method is enabled on this instance.
-                    </p>
-                )}
-            </div>
+            <AuthScreen
+                {...shared}
+                description={noMethod ? undefined : "Sign in to monitor your sites and servers."}
+                sso={sso}
+                password={canPassword ? { onSubmit: signInWithPassword, invalid: !!error } : undefined}
+                error={(noMethod ? "No sign-in method is enabled on this instance." : null) ?? error ?? ssoMessage}
+                notice={notice}
+                footer={switches}
+            />
         );
     }
 
-    const ready =
-        mode === "password"
-            ? email.trim() !== "" && password !== ""
-            : mode === "token"
-              ? token.trim() !== ""
-              : token.trim() !== "" && name.trim() !== "" && email.trim() !== "" && password !== "";
     const invalid = error ? true : undefined;
+    const ready =
+        mode === "token"
+            ? token.trim() !== ""
+            : token.trim() !== "" && name.trim() !== "" && email.trim() !== "" && password !== "";
 
     return (
-        <form onSubmit={submit} className="flex w-full max-w-sm flex-col gap-5" noValidate>
-            <div className="flex items-center gap-2.5">
-                <img src="/icon.svg" alt="" width={28} height={28} />
-                <span className="text-lg font-semibold tracking-tight">Flatline</span>
-            </div>
-
-            {expired && <p className="text-muted-foreground">Your session ended. Sign in again.</p>}
-            {ssoMessage && (
-                <p role="alert" className="text-status-down">
-                    {ssoMessage}
-                </p>
-            )}
-            {methods.sso && (
-                <Button asChild>
-                    <a href={ssoStartHref(next)}>Continue with Kore ID</a>
-                </Button>
-            )}
-            {methods.sso && <p className="text-muted-foreground text-center">or</p>}
-
-            {mode === "setup" && (
-                <p className="text-muted-foreground">
-                    Create the first account. The operator token from the server proves this install is yours.
-                </p>
-            )}
-
-            {(mode === "token" || mode === "setup") && (
-                <div className="flex flex-col gap-2">
-                    <Label htmlFor="token">Operator token</Label>
+        <AuthScreen
+            {...shared}
+            title={mode === "setup" ? "Create the first account" : "Sign in"}
+            description={
+                mode === "setup"
+                    ? "The operator token from the server proves this install is yours."
+                    : "For wall screens and recovery."
+            }
+            sso={mode === "token" ? sso : undefined}
+            error={error ?? (mode === "token" ? ssoMessage : null)}
+            notice={notice}
+            footer={switches}
+        >
+            <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
+                <Field label="Operator token" hint={mode === "token" ? "A flatline_op_ token." : undefined}>
                     <Input
-                        id="token"
                         type="password"
                         autoComplete="off"
                         autoFocus
                         value={token}
                         onChange={(event) => setToken(event.target.value)}
                         aria-invalid={invalid}
-                        aria-describedby="form-help"
                     />
-                </div>
-            )}
-
-            {mode === "setup" && (
-                <div className="flex flex-col gap-2">
-                    <Label htmlFor="name">Your name</Label>
-                    <Input
-                        id="name"
-                        autoComplete="name"
-                        value={name}
-                        onChange={(event) => setName(event.target.value)}
-                    />
-                </div>
-            )}
-
-            {(mode === "password" || mode === "setup") && (
-                <>
-                    <div className="flex flex-col gap-2">
-                        <Label htmlFor="email">Email</Label>
-                        <Input
-                            id="email"
-                            type="email"
-                            autoComplete={mode === "setup" ? "email" : "username"}
-                            autoFocus={mode === "password"}
-                            value={email}
-                            onChange={(event) => setEmail(event.target.value)}
-                            aria-invalid={invalid}
-                            aria-describedby="form-help"
-                        />
-                    </div>
-                    <div className="flex flex-col gap-2">
-                        <Label htmlFor="password">Password</Label>
-                        <Input
-                            id="password"
-                            type="password"
-                            autoComplete={mode === "setup" ? "new-password" : "current-password"}
-                            value={password}
-                            onChange={(event) => setPassword(event.target.value)}
-                            aria-invalid={invalid}
-                            aria-describedby="form-help"
-                        />
-                    </div>
-                </>
-            )}
-
-            {mode === "setup" && (
-                <div className="flex flex-col gap-2">
-                    <Label htmlFor="confirm">Repeat password</Label>
-                    <Input
-                        id="confirm"
-                        type="password"
-                        autoComplete="new-password"
-                        value={confirm}
-                        onChange={(event) => setConfirm(event.target.value)}
-                        aria-invalid={invalid}
-                        aria-describedby="form-help"
-                    />
-                </div>
-            )}
-
-            {error ? (
-                <p id="form-help" role="alert" className="text-status-down">
-                    {error}
-                </p>
-            ) : mode === "token" ? (
-                <p id="form-help" className="text-muted-foreground">
-                    Paste a <code className="font-mono">flatline_op_</code> token.
-                </p>
-            ) : mode === "setup" ? (
-                <p id="form-help" className="text-muted-foreground">
-                    At least 10 characters.
-                </p>
-            ) : null}
-
-            <Button type="submit" disabled={busy || !ready}>
-                {busy ? "Signing in…" : mode === "setup" ? "Create account" : "Sign in"}
-            </Button>
-
-            <div className="text-muted-foreground flex flex-col items-start gap-1.5">
-                {mode === "password" && canToken ? (
-                    <button type="button" className="hover:text-foreground" onClick={() => switchTo("token")}>
-                        Use a token instead
-                    </button>
-                ) : mode !== "password" && canPassword ? (
-                    <button type="button" className="hover:text-foreground" onClick={() => switchTo("password")}>
-                        Sign in with email and password
-                    </button>
+                </Field>
+                {mode === "setup" ? (
+                    <>
+                        <Field label="Your name">
+                            <Input autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} />
+                        </Field>
+                        <Field label="Email">
+                            <Input
+                                type="email"
+                                autoComplete="email"
+                                value={email}
+                                onChange={(event) => setEmail(event.target.value)}
+                                aria-invalid={invalid}
+                            />
+                        </Field>
+                        <Field label="Password" hint="At least 10 characters.">
+                            <Input
+                                type="password"
+                                autoComplete="new-password"
+                                value={password}
+                                onChange={(event) => setPassword(event.target.value)}
+                                aria-invalid={invalid}
+                            />
+                        </Field>
+                        <Field label="Repeat password">
+                            <Input
+                                type="password"
+                                autoComplete="new-password"
+                                value={confirm}
+                                onChange={(event) => setConfirm(event.target.value)}
+                                aria-invalid={invalid}
+                            />
+                        </Field>
+                    </>
                 ) : null}
-                {setupNeeded && canPassword && mode !== "setup" && (
-                    <button type="button" className="hover:text-foreground" onClick={() => switchTo("setup")}>
-                        Create the first account
-                    </button>
-                )}
-            </div>
-        </form>
+                <Button
+                    type="submit"
+                    variant={sso && mode === "token" ? "secondary" : "primary"}
+                    loading={busy}
+                    disabled={!ready}
+                >
+                    {busy ? "Signing in…" : mode === "setup" ? "Create account" : "Sign in"}
+                </Button>
+            </form>
+        </AuthScreen>
     );
 }

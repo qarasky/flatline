@@ -17,7 +17,7 @@ const key = (over: Partial<TokenKey> = {}): TokenKey => ({
 const asToken = (id: number): Me => ({ principal: "token", token: { id, name: "x" } });
 const asAccount: Me = {
     principal: "account",
-    account: { id: 2, email: "a@x", name: "Ana", mustChangePassword: false },
+    account: { id: 2, email: "a@x", name: "Ana", mustChangePassword: false, sso: false },
 };
 
 describe("tokenRow", () => {

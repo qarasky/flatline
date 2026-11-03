@@ -30,7 +30,8 @@ const nextConfig: NextConfig = {
     output: "standalone",
     outputFileTracingRoot: repoRoot,
     turbopack: { root: repoRoot },
-    transpilePackages: ["@flatline/shared"],
+    // kore-ui ships TypeScript source (no build step); Next compiles it.
+    transpilePackages: ["@flatline/shared", "@qarasky/kore-ui"],
     poweredByHeader: false,
     allowedDevOrigins: devOrigins,
     // Status pages are advisory-noindexed in their headers too (docs/status-pages.md, "Indexing").

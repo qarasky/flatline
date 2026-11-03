@@ -7,6 +7,8 @@ export interface Member {
     startingPasswordExpired: boolean;
     createdAt: string;
     tokenCount: number;
+    /** The account signs in with Kore ID. */
+    sso: boolean;
 }
 
 /** A token a member made, from `GET /api/v1/users/{id}`. */

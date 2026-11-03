@@ -2,9 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { Button, Dialog, DialogBody, DialogContent, DialogFooter, Field, Input } from "@qarasky/kore-ui";
+
 import { cleanMonitorName } from "@/lib/fleet-presentation";
 import type { MonitorSummary } from "@/lib/monitor-types";
 import { updateMonitor } from "@/lib/monitors-api";
@@ -47,29 +46,24 @@ export function RenameDialog({
 
     return (
         <Dialog open onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="sm:max-w-md">
-                <form onSubmit={(e) => void save(e)} className="grid gap-4">
-                    <DialogHeader>
-                        <DialogTitle>Rename {monitor.type === "group" ? "group" : "monitor"}</DialogTitle>
-                    </DialogHeader>
-                    <Input
-                        aria-label="Name"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        disabled={saving}
-                        autoFocus
-                        maxLength={150}
-                    />
-                    {error ? (
-                        <p role="alert" className="text-status-down text-xs">
-                            {error}
-                        </p>
-                    ) : null}
+            <DialogContent size="sm" title={`Rename ${monitor.type === "group" ? "group" : "monitor"}`}>
+                <form onSubmit={(e) => void save(e)} className="flex min-h-0 flex-col">
+                    <DialogBody>
+                        <Field label="Name" error={error}>
+                            <Input
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                disabled={saving}
+                                autoFocus
+                                maxLength={150}
+                            />
+                        </Field>
+                    </DialogBody>
                     <DialogFooter>
-                        <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
+                        <Button onClick={onClose} disabled={saving}>
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={saving}>
+                        <Button type="submit" variant="primary" loading={saving}>
                             {saving ? "Saving…" : "Rename"}
                         </Button>
                     </DialogFooter>

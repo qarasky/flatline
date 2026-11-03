@@ -44,9 +44,9 @@ function StripTooltip({ strip, index, x, y, now }: { strip: Strip; index: number
         <div
             role="tooltip"
             style={{ position: "fixed", left: x, top: y - 8, translate: "-50% -100%" }}
-            className="bg-raised pointer-events-none z-[60] rounded-md border px-2.5 py-1.5 text-xs shadow-lg"
+            className="bg-raised text-meta shadow-overlay pointer-events-none z-[70] rounded-ui border border-border-strong px-2 py-1"
         >
-            <div className="text-muted-foreground tabular-nums">{bucketRange(info, now)}</div>
+            <div className="text-muted tabular-nums">{bucketRange(info, now)}</div>
             <div className="mt-0.5 font-medium">{bucketSummary(info)}</div>
         </div>,
         document.body

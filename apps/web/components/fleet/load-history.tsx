@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useMemo, useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@qarasky/kore-ui";
 import { historyPath, historyRefreshMs, historyTimeoutMs } from "@/lib/history-chart";
 import type { HistoryMetric, MetricsHistorySummary } from "@/lib/monitor-types";
 import { fetchMetricsHistory } from "@/lib/monitors-api";
@@ -46,7 +46,7 @@ function HistoryChart({
         <section className="history-chart" style={{ "--history-line": color } as React.CSSProperties}>
             <header className="flex items-baseline justify-between gap-3">
                 <h3>{label}</h3>
-                <span className="tnum text-xs text-quiet">
+                <span className="tnum text-meta text-muted">
                     {stats ? `${stats.count.toLocaleString()} samples` : "No readings"}
                 </span>
             </header>
@@ -107,9 +107,9 @@ function HistoryChart({
                                     x2="572"
                                     y1={142 - value * 1.26}
                                     y2={142 - value * 1.26}
-                                    stroke="#ffffff12"
+                                    stroke="var(--color-border)"
                                 />
-                                <text x="2" y={146 - value * 1.26} fill="#8b8681" fontSize="10">
+                                <text x="2" y={146 - value * 1.26} fill="var(--color-muted)" fontSize="10">
                                     {value}
                                 </text>
                             </g>
@@ -248,23 +248,22 @@ export const LoadHistory = memo(function LoadHistory({ monitorId }: { monitorId:
                 {RANGES.map((range) => (
                     <Button
                         key={range.label}
-                        variant="outline"
-                        size="xs"
-                        className="aria-pressed:border-primary aria-pressed:bg-primary/15"
+                        size="sm"
+                        className="aria-pressed:border-accent aria-pressed:bg-accent/15 aria-pressed:text-accent"
                         aria-pressed={hours === range.hours}
                         onClick={() => setHours(range.hours)}
                     >
                         {range.label}
                     </Button>
                 ))}
-                <span className="text-xs text-quiet">Refreshes every 30s</span>
+                <span className="text-meta text-muted">Refreshes every 30s</span>
             </div>
             <p className="history-note">
                 {data ? `${data.basis}. ` : "Percentiles use archived snapshots (normally every 30s). "}p95 means 95% of
                 readings were at or below that load. Charts show bucket averages; gaps are not zeroes.
             </p>
             {error ? (
-                <p className="text-warn text-sm" role="alert">
+                <p className="text-meta text-warning" role="alert">
                     {error}
                 </p>
             ) : null}
@@ -279,7 +278,7 @@ export const LoadHistory = memo(function LoadHistory({ monitorId }: { monitorId:
             ) : data ? (
                 <>
                     {data.capped ? (
-                        <p className="text-warn text-sm">
+                        <p className="text-meta text-warning">
                             Window exceeds the safety limit. These statistics cover only the newest 50,000 samples.
                         </p>
                     ) : null}

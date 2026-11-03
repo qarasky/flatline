@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { BackupAgentDetail } from "@/components/backups/backup-agent-detail";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader } from "@qarasky/kore-ui";
 import { fetchBackupRuns } from "@/lib/backups-api";
 import { fetchAllBackupAgents } from "@/lib/monitors-api";
 
@@ -18,7 +18,7 @@ export default async function BackupAgentPage({ params }: { params: Promise<{ id
     const { runs } = await fetchBackupRuns(agent.id);
     return (
         <>
-            <PageHeader crumbs={[{ label: "Backups", href: "/backups" }, { label: agent.name }]} />
+            <PageHeader breadcrumbs={[{ label: "Backups", href: "/backups" }]} title={agent.name} />
             <BackupAgentDetail initialAgent={agent} initialRuns={runs} />
         </>
     );
