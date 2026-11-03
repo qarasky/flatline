@@ -5,11 +5,11 @@ fleet** rather than a production installation: the hosts, websites, container
 names and measurements all come from `superboard/mockagent`. Nothing here is
 hand-drawn, and no production database is opened.
 
-| Image            | Shows                                                                                                                                                                                                                                                              |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `superboard.png` | The wall board: eight demo servers, per-core CPU squares, RAM/Disk rows, container rows, linked-website chips, update states and agent warnings.                                                                                                                   |
-| `dashboard.png`  | The operator board: status summary, the Needs-attention section, and the grouped list with 24 h heartbeat strips. The mock fleet is only minutes old, so a day of demo history (with a few outages) was written into the disposable dev database before capturing. |
-| `history.png`    | The server history dialog on the 1h range: CPU, RAM, GPU and VRAM with mean, peak and p90/p95/p99.                                                                                                                                                                 |
+| Image            | Shows                                                                                                                                                                                                                                                                             |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `superboard.png` | The wall board: eight demo servers, per-core CPU squares, RAM/Disk rows, container rows, linked-website chips, update states and agent warnings.                                                                                                                                  |
+| `dashboard.png`  | The operator board (`/monitors`): the status summary bar and the grouped list, with group health bars and 24 h heartbeat strips. The mock fleet is only minutes old, so a day of demo history (with a few outages) was written into the disposable dev database before capturing. |
+| `history.png`    | The server history dialog on the 1h range: CPU, RAM, GPU and VRAM with mean, peak and p90/p95/p99.                                                                                                                                                                                |
 
 ## Regenerating
 
@@ -27,11 +27,9 @@ a session cookie, waits for the mock fleet to be painted, and writes the three
 PNGs at 1920×1080 with device scale factor 1. It touches nothing but those
 files.
 
-The images were taken before the switch from the Vite dashboard to the Next.js
-web app. The Superboard kept its look; `dashboard.png` still shows the old
-operator board (with its Needs-attention section, now the Attention page). The
-script has been updated for the web app (port, routes, sign-in, the history
-dialog) but not yet rerun.
+All three images were retaken from the Next.js web app after the Caddy cutover
+and the monitor-list rework (tree guides, group health bars). The capture
+script hides the Next dev server's corner indicator.
 
 Two caveats when regenerating:
 

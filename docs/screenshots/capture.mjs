@@ -9,8 +9,8 @@
 // installation, and the token is the local dev token from .dev-data/, traded
 // for a session cookie before the first page loads.
 //
-// Updated for the Next.js web app (port, routes, the history dialog) but not
-// rerun since the cutover; check the images after regenerating.
+// Run against the Next.js web app (port, routes, the history dialog); check the
+// images after regenerating.
 import { chromium } from "playwright";
 import { readFileSync } from "node:fs";
 
@@ -31,6 +31,14 @@ const signIn = await context.request.post(`${base}/api/v1/auth/session`, {
 if (!signIn.ok()) {
     throw new Error(`sign-in failed: ${signIn.status()}`);
 }
+// The Next dev server paints its own "N" indicator over the corner of a page.
+await context.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+        const style = document.createElement("style");
+        style.textContent = "nextjs-portal { display: none !important; }";
+        document.head.append(style);
+    });
+});
 const page = await context.newPage();
 page.on("pageerror", (error) => console.error("page error:", error.message));
 
