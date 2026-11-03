@@ -508,8 +508,15 @@ pub async fn sso_callback(
             return sso_failed("unavailable", secure);
         }
     };
-    if let Err(error) = sessions::set_sso_id_token(&state.pool, &session, &identity.id_token).await {
-        tracing::error!("sso: could not keep the id token: {error}");
+    if let Err(error) = sessions::set_sso_details(
+        &state.pool,
+        &session,
+        &identity.id_token,
+        identity.claims.sid.as_deref(),
+    )
+    .await
+    {
+        tracing::error!("sso: could not keep the id token and sid: {error}");
     }
     tracing::info!("auth: account {} signed in with Kore ID", account.id);
     sso_redirect(
@@ -519,4 +526,63 @@ pub async fn sso_callback(
             crate::sso::clear_binding_cookie(secure),
         ],
     )
+}
+
+/// POST /api/v1/auth/sso/backchannel-logout — public; Kore ID calls it
+/// (OIDC Back-Channel Logout 1.0) with a form-encoded `logout_token` when a
+/// Kore ID session ends. A verified token deletes the local sessions made
+/// from that Kore ID session (or, without `sid`, every Kore ID session of
+/// that `sub`): 200. A missing or invalid token: 400. The provider's keys
+/// out of reach: 503, so Kore ID retries.
+pub async fn sso_backchannel_logout(State(state): State<AppState>, body: String) -> Response {
+    let no_store = || [(header::CACHE_CONTROL, "no-store")];
+    let invalid = |description: &str| {
+        (
+            StatusCode::BAD_REQUEST,
+            no_store(),
+            Json(json!({ "error": "invalid_request", "error_description": description })),
+        )
+            .into_response()
+    };
+    let Some(sso) = &state.sso else {
+        return invalid("Kore ID sign-in is not configured here.");
+    };
+    let token = url::form_urlencoded::parse(body.as_bytes())
+        .find(|(name, _)| name == "logout_token")
+        .map(|(_, value)| value.into_owned())
+        .filter(|value| !value.is_empty());
+    let Some(token) = token else {
+        return invalid("logout_token is required.");
+    };
+    let target = match sso.verify_logout_token(&token).await {
+        Ok(target) => target,
+        Err(crate::sso::SsoError::Unavailable(why)) => {
+            tracing::warn!("sso: back-channel logout could not reach the provider: {why}");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                no_store(),
+                Json(json!({ "error": "temporarily_unavailable" })),
+            )
+                .into_response();
+        }
+        Err(error) => {
+            tracing::warn!("sso: back-channel logout refused: {error:?}");
+            return invalid("The logout token did not verify.");
+        }
+    };
+    match sessions::end_for_kore_logout(&state.pool, &target).await {
+        Ok(ended) => {
+            tracing::info!("sso: back-channel logout ended {ended} session(s)");
+            (StatusCode::OK, no_store(), Json(json!({ "ok": true }))).into_response()
+        }
+        Err(error) => {
+            tracing::error!("sso: back-channel logout: {error}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                no_store(),
+                Json(json!({ "error": "server_error" })),
+            )
+                .into_response()
+        }
+    }
 }

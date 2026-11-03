@@ -167,15 +167,18 @@ pub async fn end_for_account(
     Ok(())
 }
 
-/// Remember the id token of a Kore ID sign-in, the hint for provider-side
-/// sign-out.
-pub async fn set_sso_id_token(
+/// Remember what a Kore ID sign-in returned: the id token, the hint for
+/// provider-side sign-out, and the Kore ID session id (`sid`) that
+/// back-channel logout names.
+pub async fn set_sso_details(
     pool: &SqlitePool,
     raw: &str,
     id_token: &str,
+    sid: Option<&str>,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE sessions SET sso_id_token = ? WHERE hash = ?")
+    sqlx::query("UPDATE sessions SET sso_id_token = ?, sso_sid = ? WHERE hash = ?")
         .bind(id_token)
+        .bind(sid)
         .bind(hash_token(raw))
         .execute(pool)
         .await?;
@@ -190,4 +193,32 @@ pub async fn sso_id_token(pool: &SqlitePool, raw: &str) -> Result<Option<String>
             .fetch_optional(pool)
             .await?;
     Ok(token.flatten())
+}
+
+/// End the local sessions a Kore ID back-channel logout names: every
+/// session made from that Kore ID session (`sid`), or, for a token without
+/// a `sid`, every Kore ID-made session of the account tied to that `sub`.
+/// Password and token sessions are left alone. Returns how many ended.
+pub async fn end_for_kore_logout(
+    pool: &SqlitePool,
+    target: &crate::sso::LogoutTarget,
+) -> Result<u64, sqlx::Error> {
+    let result = match target {
+        crate::sso::LogoutTarget::Sid(sid) => {
+            sqlx::query("DELETE FROM sessions WHERE sso_sid = ?")
+                .bind(sid)
+                .execute(pool)
+                .await?
+        }
+        crate::sso::LogoutTarget::Sub(sub) => {
+            sqlx::query(
+                "DELETE FROM sessions WHERE sso_id_token IS NOT NULL
+                   AND user_id IN (SELECT id FROM users WHERE kore_sub = ?)",
+            )
+            .bind(sub)
+            .execute(pool)
+            .await?
+        }
+    };
+    Ok(result.rows_affected())
 }

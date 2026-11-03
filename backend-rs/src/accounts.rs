@@ -434,22 +434,26 @@ pub const SSO_PASSWORD_SENTINEL: &str = "!sso";
 /// Why a Kore ID identity did not get an account.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SsoDenied {
-    /// Not on `KORE_ID_ALLOWED_EMAILS` / `KORE_ID_ALLOWED_SUBS`.
+    /// Provisioning is off, or the identity is not on the optional
+    /// `KORE_ID_ALLOWED_EMAILS` / `KORE_ID_ALLOWED_SUBS` filter.
     NotAllowed,
     /// The provider sent no usable email.
     NoEmail,
-    /// The email belongs to a local account already tied to another subject.
+    /// The email belongs to a local account already tied to another subject,
+    /// or to a local account while the provider does not vouch for the
+    /// address (`email_verified` not true), so it cannot be linked.
     Conflict,
 }
 
 /// The account a verified Kore ID identity signs in as.
 ///
 /// An account already tied to this `sub` signs in (its name and email follow
-/// the provider). Otherwise an account is created, or an existing local one
-/// with the same email is linked, only when the subject or the email is on
-/// the allowlist. Flatline has one level of access, so creation must be an
-/// explicit decision of the operator, never a default. An email the provider
-/// explicitly marks unverified is not trusted for the allowlist.
+/// the provider). Otherwise Kore ID has already decided this person may use
+/// the app (per-user app access), so an account is created, or an existing
+/// local one with the same email is linked when the provider marks the email
+/// verified. `KORE_ID_AUTO_PROVISION=false` turns creation off; the
+/// allowlists, when set, are an extra filter on top. Every account is a full
+/// operator: access is managed in Kore ID's admin.
 pub async fn sso_sign_in(
     pool: &SqlitePool,
     kore: &crate::config::KoreIdConfig,
@@ -464,6 +468,7 @@ pub async fn sso_sign_in(
     .fetch_optional(pool)
     .await?;
     let email = claims.email.as_deref().map(str::trim).filter(|e| !e.is_empty());
+    let verified = claims.email_verified == Some(true);
     let name = claims
         .name
         .as_deref()
@@ -483,6 +488,7 @@ pub async fn sso_sign_in(
                 .await?;
         }
         if let Some(email) = email
+            && verified
             && clean_email(email).is_ok()
             && email_key(email) != email_key(&account.email)
         {
@@ -500,10 +506,14 @@ pub async fn sso_sign_in(
         return Ok(Err(SsoDenied::NoEmail));
     };
     let key = email_key(email);
-    let sub_allowed = kore.allowed_subs.iter().any(|sub| *sub == claims.sub);
-    let email_allowed =
-        claims.email_verified != Some(false) && kore.allowed_emails.iter().any(|e| *e == key);
-    if !sub_allowed && !email_allowed {
+    let filtered = !kore.allowed_subs.is_empty() || !kore.allowed_emails.is_empty();
+    let allowed = if filtered {
+        kore.allowed_subs.iter().any(|sub| *sub == claims.sub)
+            || (verified && kore.allowed_emails.iter().any(|e| *e == key))
+    } else {
+        kore.auto_provision
+    };
+    if !allowed {
         return Ok(Err(SsoDenied::NotAllowed));
     }
 
@@ -513,7 +523,9 @@ pub async fn sso_sign_in(
             .fetch_optional(pool)
             .await?;
     if let Some((id, tied)) = local {
-        if tied.is_some() {
+        // Linking takes over a local account by email: only when the
+        // provider vouches for the address.
+        if tied.is_some() || !verified {
             return Ok(Err(SsoDenied::Conflict));
         }
         sqlx::query("UPDATE users SET kore_sub = ? WHERE id = ? AND kore_sub IS NULL")

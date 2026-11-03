@@ -89,6 +89,7 @@ services:
       KORE_ID_CLIENT_AUTH: ${KORE_ID_CLIENT_AUTH:-basic}
       KORE_ID_REDIRECT_URI: ${KORE_ID_REDIRECT_URI:-}
       KORE_ID_POST_LOGOUT_REDIRECT_URI: ${KORE_ID_POST_LOGOUT_REDIRECT_URI:-}
+      KORE_ID_AUTO_PROVISION: ${KORE_ID_AUTO_PROVISION:-true}
       KORE_ID_ALLOWED_EMAILS: ${KORE_ID_ALLOWED_EMAILS:-}
       KORE_ID_ALLOWED_SUBS: ${KORE_ID_ALLOWED_SUBS:-}
       # Set to false to turn email/password (or operator-token) sign-in off.

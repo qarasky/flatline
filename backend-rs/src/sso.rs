@@ -13,8 +13,16 @@
 //!   (any other `alg`, including `none`, is refused), plus `iss`, `aud`,
 //!   `exp`, `nbf` and `nonce`;
 //! - a Kore ID access token presented as a bearer is verified the same way
-//!   (audience = this app's client id) and must belong to an account that
-//!   already signed in through SSO.
+//!   (audience = this app's client id), must have the RFC 9068 header
+//!   `typ: at+jwt` (so an id or logout token is never a credential), and
+//!   must belong to an account that already signed in through SSO;
+//! - a back-channel logout token (OIDC Back-Channel Logout 1.0) must have
+//!   `typ: logout+jwt`, the logout `events` claim, no `nonce`, a `sid` or
+//!   `sub`, and a `jti` not seen before (kept until the token's `exp`).
+//!
+//! The pending sign-in attempts, the `jti` replay cache and the recently
+//! ended Kore ID sessions live in memory: Flatline runs as one backend
+//! process, and a restart only fails sign-ins that were in flight.
 //!
 //! Identity is the `sub` claim, the same UUID in every Kore app. Who may
 //! get an account is decided by [`crate::accounts::sso_sign_in`].
@@ -49,6 +57,13 @@ const JWKS_REFETCH_MIN: Duration = Duration::from_secs(30);
 const LEEWAY_SECONDS: i64 = 60;
 /// Scopes requested: identity only. No refresh tokens are asked for.
 const SCOPES: &str = "openid profile email";
+/// The `events` member every logout token carries.
+pub const BACKCHANNEL_EVENT: &str = "http://schemas.openid.net/event/backchannel-logout";
+/// How long a Kore ID session ended by back-channel logout keeps refusing
+/// its access tokens: longer than their 10-minute lifetime.
+const ENDED_SID_TTL: Duration = Duration::from_secs(15 * 60);
+/// Remembered logout `jti`s and ended `sid`s, beyond which the oldest go.
+const LOGOUT_CACHE_CAP: usize = 4096;
 
 /// Why an SSO step failed. The variant picks the message shown on the
 /// sign-in page ([`SsoError::code`]); the detail goes to the log only.
@@ -85,6 +100,17 @@ pub struct Claims {
     pub name: Option<String>,
     /// The `scope` claim; access tokens carry it, id tokens do not.
     pub scope: Option<String>,
+    /// The Kore ID session (`sid`) the token was issued in.
+    pub sid: Option<String>,
+}
+
+/// Which local sessions a verified back-channel logout token ends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogoutTarget {
+    /// Every session made from this Kore ID session.
+    Sid(String),
+    /// Every Kore ID session of this subject (the token had no `sid`).
+    Sub(String),
 }
 
 /// The result of a completed sign-in.
@@ -129,6 +155,11 @@ pub struct Sso {
     discovery: tokio::sync::Mutex<Option<(Instant, Discovery)>>,
     keys: tokio::sync::Mutex<Keys>,
     pending: Mutex<HashMap<String, Pending>>,
+    /// Logout token `jti` -> its `exp` (unix seconds): replay defence.
+    seen_logout: Mutex<HashMap<String, i64>>,
+    /// Kore ID sessions ended by back-channel logout, so their still-unexpired
+    /// access tokens stop working too.
+    ended_sids: Mutex<HashMap<String, Instant>>,
 }
 
 fn random_url_safe(bytes: usize) -> String {
@@ -181,6 +212,8 @@ impl Sso {
             discovery: tokio::sync::Mutex::new(None),
             keys: tokio::sync::Mutex::new(Keys::default()),
             pending: Mutex::new(HashMap::new()),
+            seen_logout: Mutex::new(HashMap::new()),
+            ended_sids: Mutex::new(HashMap::new()),
         }
     }
 
@@ -331,7 +364,18 @@ impl Sso {
             .and_then(Value::as_str)
             .ok_or_else(|| SsoError::Token("the token response has no id_token".into()))?
             .to_string();
-        let claims = self.verify(&id_token, Some(&pending.nonce)).await?;
+        let (header, claims) = self.verify_signature(&id_token).await?;
+        // An id token is a plain JWT; one typed as an access or logout token
+        // is not an id token.
+        if typ_is(&header, "at+jwt") || typ_is(&header, "logout+jwt") {
+            return Err(SsoError::Token("the id_token is typed as another kind of token".into()));
+        }
+        let claims = check_claims(
+            &claims,
+            &self.config.issuer,
+            &self.config.client_id,
+            Some(&pending.nonce),
+        )?;
         Ok(Identity {
             claims,
             id_token,
@@ -339,15 +383,106 @@ impl Sso {
         })
     }
 
-    /// Verify a Kore ID access token used as a bearer. It must carry a
-    /// `scope` claim, which an id token does not, so an id token is not
-    /// accepted as an API credential.
+    /// Verify a Kore ID access token used as a bearer: header
+    /// `typ: at+jwt` (RFC 9068), so an id token or a logout token is never
+    /// an API credential; issued to this client (`aud`, and `client_id`
+    /// when present); with a `scope`; and not from a Kore ID session that
+    /// back-channel logout already ended.
     pub async fn verify_access_token(&self, token: &str) -> Result<Claims, SsoError> {
-        let claims = self.verify(token, None).await?;
+        let (header, raw) = self.verify_signature(token).await?;
+        if !typ_is(&header, "at+jwt") {
+            return Err(SsoError::Token("not an access token (typ is not at+jwt)".into()));
+        }
+        if let Some(client_id) = raw.get("client_id")
+            && client_id.as_str() != Some(self.config.client_id.as_str())
+        {
+            return Err(SsoError::Token("access token for another client".into()));
+        }
+        let claims = check_claims(&raw, &self.config.issuer, &self.config.client_id, None)?;
         if claims.scope.is_none() {
             return Err(SsoError::Token("not an access token (no scope claim)".into()));
         }
+        if let Some(sid) = &claims.sid
+            && self.sid_ended(sid)
+        {
+            return Err(SsoError::Token("the Kore ID session has ended".into()));
+        }
         Ok(claims)
+    }
+
+    /// Verify a back-channel logout token (OIDC Back-Channel Logout 1.0,
+    /// section 2.6): signature, `iss`, `aud` (this client), `iat`, `exp`,
+    /// header `typ: logout+jwt`, the logout event in `events`, no `nonce`,
+    /// a `sid` or `sub`, and a `jti` never seen before. A verified `sid` is
+    /// also remembered as ended, so its access tokens stop working.
+    pub async fn verify_logout_token(&self, token: &str) -> Result<LogoutTarget, SsoError> {
+        let bad = |why: &str| SsoError::Token(format!("logout token: {why}"));
+        let (header, claims) = self.verify_signature(token).await?;
+        if !typ_is(&header, "logout+jwt") {
+            return Err(bad("typ is not logout+jwt"));
+        }
+        check_common(&claims, &self.config.issuer, &self.config.client_id)?;
+        if claims.get("iat").and_then(Value::as_i64).is_none() {
+            return Err(bad("no iat"));
+        }
+        let exp = claims.get("exp").and_then(Value::as_i64).ok_or_else(|| bad("no exp"))?;
+        let event_ok = claims
+            .get("events")
+            .and_then(Value::as_object)
+            .and_then(|events| events.get(BACKCHANNEL_EVENT))
+            .is_some_and(Value::is_object);
+        if !event_ok {
+            return Err(bad("no back-channel logout event"));
+        }
+        if claims.get("nonce").is_some() {
+            return Err(bad("nonce is not allowed"));
+        }
+        let text = |name: &str| {
+            claims
+                .get(name)
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        };
+        let target = match (text("sid"), text("sub")) {
+            (Some(sid), _) => LogoutTarget::Sid(sid),
+            (None, Some(sub)) => LogoutTarget::Sub(sub),
+            (None, None) => return Err(bad("neither sid nor sub")),
+        };
+        let jti = text("jti").ok_or_else(|| bad("no jti"))?;
+        {
+            let now = chrono::Utc::now().timestamp();
+            let mut seen = self.seen_logout.lock().unwrap();
+            seen.retain(|_, until| *until + LEEWAY_SECONDS >= now);
+            if seen.contains_key(&jti) {
+                return Err(bad("replayed jti"));
+            }
+            if seen.len() >= LOGOUT_CACHE_CAP
+                && let Some(oldest) = seen.iter().min_by_key(|(_, until)| **until).map(|(k, _)| k.clone())
+            {
+                seen.remove(&oldest);
+            }
+            seen.insert(jti, exp);
+        }
+        if let LogoutTarget::Sid(sid) = &target {
+            let mut ended = self.ended_sids.lock().unwrap();
+            ended.retain(|_, at| at.elapsed() < ENDED_SID_TTL);
+            if ended.len() >= LOGOUT_CACHE_CAP
+                && let Some(oldest) = ended.iter().min_by_key(|(_, at)| **at).map(|(k, _)| k.clone())
+            {
+                ended.remove(&oldest);
+            }
+            ended.insert(sid.clone(), Instant::now());
+        }
+        Ok(target)
+    }
+
+    fn sid_ended(&self, sid: &str) -> bool {
+        self.ended_sids
+            .lock()
+            .unwrap()
+            .get(sid)
+            .is_some_and(|at| at.elapsed() < ENDED_SID_TTL)
     }
 
     /// Where to send the browser to end the Kore ID session too, when the
@@ -399,8 +534,9 @@ impl Sso {
             .ok_or_else(|| SsoError::Token(format!("no signing key {kid:?} at the provider")))
     }
 
-    /// Check signature and claims of a JWT issued to this client.
-    async fn verify(&self, token: &str, nonce: Option<&str>) -> Result<Claims, SsoError> {
+    /// Check the EdDSA signature of a JWT against the provider's keys and
+    /// return its header and claims, not yet checked.
+    async fn verify_signature(&self, token: &str) -> Result<(Value, Value), SsoError> {
         let bad = |why: &str| SsoError::Token(why.to_string());
         let mut parts = token.split('.');
         let (Some(head), Some(body), Some(sig), None) =
@@ -424,7 +560,10 @@ impl Sso {
             .map_err(|_| bad("signature does not verify"))?;
 
         let claims: Value = serde_json::from_slice(&decode(body)?).map_err(|_| bad("bad claims"))?;
-        check_claims(&claims, &self.config.issuer, &self.config.client_id, nonce)
+        if !claims.is_object() {
+            return Err(bad("claims are not an object"));
+        }
+        Ok((header, claims))
     }
 }
 
@@ -457,13 +596,17 @@ fn parse_jwks(set: &Value) -> HashMap<String, VerifyingKey> {
     keys
 }
 
-/// The claim checks of a token whose signature already verified.
-fn check_claims(
-    claims: &Value,
-    issuer: &str,
-    client_id: &str,
-    nonce: Option<&str>,
-) -> Result<Claims, SsoError> {
+/// Whether a JWT header's `typ` is `want`, compared as RFC 8725 and RFC
+/// 9068 say: case-insensitive, with or without the `application/` prefix.
+fn typ_is(header: &Value, want: &str) -> bool {
+    header.get("typ").and_then(Value::as_str).is_some_and(|typ| {
+        let typ = typ.to_ascii_lowercase();
+        typ.strip_prefix("application/").unwrap_or(&typ) == want
+    })
+}
+
+/// Issuer, audience, `exp` and `nbf` of a token whose signature verified.
+fn check_common(claims: &Value, issuer: &str, client_id: &str) -> Result<(), SsoError> {
     let bad = |why: &str| SsoError::Token(why.to_string());
     let text = |name: &str| claims.get(name).and_then(Value::as_str);
     if text("iss").map(|iss| iss.trim_end_matches('/')) != Some(issuer.trim_end_matches('/')) {
@@ -487,6 +630,19 @@ fn check_claims(
     {
         return Err(bad("not yet valid"));
     }
+    Ok(())
+}
+
+/// The claim checks of an id or access token whose signature verified.
+fn check_claims(
+    claims: &Value,
+    issuer: &str,
+    client_id: &str,
+    nonce: Option<&str>,
+) -> Result<Claims, SsoError> {
+    let bad = |why: &str| SsoError::Token(why.to_string());
+    let text = |name: &str| claims.get(name).and_then(Value::as_str);
+    check_common(claims, issuer, client_id)?;
     if let Some(expected) = nonce
         && text("nonce") != Some(expected)
     {
@@ -499,6 +655,7 @@ fn check_claims(
         email_verified: claims.get("email_verified").and_then(Value::as_bool),
         name: text("name").map(str::to_string),
         scope: text("scope").map(str::to_string),
+        sid: text("sid").filter(|sid| !sid.is_empty()).map(str::to_string),
     })
 }
 
@@ -567,6 +724,15 @@ mod tests {
         let mut wrong = ok.clone();
         wrong["sub"] = json!("");
         assert!(check_claims(&wrong, "https://id.example", "flatline", None).is_err());
+    }
+
+    #[test]
+    fn typ_is_compared_like_a_media_type() {
+        assert!(typ_is(&json!({"typ": "at+jwt"}), "at+jwt"));
+        assert!(typ_is(&json!({"typ": "application/AT+JWT"}), "at+jwt"));
+        assert!(!typ_is(&json!({"typ": "JWT"}), "at+jwt"));
+        assert!(!typ_is(&json!({}), "at+jwt"));
+        assert!(!typ_is(&json!({"typ": "logout+jwt"}), "at+jwt"));
     }
 
     #[test]

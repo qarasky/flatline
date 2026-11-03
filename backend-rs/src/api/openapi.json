@@ -4421,10 +4421,44 @@
                 }
             }
         },
+        "/api/v1/auth/sso/backchannel-logout": {
+            "post": {
+                "summary": "Kore ID back-channel logout",
+                "description": "Public; Kore ID calls it server to server (OIDC Back-Channel Logout 1.0) when a Kore ID session ends. Verifies the `logout_token` (EdDSA against the JWKS, `iss`, `aud` = this client id, `iat`, `exp`, header `typ: logout+jwt`, the back-channel logout event in `events`, no `nonce`, a `sid` or `sub`, `jti` not seen before), then deletes every session made from that `sid` (or, without `sid`, every Kore ID session of that `sub`). Register `<public URL>/api/v1/auth/sso/backchannel-logout` as the client's `backchannelLogoutUri`.",
+                "security": [],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["logout_token"],
+                                "properties": {
+                                    "logout_token": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Sessions ended (or none matched)"
+                    },
+                    "400": {
+                        "description": "`invalid_request`: missing or invalid logout token, or Kore ID is not configured"
+                    },
+                    "503": {
+                        "description": "The provider's keys could not be fetched; retry"
+                    }
+                }
+            }
+        },
         "/api/v1/auth/sso/callback": {
             "get": {
                 "summary": "Kore ID sign-in callback",
-                "description": "Public; Kore ID returns the browser here with `code` and `state`. Verifies state (one use, bound to the `fl_sso` cookie), exchanges the code with the PKCE verifier, verifies the id token (EdDSA against the provider's JWKS, issuer, audience, expiry, nonce), then signs in the account tied to the token's `sub`. An unknown `sub` gets an account only when its `sub` is in `KORE_ID_ALLOWED_SUBS` or its email in `KORE_ID_ALLOWED_EMAILS`. Success: 303 to `next` with the `fl_session` cookie. Failure: 303 to `/sign-in?sso_error=` one of `state`, `provider`, `token`, `unavailable`, `denied`, `disabled`, with no session.",
+                "description": "Public; Kore ID returns the browser here with `code` and `state`. Verifies state (one use, bound to the `fl_sso` cookie), exchanges the code with the PKCE verifier, verifies the id token (EdDSA against the provider's JWKS, issuer, audience, expiry, nonce), then signs in the account tied to the token's `sub`. An unknown `sub` gets an account (Kore ID already enforced app access) unless `KORE_ID_AUTO_PROVISION=false`; when `KORE_ID_ALLOWED_SUBS` or `KORE_ID_ALLOWED_EMAILS` is set, only listed identities do. A local account with the same email is linked only when `email_verified` is true. The id token's `sid` is stored on the session for back-channel logout. Success: 303 to `next` with the `fl_session` cookie. Failure: 303 to `/sign-in?sso_error=` one of `state`, `provider`, `token`, `unavailable`, `denied`, `disabled`, with no session.",
                 "security": [],
                 "parameters": [
                     {

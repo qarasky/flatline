@@ -62,9 +62,16 @@ pub struct KoreIdConfig {
     /// Where the provider returns the browser after sign-out
     /// (`KORE_ID_POST_LOGOUT_REDIRECT_URI`, default `<origin>/sign-in`).
     pub post_logout_redirect_uri: String,
-    /// Emails (lowercased) that may get an account on first sign-in.
+    /// Whether someone Kore ID admits to this app gets an account on first
+    /// sign-in (`KORE_ID_AUTO_PROVISION`, default on). Kore ID decides who
+    /// may use the app; off means only accounts already tied to a `sub` and
+    /// the allowlists below.
+    pub auto_provision: bool,
+    /// Optional extra filter: emails (lowercased) that may get an account on
+    /// first sign-in. With either list set, only listed identities do.
     pub allowed_emails: Vec<String>,
-    /// Provider `sub` values that may get an account on first sign-in.
+    /// Optional extra filter: provider `sub` values that may get an account
+    /// on first sign-in.
     pub allowed_subs: Vec<String>,
 }
 
@@ -135,6 +142,7 @@ impl KoreIdConfig {
             client_auth_post,
             redirect_uri,
             post_logout_redirect_uri,
+            auto_provision: flag(lookup, "KORE_ID_AUTO_PROVISION", true)?,
             allowed_emails: list(lookup, "KORE_ID_ALLOWED_EMAILS")
                 .into_iter()
                 .map(|e| e.to_lowercase())
@@ -293,6 +301,14 @@ mod tests {
         assert_eq!(kore.allowed_emails, ["a@x.kz", "b@x.kz"]);
         assert_eq!(kore.allowed_subs, ["sub-1"]);
         assert!(kore.client_auth_post && !on.local_login);
+        assert!(kore.auto_provision, "Kore ID decides app access, so provisioning is on by default");
+        let off = config(&[
+            ("KORE_ID_ISSUER", "https://id.kore.example"),
+            ("FLATLINE_PUBLIC_URL", "https://uptime.example"),
+            ("KORE_ID_AUTO_PROVISION", "false"),
+        ])
+        .unwrap();
+        assert!(!off.kore_id.unwrap().auto_provision);
     }
 
     #[test]

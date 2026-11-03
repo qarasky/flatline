@@ -155,6 +155,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/sso/config", get(auth::sso_config))
         .route("/api/v1/auth/sso/start", get(auth::sso_start))
         .route("/api/v1/auth/sso/callback", get(auth::sso_callback))
+        .route(
+            "/api/v1/auth/sso/backchannel-logout",
+            post(auth::sso_backchannel_logout),
+        )
         .route("/api/v1/auth/device/start", post(device::start))
         .route("/api/v1/auth/device/poll", post(device::poll))
         .route("/api/v1/openapi.json", get(openapi::document))

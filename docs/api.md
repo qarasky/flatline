@@ -176,23 +176,24 @@ The SSE stream and agent binary downloads have no timeout.
 
 ### Auth
 
-| Method | Path                          | Purpose                                                                                                                              |
-| ------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| GET    | `/api/v1/auth/setup`          | Public; `setupNeeded` is true while no account exists                                                                                |
-| POST   | `/api/v1/auth/setup`          | Public; body `{token, email, name, password}`; creates the first account (needs an operator token; `409 setup_done` once any exists) |
-| POST   | `/api/v1/auth/password`       | Body `{currentPassword, newPassword}`; a member changes their own password                                                           |
-| POST   | `/api/v1/auth/login`          | Public; token in `password`, echoed back                                                                                             |
-| POST   | `/api/v1/auth/session`        | Public; body `{email, password}` or `{token}`; sets the session cookie                                                               |
-| DELETE | `/api/v1/auth/session`        | Public; ends the session and clears the cookie (`ssoLogoutUrl` for a Kore ID session)                                                |
-| GET    | `/api/v1/auth/sso/config`     | Public; `{sso, localLogin, tokenLogin}`: which sign-in methods are on                                                                |
-| GET    | `/api/v1/auth/sso/start`      | Public; redirects to Kore ID (`?next=/path`). See [sso.md](sso.md)                                                                   |
-| GET    | `/api/v1/auth/sso/callback`   | Public; Kore ID returns here; sets the session cookie and redirects, or redirects to `/sign-in?sso_error=`                           |
-| GET    | `/api/v1/auth/me`             | Who is signed in: `principal` `account` or `token`                                                                                   |
-| POST   | `/api/v1/auth/device/start`   | Public; a screen asks to sign in with a QR code. Returns `code`, `pollSecret`, `expiresIn`, `publicUrl`                              |
-| POST   | `/api/v1/auth/device/poll`    | Public; body `{code, pollSecret}`. `pending`, `denied`, `expired`, or `approved` with a new never-expiring operator `token`          |
-| POST   | `/api/v1/auth/device/lookup`  | Describe a waiting screen (user agent, age, suggested name)                                                                          |
-| POST   | `/api/v1/auth/device/approve` | Body `{code, name}`; the screen gets its own operator token                                                                          |
-| POST   | `/api/v1/auth/device/deny`    | Body `{code}`                                                                                                                        |
+| Method | Path                                  | Purpose                                                                                                                              |
+| ------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/api/v1/auth/setup`                  | Public; `setupNeeded` is true while no account exists                                                                                |
+| POST   | `/api/v1/auth/setup`                  | Public; body `{token, email, name, password}`; creates the first account (needs an operator token; `409 setup_done` once any exists) |
+| POST   | `/api/v1/auth/password`               | Body `{currentPassword, newPassword}`; a member changes their own password                                                           |
+| POST   | `/api/v1/auth/login`                  | Public; token in `password`, echoed back                                                                                             |
+| POST   | `/api/v1/auth/session`                | Public; body `{email, password}` or `{token}`; sets the session cookie                                                               |
+| DELETE | `/api/v1/auth/session`                | Public; ends the session and clears the cookie (`ssoLogoutUrl` for a Kore ID session)                                                |
+| GET    | `/api/v1/auth/sso/config`             | Public; `{sso, localLogin, tokenLogin}`: which sign-in methods are on                                                                |
+| GET    | `/api/v1/auth/sso/start`              | Public; redirects to Kore ID (`?next=/path`). See [sso.md](sso.md)                                                                   |
+| GET    | `/api/v1/auth/sso/callback`           | Public; Kore ID returns here; sets the session cookie and redirects, or redirects to `/sign-in?sso_error=`                           |
+| POST   | `/api/v1/auth/sso/backchannel-logout` | Public; Kore ID back-channel logout (`logout_token` form field); ends the sessions of that Kore ID `sid`. See [sso.md](sso.md)       |
+| GET    | `/api/v1/auth/me`                     | Who is signed in: `principal` `account` or `token`                                                                                   |
+| POST   | `/api/v1/auth/device/start`           | Public; a screen asks to sign in with a QR code. Returns `code`, `pollSecret`, `expiresIn`, `publicUrl`                              |
+| POST   | `/api/v1/auth/device/poll`            | Public; body `{code, pollSecret}`. `pending`, `denied`, `expired`, or `approved` with a new never-expiring operator `token`          |
+| POST   | `/api/v1/auth/device/lookup`          | Describe a waiting screen (user agent, age, suggested name)                                                                          |
+| POST   | `/api/v1/auth/device/approve`         | Body `{code, name}`; the screen gets its own operator token                                                                          |
+| POST   | `/api/v1/auth/device/deny`            | Body `{code}`                                                                                                                        |
 
 A screen approved by a member who is removed before the screen's next poll gets `denied`, not a token. Device codes travel in JSON bodies, never in paths. The QR code encodes
 `<base>/device#<code>` only; the poll secret never leaves the waiting screen.

@@ -1,6 +1,7 @@
 //! Kore ID sign-in against an in-process OpenID provider: the
 //! authorization-code + PKCE flow, id-token and bearer verification,
-//! allowlisted provisioning, and the local-login switches.
+//! provisioning (on by default, optional allowlists), email linking,
+//! back-channel logout, and the local-login switches.
 
 use std::sync::{Arc, Mutex};
 
@@ -37,6 +38,10 @@ struct Next {
     aud: Option<String>,
     wrong_key: bool,
     code_challenge: String,
+    /// Kore ID marks every email verified; set to send `email_verified: false`.
+    unverified: bool,
+    /// The Kore ID session id put in the tokens (`sid-1` when empty).
+    sid: String,
 }
 
 #[derive(Clone)]
@@ -51,22 +56,60 @@ struct Mock {
 
 impl Mock {
     fn sign(&self, claims: Value, wrong_key: bool) -> String {
+        self.sign_typed("JWT", claims, wrong_key)
+    }
+
+    fn sign_typed(&self, typ: &str, claims: Value, wrong_key: bool) -> String {
         let key = if wrong_key { &self.other } else { &self.key };
-        let head = b64(json!({"alg": "EdDSA", "typ": "JWT", "kid": "k1"}).to_string().as_bytes());
+        let head = b64(json!({"alg": "EdDSA", "typ": typ, "kid": "k1"}).to_string().as_bytes());
         let body = b64(claims.to_string().as_bytes());
         let signed = format!("{head}.{body}");
         let signature = key.sign(signed.as_bytes());
         format!("{signed}.{}", b64(&signature.to_bytes()))
     }
 
-    /// An access token as Kore ID mints it (has `scope`).
+    /// An access token as Kore ID mints it (`typ: at+jwt`, RFC 9068).
     fn access_token(&self, sub: &str, aud: &str, exp_in: i64) -> String {
-        self.sign(
-            json!({"iss": self.issuer, "aud": aud, "sub": sub, "scope": "openid profile email",
-                   "exp": chrono::Utc::now().timestamp() + exp_in}),
+        self.access_token_in(sub, aud, exp_in, "sid-1")
+    }
+
+    fn access_token_in(&self, sub: &str, aud: &str, exp_in: i64, sid: &str) -> String {
+        let now = chrono::Utc::now().timestamp();
+        self.sign_typed(
+            "at+jwt",
+            json!({"iss": self.issuer, "aud": aud, "client_id": aud, "sub": sub, "sid": sid,
+                   "scope": "openid profile email", "jti": format!("at-{now}-{sid}"),
+                   "iat": now, "exp": now + exp_in}),
             false,
         )
     }
+
+    /// The claims of a logout token as Kore ID sends it; tests tamper with them.
+    fn logout_claims(&self, sid: Option<&str>, sub: Option<&str>) -> Value {
+        let now = chrono::Utc::now().timestamp();
+        let mut claims = json!({
+            "iss": self.issuer, "aud": CLIENT_ID, "iat": now, "exp": now + 120,
+            "jti": format!("jti-{}", rand_suffix()),
+            "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
+        });
+        if let Some(sid) = sid {
+            claims["sid"] = json!(sid);
+        }
+        if let Some(sub) = sub {
+            claims["sub"] = json!(sub);
+        }
+        claims
+    }
+
+    fn logout_token(&self, claims: Value) -> String {
+        self.sign_typed("logout+jwt", claims, false)
+    }
+}
+
+fn rand_suffix() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    format!("{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed))
 }
 
 async fn discovery(State(m): State<Mock>) -> Json<Value> {
@@ -105,18 +148,20 @@ async fn token(
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_grant"})));
     }
     let now = chrono::Utc::now().timestamp();
+    let sid = if next.sid.is_empty() { "sid-1".to_string() } else { next.sid.clone() };
     let id_token = m.sign(
         json!({
             "iss": m.issuer, "aud": next.aud.clone().unwrap_or_else(|| CLIENT_ID.into()),
-            "sub": next.sub, "email": next.email, "name": next.name,
-            "nonce": next.nonce, "iat": now, "exp": now + 600,
+            "azp": CLIENT_ID, "sub": next.sub, "email": next.email,
+            "email_verified": !next.unverified, "name": next.name, "sid": sid,
+            "nonce": next.nonce, "iat": now, "auth_time": now, "exp": now + 600,
         }),
         next.wrong_key,
     );
     (
         StatusCode::OK,
         Json(json!({"token_type": "Bearer", "id_token": id_token,
-                    "access_token": m.access_token(&next.sub, CLIENT_ID, 600)})),
+                    "access_token": m.access_token_in(&next.sub, CLIENT_ID, 600, &sid)})),
     )
 }
 
@@ -139,6 +184,7 @@ async fn provider() -> Mock {
     mock
 }
 
+/// Kore ID with the optional allowlist filters (empty: anyone Kore ID admits).
 fn kore(mock: &Mock, emails: &[&str], subs: &[&str]) -> KoreIdConfig {
     KoreIdConfig {
         issuer: mock.issuer.clone(),
@@ -147,6 +193,7 @@ fn kore(mock: &Mock, emails: &[&str], subs: &[&str]) -> KoreIdConfig {
         client_auth_post: false,
         redirect_uri: "https://uptime.example/api/v1/auth/sso/callback".into(),
         post_logout_redirect_uri: "https://uptime.example/sign-in".into(),
+        auto_provision: true,
         allowed_emails: emails.iter().map(|e| e.to_string()).collect(),
         allowed_subs: subs.iter().map(|s| s.to_string()).collect(),
     }
@@ -225,8 +272,14 @@ async fn callback(h: &Harness, s: &Started, code: &str, cookie: Option<&str>) ->
 }
 
 async fn sign_in_via_sso(h: &Harness, mock: &Mock, email: &str) -> String {
+    sign_in_via_sso_with(h, mock, email, |_| {}).await
+}
+
+/// Sign in, adjusting what the provider returns first (another `sid`, say).
+async fn sign_in_via_sso_with(h: &Harness, mock: &Mock, email: &str, tweak: impl FnOnce(&mut Next)) -> String {
     let s = start(h, "/monitors").await;
     identity(mock, &s, email);
+    tweak(&mut mock.next.lock().unwrap());
     let (location, session) = callback(h, &s, "good-code", Some(&s.binding_cookie)).await;
     assert_eq!(location, "/monitors");
     session.expect("a session cookie")
@@ -377,18 +430,49 @@ async fn kore_access_tokens_work_as_bearers_for_signed_in_accounts_only() {
     let (status, body) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&token), None)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["account"]["email"], "ana@office.kz");
+    // `application/at+jwt` is the same media type.
+    let long_typ = mock.sign_typed(
+        "application/at+jwt",
+        json!({"iss": mock.issuer, "aud": CLIENT_ID, "sub": SUB, "scope": "openid",
+               "exp": chrono::Utc::now().timestamp() + 600}),
+        false,
+    );
+    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&long_typ), None)).await;
+    assert_eq!(status, StatusCode::OK);
 
-    // Wrong audience (a KoreMind token), expired, other subject, no scope
-    // (an id token), wrong key, and a mangled token.
-    let id_like = mock.sign(json!({"iss": mock.issuer, "aud": CLIENT_ID, "sub": SUB,
-        "exp": chrono::Utc::now().timestamp() + 600}), false);
-    let forged = mock.sign(json!({"iss": mock.issuer, "aud": CLIENT_ID, "sub": SUB, "scope": "openid",
-        "exp": chrono::Utc::now().timestamp() + 600}), true);
+    // Wrong audience (a KoreMind token), expired, other subject, an id
+    // token (typ JWT, even one carrying a scope), a logout token, a foreign
+    // client_id, wrong key, and a mangled token.
+    let exp = chrono::Utc::now().timestamp() + 600;
+    let id_like = mock.sign(json!({"iss": mock.issuer, "aud": CLIENT_ID, "sub": SUB, "exp": exp}), false);
+    let id_with_scope = mock.sign(
+        json!({"iss": mock.issuer, "aud": CLIENT_ID, "sub": SUB, "scope": "openid", "exp": exp}),
+        false,
+    );
+    let logout_typed = mock.sign_typed(
+        "logout+jwt",
+        json!({"iss": mock.issuer, "aud": CLIENT_ID, "sub": SUB, "scope": "openid", "exp": exp}),
+        false,
+    );
+    let other_client = mock.sign_typed(
+        "at+jwt",
+        json!({"iss": mock.issuer, "aud": CLIENT_ID, "client_id": "koremind", "sub": SUB,
+               "scope": "openid", "exp": exp}),
+        false,
+    );
+    let forged = mock.sign_typed(
+        "at+jwt",
+        json!({"iss": mock.issuer, "aud": CLIENT_ID, "sub": SUB, "scope": "openid", "exp": exp}),
+        true,
+    );
     for bad in [
         mock.access_token(SUB, "koremind", 600),
         mock.access_token(SUB, CLIENT_ID, -3600),
         mock.access_token("someone-else", CLIENT_ID, 600),
         id_like,
+        id_with_scope,
+        logout_typed,
+        other_client,
         forged,
         format!("{}x", token),
         "eyJhbGciOiJub25lIn0.e30.".to_string(),
@@ -473,4 +557,181 @@ async fn local_login_can_be_switched_off_without_touching_bearer_tokens() {
     // The operator token as a bearer, for scripts and AI agents, still works.
     let (status, _) = send(&app, request("GET", "/api/v1/monitors", Some(&h.token), None)).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn anyone_kore_id_admits_gets_an_account_by_default() {
+    let mock = provider().await;
+    let h = harness_with_sso(kore(&mock, &[], &[])).await;
+    let session = sign_in_via_sso(&h, &mock, "new.person@office.kz").await;
+    let (status, body) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["account"]["email"], "new.person@office.kz");
+    let sub: Option<String> = sqlx::query_scalar("SELECT kore_sub FROM users").fetch_one(&h.pool).await.unwrap();
+    assert_eq!(sub.as_deref(), Some(SUB));
+
+    // KORE_ID_AUTO_PROVISION=false: a new identity is refused...
+    let mut off = kore(&mock, &[], &[]);
+    off.auto_provision = false;
+    let h = harness_with_sso(off.clone()).await;
+    let s = start(&h, "/").await;
+    identity(&mock, &s, "new.person@office.kz");
+    let (location, session) = callback(&h, &s, "good-code", Some(&s.binding_cookie)).await;
+    assert_eq!(location, "/sign-in?sso_error=denied");
+    assert!(session.is_none());
+    // ...unless the optional allowlist names it.
+    off.allowed_subs = vec![SUB.into()];
+    let h = harness_with_sso(off).await;
+    sign_in_via_sso(&h, &mock, "new.person@office.kz").await;
+}
+
+#[tokio::test]
+async fn an_email_allowlist_filters_and_needs_a_verified_email() {
+    let mock = provider().await;
+    let h = harness_with_sso(kore(&mock, &["ana@office.kz"], &[])).await;
+    let s = start(&h, "/").await;
+    identity(&mock, &s, "ana@office.kz");
+    mock.next.lock().unwrap().unverified = true;
+    let (location, _) = callback(&h, &s, "good-code", Some(&s.binding_cookie)).await;
+    assert_eq!(location, "/sign-in?sso_error=denied");
+    sign_in_via_sso(&h, &mock, "ana@office.kz").await;
+}
+
+#[tokio::test]
+async fn linking_by_email_needs_email_verified() {
+    let mock = provider().await;
+    let h = harness_with_sso(kore(&mock, &[], &[])).await;
+    let local = common::add_member(&h, "ana@office.kz", "Ana", "correct horse").await;
+
+    // Unverified: the local account is not taken over, and no duplicate is made.
+    let s = start(&h, "/").await;
+    identity(&mock, &s, "ana@office.kz");
+    mock.next.lock().unwrap().unverified = true;
+    let (location, session) = callback(&h, &s, "good-code", Some(&s.binding_cookie)).await;
+    assert_eq!(location, "/sign-in?sso_error=denied");
+    assert!(session.is_none());
+    let tied: Option<String> = sqlx::query_scalar("SELECT kore_sub FROM users WHERE id = ?")
+        .bind(local).fetch_one(&h.pool).await.unwrap();
+    assert!(tied.is_none());
+
+    // Verified (what Kore ID sends): linked.
+    let session = sign_in_via_sso(&h, &mock, "ana@office.kz").await;
+    let (_, body) = send(&h.app, with_cookie("GET", "/api/v1/auth/me", &session, None)).await;
+    assert_eq!(body["account"]["id"].as_i64().unwrap(), local);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(&h.pool).await.unwrap();
+    assert_eq!(count, 1);
+}
+
+async fn post_logout(h: &Harness, body: &str) -> (StatusCode, Value) {
+    use tower::ServiceExt;
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/sso/backchannel-logout")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap();
+    let response = h.app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+fn form(token: &str) -> String {
+    format!("logout_token={}", url::form_urlencoded::byte_serialize(token.as_bytes()).collect::<String>())
+}
+
+async fn me(h: &Harness, session: &str) -> StatusCode {
+    send(&h.app, with_cookie("GET", "/api/v1/auth/me", session, None)).await.0
+}
+
+#[tokio::test]
+async fn sign_in_keeps_the_kore_id_sid() {
+    let mock = provider().await;
+    let h = harness_with_sso(kore(&mock, &[], &[])).await;
+    sign_in_via_sso_with(&h, &mock, "ana@office.kz", |n| n.sid = "sid-abc".into()).await;
+    let sids: Vec<Option<String>> = sqlx::query_scalar("SELECT sso_sid FROM sessions")
+        .fetch_all(&h.pool).await.unwrap();
+    assert_eq!(sids, [Some("sid-abc".to_string())]);
+}
+
+#[tokio::test]
+async fn back_channel_logout_ends_the_sessions_of_that_sid() {
+    let mock = provider().await;
+    let h = harness_with_sso(kore(&mock, &[], &[])).await;
+    let laptop = sign_in_via_sso_with(&h, &mock, "ana@office.kz", |n| n.sid = "sid-laptop".into()).await;
+    let phone = sign_in_via_sso_with(&h, &mock, "ana@office.kz", |n| n.sid = "sid-phone".into()).await;
+    common::add_member(&h, "bo@office.kz", "Bo", "correct horse").await;
+    let local = common::sign_in(&h.app, json!({"email": "bo@office.kz", "password": "correct horse"})).await;
+    let laptop_bearer = mock.access_token_in(SUB, CLIENT_ID, 600, "sid-laptop");
+    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&laptop_bearer), None)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let token = mock.logout_token(mock.logout_claims(Some("sid-laptop"), Some(SUB)));
+    let (status, body) = post_logout(&h, &form(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(me(&h, &laptop).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(me(&h, &phone).await, StatusCode::OK, "another Kore ID session stays");
+    assert_eq!(me(&h, &local).await, StatusCode::OK, "password sessions are untouched");
+    // The ended Kore ID session's access tokens stop working too.
+    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&laptop_bearer), None)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let phone_bearer = mock.access_token_in(SUB, CLIENT_ID, 600, "sid-phone");
+    let (status, _) = send(&h.app, request("GET", "/api/v1/auth/me", Some(&phone_bearer), None)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The same token again is a replay.
+    let (status, body) = post_logout(&h, &form(&token)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_request");
+
+    // A token with only `sub` ends every Kore ID session of that account.
+    let token = mock.logout_token(mock.logout_claims(None, Some(SUB)));
+    let (status, _) = post_logout(&h, &form(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(me(&h, &phone).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(me(&h, &local).await, StatusCode::OK);
+
+    // An unknown sid is still a valid notification: 200, nothing to end.
+    let token = mock.logout_token(mock.logout_claims(Some("sid-unknown"), None));
+    assert_eq!(post_logout(&h, &form(&token)).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn invalid_logout_tokens_are_refused() {
+    let mock = provider().await;
+    let h = harness_with_sso(kore(&mock, &[], &[])).await;
+    let session = sign_in_via_sso(&h, &mock, "ana@office.kz").await;
+
+    let base = || mock.logout_claims(Some("sid-1"), Some(SUB));
+    let mut cases: Vec<(&str, String)> = Vec::new();
+    cases.push(("typ JWT", mock.sign(base(), false)));
+    cases.push(("typ at+jwt", mock.sign_typed("at+jwt", base(), false)));
+    cases.push(("wrong key", mock.sign_typed("logout+jwt", base(), true)));
+    let tamper = |edit: &dyn Fn(&mut Value)| {
+        let mut claims = base();
+        edit(&mut claims);
+        mock.logout_token(claims)
+    };
+    cases.push(("other audience", tamper(&|c| c["aud"] = json!("koremind"))));
+    cases.push(("other issuer", tamper(&|c| c["iss"] = json!("https://evil.example"))));
+    cases.push(("expired", tamper(&|c| c["exp"] = json!(chrono::Utc::now().timestamp() - 3600))));
+    cases.push(("no events", tamper(&|c| { c.as_object_mut().unwrap().remove("events"); })));
+    cases.push(("other event", tamper(&|c| c["events"] = json!({"urn:other": {}}))));
+    cases.push(("nonce", tamper(&|c| c["nonce"] = json!("n"))));
+    cases.push(("no jti", tamper(&|c| { c.as_object_mut().unwrap().remove("jti"); })));
+    cases.push(("no iat", tamper(&|c| { c.as_object_mut().unwrap().remove("iat"); })));
+    cases.push(("no sid or sub", mock.logout_token(mock.logout_claims(None, None))));
+    cases.push(("not a jwt", "garbage".into()));
+    for (what, token) in cases {
+        let (status, _) = post_logout(&h, &form(&token)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{what}");
+    }
+    assert_eq!(post_logout(&h, "").await.0, StatusCode::BAD_REQUEST, "no logout_token");
+    assert_eq!(me(&h, &session).await, StatusCode::OK, "nothing ended");
+
+    // With SSO off the endpoint refuses everything.
+    let off = harness().await;
+    let token = mock.logout_token(base());
+    assert_eq!(post_logout(&off, &form(&token)).await.0, StatusCode::BAD_REQUEST);
 }
